@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>PHANTOM ARENA — Retro Tank Shooter</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="game-wrap">
+  <canvas id="gl"></canvas>
+  <canvas id="hud"></canvas>
+  <div id="crt"></div>
+
+  <!-- TITLE SCREEN -->
+  <div id="screen-title" class="screen">
+    <div class="disk-label">
+      <div class="disk-title">PHANTOM</div>
+      <div class="disk-sub">A R E N A</div>
+      <div class="disk-row">
+        <div class="disk-compat">FOR WEB &amp; 100%<br>COMPATIBLES</div>
+        <div class="disk-badge-wrap">
+          <div class="disk-badge"><div class="badge-square"></div></div>
+          <div class="disk-ring">RETRO TANK SHOOTER</div>
+        </div>
+      </div>
+    </div>
+    <div class="press-start blink">PRESS ENTER TO DEPLOY</div>
+    <div class="title-help">
+      &uarr;&darr; / W S &nbsp;DRIVE &nbsp;&nbsp; &larr;&rarr; / A D &nbsp;STEER &nbsp;&nbsp; SPACE &nbsp;FIRE<br>
+      C &nbsp;CAMERA &nbsp;&nbsp; M &nbsp;SOUND &nbsp;&nbsp; P &nbsp;PAUSE
+    </div>
+    <div id="title-high" class="title-high"></div>
+  </div>
+
+  <!-- LOADOUT SCREEN -->
+  <div id="screen-setup" class="screen hidden">
+    <div class="panel">
+      <div class="panel-head">VEHICLE CONFIGURATION</div>
+      <div class="panel-sub">ALLOCATE POWER — CHOOSE YOUR CHASSIS</div>
+      <div id="loadouts" class="loadouts">
+        <div class="loadout" data-i="0">
+          <div class="lo-key">1</div>
+          <div class="lo-name">SCOUT</div>
+          <div class="lo-stat">SPEED <span class="pips">&#9608;&#9608;&#9608;&#9608;&#9608;</span></div>
+          <div class="lo-stat">ARMOR <span class="pips">&#9608;&#9608;&#9617;&#9617;&#9617;</span></div>
+          <div class="lo-stat">AMMO&nbsp; <span class="pips">&#9608;&#9608;&#9608;&#9617;&#9617;</span></div>
+        </div>
+        <div class="loadout selected" data-i="1">
+          <div class="lo-key">2</div>
+          <div class="lo-name">VANGUARD</div>
+          <div class="lo-stat">SPEED <span class="pips">&#9608;&#9608;&#9608;&#9617;&#9617;</span></div>
+          <div class="lo-stat">ARMOR <span class="pips">&#9608;&#9608;&#9608;&#9617;&#9617;</span></div>
+          <div class="lo-stat">AMMO&nbsp; <span class="pips">&#9608;&#9608;&#9608;&#9608;&#9617;</span></div>
+        </div>
+        <div class="loadout" data-i="2">
+          <div class="lo-key">3</div>
+          <div class="lo-name">JUGGERNAUT</div>
+          <div class="lo-stat">SPEED <span class="pips">&#9608;&#9608;&#9617;&#9617;&#9617;</span></div>
+          <div class="lo-stat">ARMOR <span class="pips">&#9608;&#9608;&#9608;&#9608;&#9608;</span></div>
+          <div class="lo-stat">AMMO&nbsp; <span class="pips">&#9608;&#9608;&#9608;&#9617;&#9617;</span></div>
+        </div>
+      </div>
+      <div class="press-start blink">1 / 2 / 3 TO SELECT &nbsp;&middot;&nbsp; ENTER TO LAUNCH</div>
+    </div>
+  </div>
+
+  <!-- LEVEL CLEAR -->
+  <div id="screen-clear" class="screen hidden">
+    <div class="panel small">
+      <div class="panel-head">SECTOR CLEARED</div>
+      <div id="clear-stats" class="clear-stats"></div>
+      <div class="press-start blink">ENTER TO ADVANCE</div>
+    </div>
+  </div>
+
+  <!-- GAME OVER -->
+  <div id="screen-over" class="screen hidden">
+    <div class="panel small">
+      <div class="panel-head red">TANK DESTROYED</div>
+      <div id="over-stats" class="clear-stats"></div>
+      <div class="press-start blink">ENTER TO RETRY</div>
+    </div>
+  </div>
+
+  <!-- PAUSE -->
+  <div id="screen-pause" class="screen hidden">
+    <div class="panel small">
+      <div class="panel-head">PAUSED</div>
+      <div class="press-start">P TO RESUME &nbsp;&middot;&nbsp; Q TO ABORT MISSION</div>
+    </div>
+  </div>
+</div>
+
+<script src="js/audio.js"></script>
+<script src="js/input.js"></script>
+<script src="js/geometry.js"></script>
+<script src="js/renderer.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/game.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
