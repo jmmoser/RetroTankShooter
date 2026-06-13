@@ -100,7 +100,7 @@ void main() {
     if (dot(d, d) > 0.25) discard;
   }
   float diff = max(dot(normalize(vNormal), uLightDir), 0.0);
-  vec3 lit = vColor * (0.45 + 0.65 * diff);
+  vec3 lit = vColor * (0.32 + 0.7 * diff);
   vec3 col = mix(lit, vColor, uUnlit) * uTint;
   float fog = 1.0 - exp(-uFogDensity * uFogDensity * vFogDepth * vFogDepth);
   fog = clamp(fog, 0.0, 1.0);
@@ -133,10 +133,11 @@ class Renderer {
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
 
-    this.fogColor = [0.012, 0.04, 0.035];
+    // near-black void; fog closes in so the larger arena dissolves into dark
+    this.fogColor = [0.004, 0.014, 0.012];
     gl.clearColor(this.fogColor[0], this.fogColor[1], this.fogColor[2], 1);
     gl.uniform3fv(this.uniforms.uFogColor, this.fogColor);
-    gl.uniform1f(this.uniforms.uFogDensity, 0.0048);
+    gl.uniform1f(this.uniforms.uFogDensity, 0.0072);
     const L = [0.35, 0.8, 0.48];
     const ll = Math.hypot(L[0], L[1], L[2]);
     gl.uniform3f(this.uniforms.uLightDir, L[0] / ll, L[1] / ll, L[2] / ll);

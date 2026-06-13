@@ -69,25 +69,51 @@ const Geometry = (() => {
       return this;
     }
 
+    /* ---- wireframe primitives (emit GL_LINES vertex pairs) ---------------- */
+    edge(a, b, color) {
+      const n = [0, 1, 0]; // normal unused for unlit wireframes
+      this.data.push(a[0], a[1], a[2], n[0], n[1], n[2], color[0], color[1], color[2]);
+      this.data.push(b[0], b[1], b[2], n[0], n[1], n[2], color[0], color[1], color[2]);
+      return this;
+    }
+
+    /* 12 edges of an axis-aligned box centered at (cx,cy,cz). */
+    boxEdges(cx, cy, cz, sx, sy, sz, color) {
+      const x0 = cx - sx / 2, x1 = cx + sx / 2;
+      const y0 = cy - sy / 2, y1 = cy + sy / 2;
+      const z0 = cz - sz / 2, z1 = cz + sz / 2;
+      const c000 = [x0, y0, z0], c100 = [x1, y0, z0], c110 = [x1, y1, z0], c010 = [x0, y1, z0];
+      const c001 = [x0, y0, z1], c101 = [x1, y0, z1], c111 = [x1, y1, z1], c011 = [x0, y1, z1];
+      // bottom loop
+      this.edge(c000, c100, color).edge(c100, c101, color).edge(c101, c001, color).edge(c001, c000, color);
+      // top loop
+      this.edge(c010, c110, color).edge(c110, c111, color).edge(c111, c011, color).edge(c011, c010, color);
+      // verticals
+      this.edge(c000, c010, color).edge(c100, c110, color).edge(c101, c111, color).edge(c001, c011, color);
+      return this;
+    }
+
     build() { return new Float32Array(this.data); }
   }
 
-  // ---- palette (bright flat-shaded solids over a dark teal world) --------
+  // ---- palette: glowing wireframe vehicles over a black void -------------
+  // Hull colors are pushed bright/neon so the vector lines read on near-black.
   const C = {
-    hullEnemy:   [0.85, 0.22, 0.16],
-    hullHunter:  [0.95, 0.55, 0.12],
-    hullSniper:  [0.62, 0.30, 0.85],
-    hullPlayer:  [0.18, 0.78, 0.65],
+    hullEnemy:   [1.0,  0.28, 0.22],   // hostile red
+    hullHunter:  [1.0,  0.62, 0.12],   // amber
+    hullSniper:  [0.78, 0.42, 1.0],    // violet
+    hullPlayer:  [0.25, 1.0,  0.82],   // friendly cyan
     tread:       [0.10, 0.12, 0.12],
-    barrel:      [0.75, 0.78, 0.75],
-    flagPole:    [0.88, 0.90, 0.88],
-    flagCloth:   [0.20, 0.95, 0.45],
-    shotPlayer:  [1.0, 0.95, 0.45],
-    shotEnemy:   [1.0, 0.35, 0.25],
-    wall:        [0.16, 0.42, 0.36],
-    wallTop:     [0.30, 0.85, 0.70],
+    barrel:      [0.85, 0.92, 0.88],
+    flagPole:    [0.70, 0.78, 0.74],
+    flagCloth:   [0.20, 1.0,  0.45],
+    shotPlayer:  [1.0,  0.95, 0.45],
+    shotEnemy:   [1.0,  0.32, 0.22],
+    wall:        [0.08, 0.22, 0.19],   // dim slab base
+    wallTop:     [0.16, 0.62, 0.50],   // glowing capstone edge
   };
 
+  /* Solid flat-shaded tank (kept for reference / non-wire use). */
   function tank(hullColor) {
     const b = new MeshBuilder();
     // model faces -Z (forward)
@@ -98,6 +124,23 @@ const Geometry = (() => {
     b.tri([-1.0, 1.3, -2.1], [1.0, 1.3, -2.1], [0, 0.6, -2.9], hullColor);
     b.box(0, 1.6, 0.3, 1.5, 0.7, 1.9, hullColor);     // turret
     b.box(0, 1.62, -1.6, 0.28, 0.28, 2.6, C.barrel);  // barrel (points -Z)
+    return b.build();
+  }
+
+  /* Wireframe tank — Spectre-style glowing vector outline. GL_LINES. */
+  function tankWire(hullColor) {
+    const b = new MeshBuilder();
+    // model faces -Z (forward)
+    b.boxEdges(-1.35, 0.45, 0, 0.85, 0.9, 4.4, hullColor); // left tread
+    b.boxEdges( 1.35, 0.45, 0, 0.85, 0.9, 4.4, hullColor); // right tread
+    b.boxEdges(0, 0.85, 0, 2.0, 0.9, 4.2, hullColor);      // hull
+    b.boxEdges(0, 1.6, 0.3, 1.5, 0.7, 1.9, hullColor);     // turret
+    // sloped nose (triangle + lines back to the hull's leading edge)
+    const nl = [-1.0, 1.3, -2.1], nr = [1.0, 1.3, -2.1], na = [0, 0.6, -2.9];
+    b.edge(nl, nr, hullColor).edge(nr, na, hullColor).edge(na, nl, hullColor);
+    b.edge(nl, [-1.0, 1.3, -2.1], hullColor);
+    // gun barrel as a single bright vector line out the front of the turret
+    b.edge([0, 1.62, -0.6], [0, 1.62, -3.0], C.barrel);
     return b.build();
   }
 
@@ -136,18 +179,18 @@ const Geometry = (() => {
     return b.build();
   }
 
-  /* Ground: solid dark plane + bright grid lines (line list, y slightly raised). */
+  /* Ground: near-black plane + cold grid lines (line list, y slightly raised). */
   function ground(half, step) {
     const b = new MeshBuilder();
-    const g = [0.045, 0.10, 0.085];
+    const g = [0.015, 0.035, 0.030]; // almost void, faint cold tint
     b.quad([-half, 0, -half], [-half, 0, half], [half, 0, half], [half, 0, -half], g);
     return b.build();
   }
 
   function gridLines(half, step) {
     const verts = [];
-    const c = [0.12, 0.45, 0.37];
-    const cMajor = [0.20, 0.66, 0.54];
+    const c = [0.07, 0.30, 0.26];
+    const cMajor = [0.14, 0.55, 0.46];
     let i = 0;
     for (let v = -half; v <= half; v += step, i++) {
       const col = (i % 4 === 0) ? cMajor : c;
@@ -159,5 +202,5 @@ const Geometry = (() => {
     return new Float32Array(verts);
   }
 
-  return { MeshBuilder, C, tank, flag, block, pyramidMesh, shot, powerup, wallSegment, ground, gridLines };
+  return { MeshBuilder, C, tank, tankWire, flag, block, pyramidMesh, shot, powerup, wallSegment, ground, gridLines };
 })();
