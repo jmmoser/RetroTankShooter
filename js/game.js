@@ -1,6 +1,6 @@
 /* Core game state: arena generation, player, enemy AI, projectiles, pickups. */
 
-const ARENA_HALF = 130;          // arena is a square, +/- ARENA_HALF
+const ARENA_HALF = 230;          // arena is a square, +/- ARENA_HALF (large, lonely)
 const WALL_PAD = 3;              // keep tanks this far from the wall
 
 const LOADOUTS = [
@@ -9,10 +9,11 @@ const LOADOUTS = [
   { name: 'JUGGERNAUT', speed: 2, armor: 5, ammo: 3 },
 ];
 
+// Tuned harder: faster, more aggressive, longer reach, deadlier hits.
 const ENEMY_TYPES = {
-  drone:  { hp: 50,  speed: 9,  turn: 1.4, fireRange: 60, fireCd: 2.6, aggro: 75,  score: 150, shotSpeed: 38, dmg: 12 },
-  hunter: { hp: 70,  speed: 15, turn: 2.2, fireRange: 50, fireCd: 1.9, aggro: 999, score: 300, shotSpeed: 46, dmg: 15 },
-  sniper: { hp: 60,  speed: 6,  turn: 1.1, fireRange: 110, fireCd: 3.6, aggro: 130, score: 400, shotSpeed: 70, dmg: 22 },
+  drone:  { hp: 60,  speed: 11, turn: 1.5, fireRange: 80,  fireCd: 2.2, aggro: 120, score: 150, shotSpeed: 42, dmg: 14 },
+  hunter: { hp: 85,  speed: 18, turn: 2.4, fireRange: 62,  fireCd: 1.5, aggro: 999, score: 300, shotSpeed: 52, dmg: 18 },
+  sniper: { hp: 75,  speed: 7,  turn: 1.2, fireRange: 145, fireCd: 3.2, aggro: 180, score: 400, shotSpeed: 78, dmg: 26 },
 };
 
 const POWERUP_TYPES = {
@@ -96,12 +97,12 @@ class Game {
     p.x = 0; p.z = ARENA_HALF - 22; p.angle = 0; p.speed = 0;
     p.fx.overdrive = 0; p.fx.rapid = 0;
 
-    this._genObstacles(26 + Math.min(L * 2, 20));
-    this._genFlags(5 + Math.min(L, 9));
+    this._genObstacles(48 + Math.min(L * 3, 36));
+    this._genFlags(6 + Math.min(L, 10));
     this._genEnemies();
     // a couple of starter pickups scattered on the field
     for (let i = 0; i < 2; i++) {
-      const pos = this._findSpot(4, 30);
+      const pos = this._findSpot(4, 40);
       if (pos) this._spawnPowerup(pos[0], pos[1], Math.random() < 0.5 ? 'ammo' : 'shield');
     }
     this.mode = 'playing';
@@ -135,9 +136,10 @@ class Game {
   }
 
   _genObstacles(count) {
+    // cold, desaturated slabs — dim monoliths looming out of the dark
     const palette = [
-      [0.85, 0.25, 0.2], [0.2, 0.55, 0.9], [0.9, 0.75, 0.2],
-      [0.25, 0.8, 0.55], [0.8, 0.4, 0.75], [0.9, 0.5, 0.2],
+      [0.16, 0.30, 0.34], [0.12, 0.24, 0.40], [0.22, 0.32, 0.30],
+      [0.30, 0.26, 0.34], [0.14, 0.34, 0.32], [0.26, 0.30, 0.22],
     ];
     for (let i = 0; i < count; i++) {
       for (let tries = 0; tries < 40; tries++) {
@@ -169,15 +171,15 @@ class Game {
 
   _genEnemies() {
     const L = this.level;
-    const total = Math.min(2 + L, 11);
+    const total = Math.min(4 + Math.floor(L * 1.5), 16);
     for (let i = 0; i < total; i++) {
       let type = 'drone';
-      if (L >= 3 && i % 3 === 1) type = 'hunter';
-      if (L >= 5 && i % 4 === 2) type = 'sniper';
-      const pos = this._findSpot(4, 55);
+      if (L >= 2 && i % 3 === 1) type = 'hunter';
+      if (L >= 4 && i % 4 === 2) type = 'sniper';
+      const pos = this._findSpot(4, 65);
       if (!pos) continue;
       const spec = ENEMY_TYPES[type];
-      const diff = 1 + (L - 1) * 0.06; // gentle per-level scaling
+      const diff = 1 + (L - 1) * 0.085; // steeper per-level scaling
       this.enemies.push({
         type,
         x: pos[0], z: pos[1],

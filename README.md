@@ -1,8 +1,9 @@
 # PHANTOM ARENA — Retro Tank Shooter
 
-A browser-based homage to the flat-shaded 3D tank arena games of the early
-1990s. Drive your hover-tank across a neon grid, secure every flag in the
-sector, and survive the enemy patrols hunting you down.
+A browser-based homage to the wireframe 3D tank arena games of the early
+1990s. Drive your hover-tank across a vast, near-black neon grid, secure
+every flag in the sector, and survive the glowing wireframe hunters that
+emerge from the dark. Sparse, cold and ominous by design.
 
 Built with **zero dependencies** — plain WebGL, Canvas 2D and Web Audio.
 No build step, no assets, no network requests. One folder, open and play.
@@ -43,9 +44,9 @@ Before deploying, allocate your tank's power — a classic trade-off:
 
 ### Enemies
 
-- **Drone** (red) — slow patroller, guards flags
-- **Hunter** (orange, sector 3+) — fast, relentless pursuit
-- **Sniper** (purple, sector 5+) — holds range, hits hard from far away
+- **Drone** (red) — patroller, guards flags
+- **Hunter** (amber, sector 2+) — fast, relentless pursuit
+- **Sniper** (violet, sector 4+) — holds range, hits hard from far away
 
 ### Pickups
 

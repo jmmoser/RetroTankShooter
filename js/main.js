@@ -24,10 +24,10 @@
     block: renderer.createMesh(Geometry.block([1, 1, 1])),
     pyramid: renderer.createMesh(Geometry.pyramidMesh([1, 1, 1])),
     flag: renderer.createMesh(Geometry.flag()),
-    tankDrone: renderer.createMesh(Geometry.tank(Geometry.C.hullEnemy)),
-    tankHunter: renderer.createMesh(Geometry.tank(Geometry.C.hullHunter)),
-    tankSniper: renderer.createMesh(Geometry.tank(Geometry.C.hullSniper)),
-    tankPlayer: renderer.createMesh(Geometry.tank(Geometry.C.hullPlayer)),
+    tankDrone: renderer.createMesh(Geometry.tankWire(Geometry.C.hullEnemy), renderer.gl.LINES),
+    tankHunter: renderer.createMesh(Geometry.tankWire(Geometry.C.hullHunter), renderer.gl.LINES),
+    tankSniper: renderer.createMesh(Geometry.tankWire(Geometry.C.hullSniper), renderer.gl.LINES),
+    tankPlayer: renderer.createMesh(Geometry.tankWire(Geometry.C.hullPlayer), renderer.gl.LINES),
     shotPlayer: renderer.createMesh(Geometry.shot(Geometry.C.shotPlayer)),
     shotEnemy: renderer.createMesh(Geometry.shot(Geometry.C.shotEnemy)),
     powerup: renderer.createMesh(Geometry.powerup()),
@@ -112,12 +112,12 @@
 
   function updateCamera(dt) {
     if (uiMode === 'title' || uiMode === 'setup') {
-      demoT += dt * 0.12;
-      cam.x = Math.cos(demoT) * 70;
-      cam.z = Math.sin(demoT) * 70;
-      cam.y = 26;
+      demoT += dt * 0.1;
+      cam.x = Math.cos(demoT) * 95;
+      cam.z = Math.sin(demoT) * 95;
+      cam.y = 34;
       cam.yaw = angleTo(0 - cam.x, 0 - cam.z); // look at origin
-      cam.pitch = -0.32;
+      cam.pitch = -0.30;
       return;
     }
     const p = game.player;
@@ -171,12 +171,12 @@
 
     for (const e of game.enemies) {
       const tint = e.hitFlash > 0 ? [1 + e.hitFlash * 2, 1 + e.hitFlash * 2, 1 + e.hitFlash * 2] : null;
-      renderer.draw(TANK_MESH[e.type], m4.trs(e.x, 0, e.z, e.angle, 1, 1, 1), tint ? { tint } : undefined);
+      renderer.draw(TANK_MESH[e.type], m4.trs(e.x, 0, e.z, e.angle, 1, 1, 1), { unlit: true, tint });
     }
 
     const p = game.player;
     if (p && p.alive && chaseCam) {
-      renderer.draw(M.tankPlayer, m4.trs(p.x, 0, p.z, p.angle, 1, 1, 1));
+      renderer.draw(M.tankPlayer, m4.trs(p.x, 0, p.z, p.angle, 1, 1, 1), { unlit: true });
     }
 
     for (const pr of game.projectiles) {
