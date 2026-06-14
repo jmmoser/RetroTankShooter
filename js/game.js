@@ -37,6 +37,14 @@ function dist2(ax, az, bx, bz) {
 }
 function rand(a, b) { return a + Math.random() * (b - a); }
 
+// Tints used to tell co-op tanks apart (multiply over the player hull color).
+const PLAYER_TINTS = [
+  [1.0, 1.0, 1.0],   // P1 — stock teal
+  [1.2, 0.7, 1.4],   // P2 — violet
+  [1.4, 1.1, 0.5],   // P3 — amber
+  [0.6, 1.2, 1.4],   // P4 — ice
+];
+
 class Game {
   constructor(hud) {
     this.hud = hud;
@@ -50,17 +58,28 @@ class Game {
     this.projectiles = [];
     this.powerups = [];
     this.particles = [];
-    this.player = null;
-    this.lowShieldWarned = false;
+    this.players = [];     // all tanks in the run (co-op); player[0..n]
+    this.player = null;    // alias to the LOCAL player (for HUD / camera)
+    this.localId = null;
+    this.frameSounds = []; // sfx triggered this update — drained by the net layer
+    this.frameBursts = []; // particle bursts this update — drained by the net layer
     this.levelBonus = 0;
     this.killsThisLevel = 0;
   }
 
-  newRun(loadoutIndex) {
-    const lo = LOADOUTS[loadoutIndex] || LOADOUTS[1];
-    this.level = 1;
-    this.score = 0;
-    this.player = {
+  /* Queue a sound: plays locally and is mirrored to clients by the host. */
+  _sfx(key) {
+    this.frameSounds.push(key);
+    AudioSys.play(key);
+  }
+
+  _makePlayer(def, idx) {
+    const lo = LOADOUTS[def.loadoutIndex] || LOADOUTS[1];
+    const p = {
+      id: def.id,
+      name: def.name || ('PLAYER ' + (idx + 1)),
+      colorIdx: idx % PLAYER_TINTS.length,
+      input: { turn: 0, drive: 0, fire: false },
       x: 0, z: 0, angle: 0,
       speed: 0,
       maxSpeed: 14 + lo.speed * 3.2,
@@ -74,11 +93,39 @@ class Game {
       fireDelay: 0.38,
       fx: { overdrive: 0, rapid: 0 },
       alive: true,
+      respawnT: 0,
+      lowWarned: false,
       loadout: lo.name,
     };
-    this.player.shields = this.player.maxShields;
-    this.player.ammo = this.player.maxAmmo;
+    p.shields = p.maxShields;
+    p.ammo = p.maxAmmo;
+    return p;
+  }
+
+  /* defs: [{ id, name, loadoutIndex }]; localId names the local tank. */
+  newRun(defs, localId) {
+    if (!Array.isArray(defs)) defs = [{ id: 'solo', loadoutIndex: defs }]; // solo back-compat
+    this.level = 1;
+    this.score = 0;
+    this.players = defs.map((d, i) => this._makePlayer(d, i));
+    this.localId = localId != null ? localId : this.players[0].id;
+    this.player = this.players.find((p) => p.id === this.localId) || this.players[0];
     this.startLevel();
+  }
+
+  _anyAlive() {
+    for (const p of this.players) if (p.alive) return true;
+    return false;
+  }
+
+  _nearestPlayer(x, z) {
+    let best = null, bd = Infinity;
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      const d = dist2(x, z, p.x, p.z);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best;
   }
 
   startLevel() {
@@ -90,12 +137,17 @@ class Game {
     this.powerups = [];
     this.particles = [];
     this.shake = 0;
-    this.lowShieldWarned = false;
     this.killsThisLevel = 0;
 
-    const p = this.player;
-    p.x = 0; p.z = ARENA_HALF - 22; p.angle = 0; p.speed = 0;
-    p.fx.overdrive = 0; p.fx.rapid = 0;
+    const n = this.players.length;
+    this.players.forEach((p, i) => {
+      p.x = (i - (n - 1) / 2) * 8;
+      p.z = ARENA_HALF - 22;
+      p.angle = 0; p.speed = 0;
+      p.fx.overdrive = 0; p.fx.rapid = 0;
+      p.alive = true; p.respawnT = 0; p.lowWarned = false;
+      p.input.fire = false;
+    });
 
     this._genObstacles(48 + Math.min(L * 3, 36));
     this._genFlags(6 + Math.min(L, 10));
@@ -209,10 +261,12 @@ class Game {
   // ---- update -------------------------------------------------------------
 
   update(dt) {
+    this.frameSounds.length = 0;
+    this.frameBursts.length = 0;
     if (this.mode !== 'playing') return;
     this.shake = Math.max(0, this.shake - dt * 3);
 
-    this._updatePlayer(dt);
+    for (const p of this.players) this._updatePlayer(p, dt);
     this._updateEnemies(dt);
     this._updateProjectiles(dt);
     this._updatePickups(dt);
@@ -220,19 +274,38 @@ class Game {
 
     for (const f of this.flags) f.spin += dt * 2.2;
 
-    if (this.player.alive && this.flagsLeft() === 0) {
+    if (this._anyAlive() && this.flagsLeft() === 0) {
       this._levelClear();
+    } else if (!this._anyAlive()) {
+      this._beginDeath();
     }
   }
 
-  _updatePlayer(dt) {
-    const p = this.player;
-    if (!p.alive) { AudioSys.setEngine(0); return; }
+  _respawn(p) {
+    // only revive if a teammate is still fighting (otherwise the run is over)
+    if (!this.players.some((o) => o !== p && o.alive)) { p.respawnT = 0; return; }
+    p.x = 0; p.z = ARENA_HALF - 22; p.angle = 0; p.speed = 0;
+    p.alive = true;
+    p.shields = p.maxShields * 0.6;
+    p.ammo = Math.max(p.ammo, Math.round(p.maxAmmo * 0.5));
+    p.lowWarned = false;
+    this._burst(p.x, 1.5, p.z, 24, [0.4, 0.8, 1.0], 10);
+    this._sfx('deploy');
+  }
+
+  _updatePlayer(p, dt) {
+    if (!p.alive) {
+      if (p.respawnT > 0) {
+        p.respawnT -= dt;
+        if (p.respawnT <= 0) this._respawn(p);
+      }
+      return;
+    }
 
     p.fx.overdrive = Math.max(0, p.fx.overdrive - dt);
     p.fx.rapid = Math.max(0, p.fx.rapid - dt);
 
-    const input = Input.axis();
+    const input = p.input;
     const boostMult = (p.fx.overdrive > 0 ? 1.5 : 1);
     const maxSpd = p.maxSpeed * boostMult;
 
@@ -250,7 +323,7 @@ class Game {
     p.z += fwdZ(p.angle) * p.speed * dt;
     this._collideTank(p, 1.9);
 
-    AudioSys.setEngine(Math.abs(p.speed) / p.maxSpeed);
+    const isLocal = p.id === this.localId;
 
     // firing
     p.fireCd -= dt;
@@ -263,23 +336,25 @@ class Game {
         const bz = p.z + fwdZ(p.angle) * 3.2;
         this.projectiles.push({
           x: bx, z: bz, y: 1.6, angle: p.angle,
-          speed: 72, from: 'player', dmg: 25, life: 4,
+          speed: 72, from: 'player', owner: p.id, dmg: 25, life: 4,
         });
-        AudioSys.play('fire');
-        this.shake = Math.min(this.shake + 0.12, 0.5);
+        this._sfx('fire');
+        if (isLocal) this.shake = Math.min(this.shake + 0.12, 0.5);
       } else {
         p.fireCd = 0.3;
-        AudioSys.play('select'); // dry-fire click
-        if (Math.random() < 0.3) this.hud.message('OUT OF AMMO', '#ff4a3c', 1.2);
+        this._sfx('select'); // dry-fire click
+        if (isLocal && Math.random() < 0.3) this.hud.message('OUT OF AMMO', '#ff4a3c', 1.2);
       }
     }
 
-    if (p.shields <= p.maxShields * 0.25 && !this.lowShieldWarned) {
-      this.lowShieldWarned = true;
-      this.hud.message('SHIELDS CRITICAL', '#ff4a3c', 2.5);
-      AudioSys.play('lowShield');
+    if (isLocal) {
+      if (p.shields <= p.maxShields * 0.25 && !p.lowWarned) {
+        p.lowWarned = true;
+        this.hud.message('SHIELDS CRITICAL', '#ff4a3c', 2.5);
+        this._sfx('lowShield');
+      }
+      if (p.shields > p.maxShields * 0.35) p.lowWarned = false;
     }
-    if (p.shields > p.maxShields * 0.35) this.lowShieldWarned = false;
   }
 
   _collideTank(t, radius) {
@@ -313,11 +388,11 @@ class Game {
   }
 
   _updateEnemies(dt) {
-    const p = this.player;
     for (const e of this.enemies) {
       e.hitFlash = Math.max(0, e.hitFlash - dt * 4);
-      const distP = Math.hypot(p.x - e.x, p.z - e.z);
-      const hunting = p.alive && distP < e.aggro;
+      const p = this._nearestPlayer(e.x, e.z);
+      const distP = p ? Math.hypot(p.x - e.x, p.z - e.z) : Infinity;
+      const hunting = !!p && distP < e.aggro;
 
       // pick a destination
       let tx, tz;
@@ -377,7 +452,7 @@ class Game {
 
       // fire at player
       e.fireCd -= dt;
-      if (p.alive && hunting && distP < e.fireRange && e.fireCd <= 0) {
+      if (hunting && distP < e.fireRange && e.fireCd <= 0) {
         const aimDiff = Math.abs(wrapAngle(angleTo(p.x - e.x, p.z - e.z) - e.angle));
         if (aimDiff < 0.12 && this._losClear(e.x, e.z, p.x, p.z)) {
           e.fireCd = e.fireDelay;
@@ -387,14 +462,13 @@ class Game {
             y: 1.6, angle: e.angle,
             speed: e.shotSpeed, from: 'enemy', dmg: e.dmg, life: 4,
           });
-          AudioSys.play('enemyFire');
+          this._sfx('enemyFire');
         }
       }
     }
   }
 
   _updateProjectiles(dt) {
-    const p = this.player;
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const pr = this.projectiles[i];
       pr.life -= dt;
@@ -407,7 +481,7 @@ class Game {
       if (!dead && this._collidesObstacle(pr.x, pr.z, 0.4)) {
         dead = true;
         this._burst(pr.x, 1.6, pr.z, 8, [1, 0.8, 0.4], 6);
-        AudioSys.play('hitWall');
+        this._sfx('hitWall');
       }
 
       if (!dead && pr.from === 'player') {
@@ -419,14 +493,18 @@ class Game {
             e.hitFlash = 1;
             this._burst(e.x, 1.5, e.z, 10, [1, 0.6, 0.3], 8);
             if (e.hp <= 0) this._killEnemy(j);
-            else AudioSys.play('hitEnemy');
+            else this._sfx('hitEnemy');
             break;
           }
         }
-      } else if (!dead && pr.from === 'enemy' && p.alive) {
-        if (dist2(pr.x, pr.z, p.x, p.z) < 2.4 * 2.4) {
-          dead = true;
-          this._damagePlayer(pr.dmg);
+      } else if (!dead && pr.from === 'enemy') {
+        for (const pl of this.players) {
+          if (!pl.alive) continue;
+          if (dist2(pr.x, pr.z, pl.x, pl.z) < 2.4 * 2.4) {
+            dead = true;
+            this._damagePlayer(pl, pr.dmg);
+            break;
+          }
         }
       }
 
@@ -441,7 +519,7 @@ class Game {
     this.killsThisLevel++;
     this._burst(e.x, 1.5, e.z, 34, [1, 0.55, 0.15], 14);
     this._burst(e.x, 1.5, e.z, 16, [0.9, 0.9, 0.9], 9);
-    AudioSys.play('explosion');
+    this._sfx('explosion');
     this.shake = Math.min(this.shake + 0.4, 1);
     // chance to drop a pickup
     if (Math.random() < 0.35) {
@@ -450,40 +528,43 @@ class Game {
     }
   }
 
-  _damagePlayer(dmg) {
-    const p = this.player;
+  _damagePlayer(p, dmg) {
+    const isLocal = p.id === this.localId;
     p.shields -= dmg;
-    this.hud.damage(Math.min(0.8, dmg / 30));
-    this.shake = Math.min(this.shake + 0.5, 1.2);
-    AudioSys.play('hitPlayer');
+    if (isLocal) {
+      this.hud.damage(Math.min(0.8, dmg / 30));
+      this.shake = Math.min(this.shake + 0.5, 1.2);
+    }
+    this._sfx('hitPlayer');
     this._burst(p.x, 1.5, p.z, 12, [1, 0.4, 0.2], 8);
     if (p.shields <= 0) {
       p.shields = 0;
       p.alive = false;
+      p.respawnT = 4;
       this._burst(p.x, 1.5, p.z, 60, [1, 0.5, 0.1], 18);
       this._burst(p.x, 2.5, p.z, 30, [1, 0.9, 0.6], 12);
-      AudioSys.play('bigExplosion');
-      AudioSys.setEngine(0);
-      this.shake = 2;
-      this.mode = 'dying';
-      this.deathTimer = 2.2;
+      this._sfx('bigExplosion');
+      if (isLocal) this.shake = 2;
     }
   }
 
   _updatePickups(dt) {
-    const p = this.player;
-    // flags
-    if (p.alive) {
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      const isLocal = p.id === this.localId;
+      // flags
       for (const f of this.flags) {
         if (f.taken) continue;
         if (dist2(p.x, p.z, f.x, f.z) < 3.4 * 3.4) {
           f.taken = true;
           this.score += 100 * this.level;
           this._burst(f.x, 2.5, f.z, 18, [0.3, 1, 0.5], 8);
-          AudioSys.play('flag');
-          this.hud.pickup();
+          this._sfx('flag');
+          if (isLocal) this.hud.pickup();
           const left = this.flagsLeft();
-          this.hud.message(left > 0 ? `FLAG SECURED — ${left} LEFT` : 'ALL FLAGS SECURED', '#3cff78', 1.6);
+          if (isLocal) {
+            this.hud.message(left > 0 ? `FLAG SECURED — ${left} LEFT` : 'ALL FLAGS SECURED', '#3cff78', 1.6);
+          }
         }
       }
       // powerups
@@ -491,7 +572,7 @@ class Game {
         const u = this.powerups[i];
         if (dist2(p.x, p.z, u.x, u.z) < 3.2 * 3.2) {
           this.powerups.splice(i, 1);
-          this._applyPowerup(u.type);
+          this._applyPowerup(p, u.type);
         }
       }
     }
@@ -501,8 +582,7 @@ class Game {
     }
   }
 
-  _applyPowerup(type) {
-    const p = this.player;
+  _applyPowerup(p, type) {
     const spec = POWERUP_TYPES[type];
     switch (type) {
       case 'ammo':   p.ammo = Math.min(p.maxAmmo, p.ammo + 18); break;
@@ -511,12 +591,15 @@ class Game {
       case 'rapid':     p.fx.rapid = 10; break;
     }
     this.score += 50;
-    AudioSys.play('powerup');
-    this.hud.pickup();
-    this.hud.message(spec.label, '#ffd24a', 1.4);
+    this._sfx('powerup');
+    if (p.id === this.localId) {
+      this.hud.pickup();
+      this.hud.message(spec.label, '#ffd24a', 1.4);
+    }
   }
 
   _burst(x, y, z, n, color, power) {
+    this.frameBursts.push({ x, y, z, n, c: color, p: power });
     for (let i = 0; i < n; i++) {
       const a = rand(0, Math.PI * 2);
       const v = rand(power * 0.25, power);
@@ -546,28 +629,41 @@ class Game {
   }
 
   _levelClear() {
-    const p = this.player;
+    let sh = 0, am = 0;
+    for (const p of this.players) { sh += Math.max(0, p.shields); am += p.ammo; }
     this.levelBonus = this.level * 250 +
-      Math.round(p.shields) * 3 +
-      p.ammo * 5 +
+      Math.round(sh) * 3 +
+      am * 5 +
       this.killsThisLevel * 50;
     this.score += this.levelBonus;
     this.mode = 'levelclear';
-    AudioSys.play('levelClear');
-    AudioSys.setEngine(0);
+    this._sfx('levelClear');
+  }
+
+  _beginDeath() {
+    if (this.mode !== 'playing') return;
+    this.mode = 'dying';
+    this.deathTimer = 2.2;
+    this.shake = 2;
   }
 
   nextLevel() {
-    const p = this.player;
     this.level++;
-    // partial resupply between sectors
-    p.shields = Math.min(p.maxShields, p.shields + p.maxShields * 0.4);
-    p.ammo = Math.min(p.maxAmmo, p.ammo + Math.round(p.maxAmmo * 0.6));
+    // partial resupply between sectors; revive anyone who fell
+    for (const p of this.players) {
+      const wasDead = !p.alive;
+      p.alive = true; p.respawnT = 0; p.lowWarned = false;
+      const base = wasDead ? 0 : p.shields;
+      p.shields = Math.min(p.maxShields, base + p.maxShields * 0.4);
+      p.ammo = Math.min(p.maxAmmo, (wasDead ? 0 : p.ammo) + Math.round(p.maxAmmo * 0.6));
+    }
     this.startLevel();
   }
 
   /* during 'dying': keep simulating particles & enemies for drama */
   updateDying(dt) {
+    this.frameSounds.length = 0;
+    this.frameBursts.length = 0;
     this.deathTimer -= dt;
     this.shake = Math.max(0, this.shake - dt * 1.2);
     this._updateParticles(dt);
@@ -575,7 +671,7 @@ class Game {
     for (const f of this.flags) f.spin += dt * 2.2;
     if (this.deathTimer <= 0) {
       this.mode = 'gameover';
-      AudioSys.play('gameOver');
+      this._sfx('gameOver');
     }
   }
 }

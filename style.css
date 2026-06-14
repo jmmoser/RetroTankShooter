@@ -231,3 +231,78 @@ html, body {
 }
 .clear-stats .gold { color: #e8c75a; }
 .clear-stats .red { color: #ff5a4e; }
+
+/* ---------- co-op multiplayer ---------- */
+.title-coop {
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: #e8c75a;
+  text-shadow: 0 0 8px rgba(232, 199, 90, 0.45);
+}
+
+.lobby-roster {
+  display: flex; flex-direction: column; gap: 6px;
+  width: min(360px, 80vw);
+  min-height: 40px;
+}
+.roster-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px;
+  border: 1px solid rgba(79, 214, 187, 0.28);
+  background: rgba(12, 32, 27, 0.6);
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: var(--teal-bright);
+}
+.roster-dot {
+  width: 10px; height: 10px; flex: 0 0 auto;
+  box-shadow: 0 0 6px currentColor;
+  background: currentColor;
+}
+.roster-dot.c0 { color: #4fd6bb; }
+.roster-dot.c1 { color: #b07bd6; }
+.roster-dot.c2 { color: #e8c75a; }
+.roster-dot.c3 { color: #6fc7e8; }
+.roster-you { color: rgba(79, 214, 187, 0.6); font-size: 11px; }
+.roster-lo { margin-left: auto; color: rgba(79, 214, 187, 0.7); font-size: 11px; }
+
+.lobby-loadouts {
+  display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
+}
+.ll {
+  padding: 8px 14px;
+  border: 1px solid rgba(79, 214, 187, 0.35);
+  background: rgba(12, 32, 27, 0.6);
+  cursor: pointer;
+  font-size: 12px; letter-spacing: 2px;
+  color: var(--teal-bright);
+  transition: border-color 0.12s, background 0.12s;
+}
+.ll:hover { border-color: var(--teal-bright); }
+.ll.selected {
+  border-color: var(--teal-bright);
+  background: rgba(47, 160, 140, 0.22);
+  box-shadow: 0 0 12px rgba(79, 214, 187, 0.3);
+}
+.ll .lo-key { margin: 0 4px 0 0; }
+
+.join-input {
+  width: min(260px, 70vw);
+  padding: 12px 16px;
+  background: rgba(5, 18, 14, 0.9);
+  border: 1px solid var(--teal);
+  outline: none;
+  color: var(--teal-bright);
+  font-family: "Courier New", monospace;
+  font-size: 30px;
+  font-weight: bold;
+  letter-spacing: 12px;
+  text-align: center;
+  text-transform: uppercase;
+  text-shadow: 0 0 10px rgba(79, 214, 187, 0.7);
+}
+.join-input:focus { box-shadow: 0 0 16px rgba(79, 214, 187, 0.45); }
+.join-error {
+  font-size: 12px; letter-spacing: 2px; min-height: 16px;
+  color: #ff5a4e;
+}

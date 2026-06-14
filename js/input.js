@@ -13,7 +13,13 @@ const Input = (() => {
     ShiftLeft: 'boost', ShiftRight: 'boost',
   };
 
+  function typingInField(e) {
+    const el = e.target;
+    return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+  }
+
   window.addEventListener('keydown', (e) => {
+    if (typingInField(e)) return; // let text fields (e.g. room code) receive keys
     if (e.repeat) {
       if (KEYMAP[e.code]) e.preventDefault();
       return;
@@ -29,6 +35,7 @@ const Input = (() => {
   });
 
   window.addEventListener('keyup', (e) => {
+    if (typingInField(e)) return;
     const action = KEYMAP[e.code];
     if (action) { keys[action] = false; e.preventDefault(); }
   });

@@ -26,11 +26,41 @@
       </div>
     </div>
     <div class="press-start blink">PRESS ENTER TO DEPLOY</div>
+    <div class="title-coop">CO-OP &nbsp; H &nbsp;HOST GAME &nbsp;&middot;&nbsp; J &nbsp;JOIN GAME</div>
     <div class="title-help">
       &uarr;&darr; / W S &nbsp;DRIVE &nbsp;&nbsp; &larr;&rarr; / A D &nbsp;STEER &nbsp;&nbsp; SPACE &nbsp;FIRE<br>
       C &nbsp;CAMERA &nbsp;&nbsp; M &nbsp;SOUND &nbsp;&nbsp; P &nbsp;PAUSE
     </div>
     <div id="title-high" class="title-high"></div>
+  </div>
+
+  <!-- MULTIPLAYER LOBBY -->
+  <div id="screen-lobby" class="screen hidden">
+    <div class="panel">
+      <div class="panel-head">CO-OP LOBBY</div>
+      <div id="lobby-code" class="panel-sub"></div>
+      <div id="lobby-roster" class="lobby-roster"></div>
+      <div class="panel-sub">CHOOSE YOUR CHASSIS</div>
+      <div id="lobby-loadouts" class="lobby-loadouts">
+        <div class="ll" data-i="0"><span class="lo-key">1</span> SCOUT</div>
+        <div class="ll selected" data-i="1"><span class="lo-key">2</span> VANGUARD</div>
+        <div class="ll" data-i="2"><span class="lo-key">3</span> JUGGERNAUT</div>
+      </div>
+      <div id="lobby-hint" class="press-start blink"></div>
+      <div class="title-help">ESC &nbsp;LEAVE LOBBY</div>
+    </div>
+  </div>
+
+  <!-- JOIN CODE ENTRY -->
+  <div id="screen-join" class="screen hidden">
+    <div class="panel small">
+      <div class="panel-head">JOIN CO-OP</div>
+      <div class="panel-sub">ENTER ROOM CODE</div>
+      <input id="join-code" class="join-input" maxlength="4" autocomplete="off"
+             autocapitalize="characters" spellcheck="false" inputmode="text">
+      <div class="press-start">ENTER &nbsp;CONNECT &nbsp;&middot;&nbsp; ESC &nbsp;CANCEL</div>
+      <div id="join-error" class="join-error"></div>
+    </div>
   </div>
 
   <!-- LOADOUT SCREEN -->
@@ -92,12 +122,14 @@
   </div>
 </div>
 
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/input.js"></script>
 <script src="js/geometry.js"></script>
 <script src="js/renderer.js"></script>
 <script src="js/hud.js"></script>
 <script src="js/game.js"></script>
+<script src="js/net.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>
