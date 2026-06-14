@@ -5,8 +5,10 @@ A browser-based homage to the wireframe 3D tank arena games of the early
 every flag in the sector, and survive the glowing wireframe hunters that
 emerge from the dark. Sparse, cold and ominous by design.
 
-Built with **zero dependencies** — plain WebGL, Canvas 2D and Web Audio.
-No build step, no assets, no network requests. One folder, open and play.
+Built with **plain WebGL, Canvas 2D and Web Audio** — no build step and no
+assets. Single-player runs with zero dependencies and makes no network
+requests. Optional **online co-op** adds one small library (PeerJS, loaded
+from a CDN) for peer-to-peer connections; nothing else needs to be hosted.
 
 ## Play
 
@@ -29,10 +31,36 @@ and will hunt you on sight. Your hull is gone when shields hit zero.
 | `A D` / `← →` | Steer |
 | `Space` / click | Fire cannon |
 | `C` | Toggle first-person / chase camera |
-| `P` / `Esc` | Pause |
+| `P` / `Esc` | Pause (single-player) |
 | `M` | Toggle sound |
+| `H` | Host an online co-op game |
+| `J` | Join a co-op game by room code |
 
 Touch devices: left half of the screen steers and drives, right half fires.
+
+## Online co-op
+
+Up to **four players** can clear sectors together over the internet — and it
+still works on plain static hosting like GitHub Pages, because there is no
+game server to run.
+
+- One player presses **`H`** to host and is given a 4-character **room code**.
+- Everyone else presses **`J`** and types that code to join the lobby.
+- The host presses **Enter** to launch; teammates spawn alongside each other.
+
+Fallen tanks respawn after a few seconds as long as a teammate is still
+fighting; if everyone is destroyed at once, the run ends. Each sector restores
+the whole squad.
+
+**How it works.** It's **host-authoritative peer-to-peer over WebRTC**
+([PeerJS](https://peerjs.com/)). The host's browser runs the authoritative
+simulation and streams snapshots to the others, who send their input back up.
+Signaling uses PeerJS's free public broker, so the game stays a pile of static
+files — perfect for GitHub Pages. Best for 2–4 players on reasonable
+connections; the host has zero latency, and joiners feel a little network lag
+on their own tank. (Want dedicated rooms, matchmaking or reconnects? Swap the
+`js/net.js` transport for a hosted realtime backend such as Firebase, Supabase,
+PartyKit or Ably — the rest of the game is unchanged.)
 
 ### Vehicle configuration
 
@@ -65,7 +93,8 @@ js/input.js     keyboard / mouse / touch
 js/geometry.js  procedural low-poly meshes
 js/renderer.js  minimal WebGL flat-shaded renderer + mat4 helpers
 js/hud.js       radar, shields/ammo bars, messages (Canvas 2D)
-js/game.js      arena generation, player, enemy AI, projectiles, pickups
+js/game.js      arena generation, players, enemy AI, projectiles, pickups
+js/net.js       WebRTC co-op networking (host-authoritative, PeerJS)
 js/main.js      screen flow, camera, scene drawing, main loop
 ```
 
