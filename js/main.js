@@ -223,6 +223,7 @@
     game.obstacles = []; game.flags = []; game.enemies = [];
     game.projectiles = []; game.powerups = []; game.particles = [];
     game.mode = 'playing';
+    game._prevSh = null; game._prevAlive = null;  // reset damage-feedback tracking
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
@@ -262,7 +263,16 @@
   Net.cb.onError = (text) => {
     if (uiMode === 'join') { joinError.textContent = text; }
     else if (uiMode === 'lobby') { lobbyHintEl.textContent = text; lobbyCodeEl.textContent = 'CONNECTION FAILED'; }
-    else if (uiMode === 'playing' || uiMode === 'levelclear') { hud.message(text, '#ff4a3c', 4); }
+    else {
+      // mid-game error — if a client loses the host, bail out to the title
+      hud.message(text, '#ff4a3c', 4);
+      if (Net.role === 'client') leaveToTitle();
+    }
+  };
+  // A teammate dropped: stop their now-frozen tank from driving/firing forever.
+  Net.cb.onPeerLeft = (id) => {
+    const p = game.players && game.players.find((pp) => pp.id === id);
+    if (p && p.input) { p.input.turn = 0; p.input.drive = 0; p.input.fire = false; }
   };
   Net.cb.onStart = (defs, localId) => startClientRun(defs, localId);
   Net.cb.onLevel = (msg) => {
@@ -480,6 +490,7 @@
 
   // client: advance purely cosmetic state between snapshots
   function clientCosmetics(dt) {
+    game.shake = Math.max(0, game.shake - dt * 3);
     game._updateParticles(dt);
     for (const f of game.flags) f.spin += dt * 2.2;
     for (const u of game.powerups) { u.spin += dt * 2.5; u.bob += dt * 3; }

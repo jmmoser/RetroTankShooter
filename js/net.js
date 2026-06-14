@@ -249,8 +249,10 @@ const Net = (() => {
     game.frameBursts.length = 0;
     game.mode = msg.md;
     game.score = msg.sc;
-    game.shake = msg.sk;
     game.level = msg.lv;
+    // NOTE: msg.sk (the host's shake) is intentionally ignored — screen shake is
+    // local feedback, so each client owns its own (decayed in main's client loop,
+    // bumped below when THIS player takes damage).
 
     const byId = {};
     for (const p of game.players) byId[p.id] = p;
@@ -264,6 +266,20 @@ const Net = (() => {
       return p;
     });
     game.player = game.players.find((p) => p.id === game.localId) || game.players[0];
+
+    // local damage feedback (clients don't run the sim, so derive it from the snapshot)
+    const lp = game.player;
+    if (lp) {
+      const prevSh = game._prevSh == null ? lp.shields : game._prevSh;
+      const prevAlive = game._prevAlive == null ? lp.alive : game._prevAlive;
+      if (lp.shields < prevSh - 0.01) {
+        game.hud.damage(Math.min(0.8, (prevSh - lp.shields) / 30));
+        game.shake = Math.min(1.2, game.shake + 0.5);
+      }
+      if (prevAlive && !lp.alive) game.shake = 2;
+      game._prevSh = lp.shields;
+      game._prevAlive = lp.alive;
+    }
 
     game.enemies = msg.en.map((d) => ({ type: ENEMY_ORDER[d.k] || 'drone', x: d.x, z: d.z, angle: d.a, hitFlash: d.h }));
     game.projectiles = msg.pr.map((d) => ({ x: d.x, y: d.y, z: d.z, angle: d.a, from: d.e ? 'enemy' : 'player' }));
