@@ -102,6 +102,7 @@ const Geometry = (() => {
     hullEnemy:   [1.0,  0.28, 0.22],   // hostile red
     hullHunter:  [1.0,  0.62, 0.12],   // amber
     hullSniper:  [0.78, 0.42, 1.0],    // violet
+    hullPhantom: [0.62, 0.92, 0.95],   // ghostly ice
     hullPlayer:  [0.25, 1.0,  0.82],   // friendly cyan
     tread:       [0.10, 0.12, 0.12],
     barrel:      [0.85, 0.92, 0.88],
@@ -109,6 +110,7 @@ const Geometry = (() => {
     flagCloth:   [0.20, 1.0,  0.45],
     shotPlayer:  [1.0,  0.95, 0.45],
     shotEnemy:   [1.0,  0.32, 0.22],
+    shotNade:    [0.55, 1.0,  0.35],
     wall:        [0.08, 0.22, 0.19],   // dim slab base
     wallTop:     [0.16, 0.62, 0.50],   // glowing capstone edge
   };
@@ -124,6 +126,68 @@ const Geometry = (() => {
     b.tri([-1.0, 1.3, -2.1], [1.0, 1.3, -2.1], [0, 0.6, -2.9], hullColor);
     b.box(0, 1.6, 0.3, 1.5, 0.7, 1.9, hullColor);     // turret
     b.box(0, 1.62, -1.6, 0.28, 0.28, 2.6, C.barrel);  // barrel (points -Z)
+    return b.build();
+  }
+
+  /* Solid flat-shaded hovertank — the sleek Spectre wedge. Model faces -Z.
+   * A low arrowhead chassis, angular canopy pod, and a forward cannon; the
+   * per-face lighting gives it the classic faceted look. */
+  function tankSolid(hull) {
+    const b = new MeshBuilder();
+    const dark = [hull[0] * 0.45, hull[1] * 0.45, hull[2] * 0.45];
+    const mid  = [hull[0] * 0.75, hull[1] * 0.75, hull[2] * 0.75];
+
+    // chassis outlines: bottom (outset) and top (inset) pentagons.
+    // order: nose, left shoulder, left tail, right tail, right shoulder
+    const yb = 0.28, yt = 1.15;
+    const bot = [
+      [0, yb, -3.4], [-2.3, yb, -0.6], [-1.8, yb, 2.5], [1.8, yb, 2.5], [2.3, yb, -0.6],
+    ];
+    const top = [
+      [0, yt, -2.2], [-1.5, yt, -0.3], [-1.2, yt, 2.2], [1.2, yt, 2.2], [1.5, yt, -0.3],
+    ];
+    // top deck (fan from the nose, left-side-first = CCW seen from above)
+    b.tri(top[0], top[1], top[2], hull);
+    b.tri(top[0], top[2], top[3], hull);
+    b.tri(top[0], top[3], top[4], hull);
+    // underside (reverse winding)
+    b.tri(bot[0], bot[4], bot[3], dark);
+    b.tri(bot[0], bot[3], bot[2], dark);
+    b.tri(bot[0], bot[2], bot[1], dark);
+    // skirt walls, following the top outline direction
+    for (let i = 0; i < 5; i++) {
+      const j = (i + 1) % 5;
+      b.quad(bot[i], bot[j], top[j], top[i], mid);
+    }
+
+    // canopy pod behind midship + sloped windshield down to the deck
+    b.box(0, 1.45, 1.0, 1.3, 0.6, 1.5, dark);
+    b.quad([-0.65, yt, -0.9], [0.65, yt, -0.9], [0.65, 1.75, 0.25], [-0.65, 1.75, 0.25], mid);
+
+    // cannon out over the nose
+    b.box(0, 1.05, -2.4, 0.26, 0.26, 2.6, C.barrel);
+    return b.build();
+  }
+
+  /* Single two-sided triangle — the polygon shards a dying tank bursts into. */
+  function shard() {
+    const b = new MeshBuilder();
+    const a = [0, 0, -0.9], p2 = [0.8, 0, 0.6], p3 = [-0.7, 0.15, 0.5];
+    const w = [1, 1, 1];
+    b.tri(a, p2, p3, w);
+    b.tri(a, p3, p2, w);
+    return b.build();
+  }
+
+  /* Resupply pad: flat glowing plate with four corner pylons. Tinted at draw. */
+  function depot() {
+    const b = new MeshBuilder();
+    const w = [1, 1, 1], dim = [0.4, 0.4, 0.4];
+    b.quad([-3.5, 0.07, -3.5], [-3.5, 0.07, 3.5], [3.5, 0.07, 3.5], [3.5, 0.07, -3.5], w);
+    for (const [px, pz] of [[-3.5, -3.5], [3.5, -3.5], [3.5, 3.5], [-3.5, 3.5]]) {
+      b.box(px, 0.7, pz, 0.5, 1.4, 0.5, dim);
+      b.box(px, 1.5, pz, 0.6, 0.2, 0.6, w);
+    }
     return b.build();
   }
 
@@ -189,8 +253,8 @@ const Geometry = (() => {
 
   function gridLines(half, step) {
     const verts = [];
-    const c = [0.07, 0.30, 0.26];
-    const cMajor = [0.14, 0.55, 0.46];
+    const c = [0.09, 0.36, 0.31];
+    const cMajor = [0.18, 0.66, 0.55];
     let i = 0;
     for (let v = -half; v <= half; v += step, i++) {
       const col = (i % 4 === 0) ? cMajor : c;
@@ -202,5 +266,5 @@ const Geometry = (() => {
     return new Float32Array(verts);
   }
 
-  return { MeshBuilder, C, tank, tankWire, flag, block, pyramidMesh, shot, powerup, wallSegment, ground, gridLines };
+  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, wallSegment, ground, gridLines };
 })();

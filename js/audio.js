@@ -106,6 +106,19 @@ const AudioSys = (() => {
       notes.forEach((f, i) => tone('sawtooth', f, f * 0.97, 0.3, 0.3, i * 0.22));
     },
     lowShield()  { tone('square', 880, 880, 0.06, 0.22); tone('square', 880, 880, 0.06, 0.22, 0.12); },
+    bounce()     { tone('square', 90, 45, 0.14, 0.4); noise(0.1, 0.25, 900, 200); },
+    nade()       { tone('triangle', 140, 60, 0.22, 0.4); noise(0.12, 0.2, 1200, 300); },
+    nadeBoom()   {
+      noise(0.8, 0.65, 1000, 50);
+      tone('sawtooth', 95, 22, 0.7, 0.45);
+      tone('square', 60, 20, 0.9, 0.35, 0.05);
+    },
+    boost()      { noise(0.4, 0.22, 500, 4000); tone('sawtooth', 110, 320, 0.35, 0.15); },
+    refuel()     { tone('square', 1040, 1240, 0.05, 0.14); },
+    cloak()      {
+      tone('triangle', 1600, 400, 0.5, 0.18);
+      tone('triangle', 1900, 500, 0.5, 0.12, 0.06);
+    },
     select()     { tone('square', 880, 880, 0.05, 0.2); },
     deploy()     { tone('square', 220, 880, 0.35, 0.3); noise(0.3, 0.15, 600, 3000); },
   };

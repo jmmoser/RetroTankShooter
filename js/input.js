@@ -10,6 +10,7 @@ const Input = (() => {
     ArrowLeft: 'left', KeyA: 'left',
     ArrowRight: 'right', KeyD: 'right',
     Space: 'fire',
+    KeyX: 'nade', ControlLeft: 'nade',
     ShiftLeft: 'boost', ShiftRight: 'boost',
   };
 
@@ -40,17 +41,22 @@ const Input = (() => {
     if (action) { keys[action] = false; e.preventDefault(); }
   });
 
+  let nadeHeld = false;
   window.addEventListener('mousedown', (e) => {
     AudioSys.resume();
     if (e.button === 0) { fireHeld = true; pressed['fire'] = true; }
+    if (e.button === 2) { nadeHeld = true; pressed['nade'] = true; }
   });
   window.addEventListener('mouseup', (e) => {
     if (e.button === 0) fireHeld = false;
+    if (e.button === 2) nadeHeld = false;
   });
+  window.addEventListener('contextmenu', (e) => e.preventDefault());
 
   window.addEventListener('blur', () => {
     for (const k in keys) keys[k] = false;
     fireHeld = false;
+    nadeHeld = false;
   });
 
   // -- minimal touch support: left half = steer/drive pad, right half = fire
@@ -86,6 +92,7 @@ const Input = (() => {
       turn: Math.max(-1, Math.min(1, turn)),
       drive: Math.max(-1, Math.min(1, drive)),
       fire: keys.fire || fireHeld,
+      nade: keys.nade || nadeHeld,
       boost: !!keys.boost,
     };
   }

@@ -4,6 +4,7 @@ class HUD {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.messages = []; // {text, t, dur, color}
+    this.pops = [];     // floating score popups {text, t}
     this.flash = 0;     // red damage flash 0..1
     this.pickupFlash = 0;
   }
@@ -26,6 +27,11 @@ class HUD {
 
   damage(amount01) { this.flash = Math.min(1, this.flash + amount01); }
   pickup() { this.pickupFlash = 0.5; }
+
+  scorePop(text) {
+    this.pops.push({ text, t: 0 });
+    if (this.pops.length > 5) this.pops.shift();
+  }
 
   clear() {
     this.resize();
@@ -61,7 +67,23 @@ class HUD {
     this._crosshair(ctx, W, H, s);
     this._radar(ctx, W, H, s, game);
     this._bars(ctx, W, H, s, game);
+    this._scorePops(ctx, W, H, s, dt);
     this._renderMessages(ctx, W, H, s, dt);
+  }
+
+  _scorePops(ctx, W, H, s, dt) {
+    ctx.textAlign = 'left';
+    ctx.font = `bold ${Math.round(15 * s)}px "Courier New", monospace`;
+    for (let i = this.pops.length - 1; i >= 0; i--) {
+      const p = this.pops[i];
+      p.t += dt;
+      if (p.t > 1.1) { this.pops.splice(i, 1); continue; }
+      const a = Math.min(1, (1.1 - p.t) / 0.4);
+      ctx.globalAlpha = a;
+      ctx.fillStyle = '#e8c75a';
+      ctx.fillText(p.text, W / 2 + 34 * s, H / 2 - 20 * s - p.t * 42 * s - i * 18 * s);
+      ctx.globalAlpha = 1;
+    }
   }
 
   _crosshair(ctx, W, H, s) {
@@ -151,8 +173,17 @@ class HUD {
       ctx.fillRect(bx - 2 * s, by - 2 * s, 4 * s, 4 * s);
     }
 
+    // resupply depots: hollow squares in their pad color
+    ctx.lineWidth = Math.max(1, 1.4 * s);
+    for (const d of (game.depots || [])) {
+      const [bx, by] = toRadar(d.x, d.z);
+      ctx.strokeStyle = d.type === 'ammo' ? '#e8c75a' : '#4dff9e';
+      ctx.strokeRect(bx - 3 * s, by - 3 * s, 6 * s, 6 * s);
+    }
+
     ctx.fillStyle = '#ff4a3c';
     for (const e of game.enemies) {
+      if (e.cloak > 0.6) continue; // cloaked phantoms hide from radar too
       const [bx, by] = toRadar(e.x, e.z);
       ctx.beginPath();
       ctx.arc(bx, by, 3.2 * s, 0, Math.PI * 2);
@@ -192,8 +223,22 @@ class HUD {
       ctx.fillRect(bx + 2 * s, by + 2 * s, (bw - 4 * s) * sh01, bh - 4 * s);
     }
 
+    // boost gauge just above the shields bar
+    if (p.maxBoost) {
+      const bo01 = Math.max(0, Math.min(1, p.boost / p.maxBoost));
+      const gy = by - 32 * s, gh = 6 * s;
+      ctx.font = font(11, true);
+      ctx.fillStyle = 'rgba(111,199,232,0.9)';
+      ctx.fillText('BOOST', bx, gy - 8 * s);
+      ctx.strokeStyle = 'rgba(111,199,232,0.6)';
+      ctx.strokeRect(bx, gy, bw * 0.7, gh);
+      ctx.fillStyle = p.boosting ? '#bfeaff' : '#6fc7e8';
+      ctx.fillRect(bx + s, gy + s, (bw * 0.7 - 2 * s) * bo01, gh - 2 * s);
+    }
+
     // ammo pips
-    const ay = by - 38 * s;
+    const ay = by - 68 * s;
+    ctx.font = font(13, true);
     ctx.fillStyle = 'rgba(79,214,187,0.9)';
     ctx.fillText('AMMO ' + p.ammo, bx, ay - 12 * s);
     const pipW = 7 * s, pipH = 10 * s, gap = 3 * s;
@@ -204,6 +249,25 @@ class HUD {
       const filled = p.ammo >= (i + 1) * perPip - 0.001;
       ctx.fillStyle = filled ? '#e8c75a' : 'rgba(79,214,187,0.18)';
       ctx.fillRect(bx + i * (pipW + gap), ay, pipW, pipH);
+    }
+
+    // grenade diamonds under the ammo row
+    if (p.maxNades) {
+      const ny = ay - 34 * s;
+      ctx.fillStyle = 'rgba(140,255,110,0.9)';
+      ctx.fillText('NADES', bx, ny - 2 * s);
+      for (let i = 0; i < p.maxNades; i++) {
+        const cx2 = bx + 78 * s + i * 18 * s, cy2 = ny - 2 * s;
+        const r = 5.5 * s;
+        ctx.beginPath();
+        ctx.moveTo(cx2, cy2 - r);
+        ctx.lineTo(cx2 + r, cy2);
+        ctx.lineTo(cx2, cy2 + r);
+        ctx.lineTo(cx2 - r, cy2);
+        ctx.closePath();
+        if (i < (p.nades || 0)) { ctx.fillStyle = '#8cff6e'; ctx.fill(); }
+        else { ctx.strokeStyle = 'rgba(140,255,110,0.3)'; ctx.lineWidth = Math.max(1, s); ctx.stroke(); }
+      }
     }
 
     // ---- bottom-right: score / level / flags
