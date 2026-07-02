@@ -1,9 +1,10 @@
 # PHANTOM ARENA — Retro Tank Shooter
 
-A browser-based homage to the wireframe 3D tank arena games of the early
+A browser-based homage to the flat-shaded 3D tank arena games of the early
 1990s. Drive your hover-tank across a vast, near-black neon grid, secure
-every flag in the sector, and survive the glowing wireframe hunters that
-emerge from the dark. Sparse, cold and ominous by design.
+every flag in the sector, and survive the faceted hunters that emerge from
+the dark. Bouncy walls, turbo boost, lobbed grenades, resupply depots,
+cloaked phantoms and tanks that shatter into tumbling polygon shards.
 
 Built with **plain WebGL, Canvas 2D and Web Audio** — no build step and no
 assets. Single-player runs with zero dependencies and makes no network
@@ -30,6 +31,8 @@ and will hunt you on sight. Your hull is gone when shields hit zero.
 | `W S` / `↑ ↓` | Drive forward / reverse |
 | `A D` / `← →` | Steer |
 | `Space` / click | Fire cannon |
+| `X` / right-click | Lob a grenade (arcs over obstacles, splash damage) |
+| `Shift` | Turbo boost (drains the boost gauge; recharges when idle) |
 | `C` | Toggle first-person / chase camera |
 | `P` / `Esc` | Pause (single-player) |
 | `M` | Toggle sound |
@@ -73,15 +76,21 @@ Before deploying, allocate your tank's power — a classic trade-off:
 ### Enemies
 
 - **Drone** (red) — patroller, guards flags
-- **Hunter** (amber, sector 2+) — fast, relentless pursuit
+- **Hunter** (amber, sector 2+) — fast, relentless pursuit, leads your movement
 - **Sniper** (violet, sector 4+) — holds range, hits hard from far away
+- **Phantom** (ice, sector 5+) — cloaked stalker; shimmers into view a moment
+  before it fires, and vanishes from radar while cloaked
 
-### Pickups
+### Pickups & depots
 
 Destroyed enemies sometimes drop supplies; a few crates are scattered around
-each sector: **ammo**, **shield repair**, **overdrive** (speed boost) and
-**rapid fire**. Sector-clear bonus scales with remaining shields, ammo and
-kills. High score is kept in your browser.
+each sector: **ammo**, **shield repair**, **grenades**, **overdrive** (speed
+boost) and **rapid fire**. Every sector also has a glowing **ammo depot** and
+**shield depot** — park on the pad to resupply. Sector-clear bonus scales
+with remaining shields, ammo and kills. High score is kept in your browser.
+
+Watch your speed near the arena's slabs: slam into one fast enough and your
+tank rebounds off it.
 
 ## Code layout
 

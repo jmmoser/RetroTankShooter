@@ -137,7 +137,7 @@ class Renderer {
     this.fogColor = [0.004, 0.014, 0.012];
     gl.clearColor(this.fogColor[0], this.fogColor[1], this.fogColor[2], 1);
     gl.uniform3fv(this.uniforms.uFogColor, this.fogColor);
-    gl.uniform1f(this.uniforms.uFogDensity, 0.0072);
+    gl.uniform1f(this.uniforms.uFogDensity, 0.0058);
     const L = [0.35, 0.8, 0.48];
     const ll = Math.hypot(L[0], L[1], L[2]);
     gl.uniform3f(this.uniforms.uLightDir, L[0] / ll, L[1] / ll, L[2] / ll);
@@ -195,7 +195,7 @@ class Renderer {
     }
   }
 
-  /* camera: { x, y, z, yaw, pitch, fov } */
+  /* camera: { x, y, z, yaw, pitch, roll, fov } */
   beginFrame(camera) {
     const gl = this.gl;
     this.resize();
@@ -205,6 +205,7 @@ class Renderer {
     const proj = m4.perspective(camera.fov || 1.22, aspect, 0.1, 800);
     let view = m4.multiply(m4.rotationY(-camera.yaw), m4.translation(-camera.x, -camera.y, -camera.z));
     view = m4.multiply(m4.rotationX(-(camera.pitch || 0)), view);
+    if (camera.roll) view = m4.multiply(m4.rotationZ(-camera.roll), view);
 
     gl.uniformMatrix4fv(this.uniforms.uProj, false, proj);
     gl.uniformMatrix4fv(this.uniforms.uView, false, view);

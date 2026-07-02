@@ -30,15 +30,19 @@
     block: renderer.createMesh(Geometry.block([1, 1, 1])),
     pyramid: renderer.createMesh(Geometry.pyramidMesh([1, 1, 1])),
     flag: renderer.createMesh(Geometry.flag()),
-    tankDrone: renderer.createMesh(Geometry.tankWire(Geometry.C.hullEnemy), renderer.gl.LINES),
-    tankHunter: renderer.createMesh(Geometry.tankWire(Geometry.C.hullHunter), renderer.gl.LINES),
-    tankSniper: renderer.createMesh(Geometry.tankWire(Geometry.C.hullSniper), renderer.gl.LINES),
-    tankPlayer: renderer.createMesh(Geometry.tankWire(Geometry.C.hullPlayer), renderer.gl.LINES),
+    tankDrone: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullEnemy)),
+    tankHunter: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullHunter)),
+    tankSniper: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullSniper)),
+    tankPhantom: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullPhantom)),
+    tankPlayer: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullPlayer)),
     shotPlayer: renderer.createMesh(Geometry.shot(Geometry.C.shotPlayer)),
     shotEnemy: renderer.createMesh(Geometry.shot(Geometry.C.shotEnemy)),
+    shotNade: renderer.createMesh(Geometry.shot(Geometry.C.shotNade)),
+    shard: renderer.createMesh(Geometry.shard()),
+    depot: renderer.createMesh(Geometry.depot()),
     powerup: renderer.createMesh(Geometry.powerup()),
   };
-  const TANK_MESH = { drone: M.tankDrone, hunter: M.tankHunter, sniper: M.tankSniper };
+  const TANK_MESH = { drone: M.tankDrone, hunter: M.tankHunter, sniper: M.tankSniper, phantom: M.tankPhantom };
 
   // ---- ui state -------------------------------------------------------------
   // title | setup | lobby | join | playing | levelclear | gameover | paused
@@ -210,7 +214,7 @@
     AudioSys.play('deploy');
     hud.message('SECTOR 1 — SECURE ALL FLAGS', '#4fd6bb', 3);
     Net.broadcastLevel(game);               // ship the arena to clients
-    netState.timer = 0; netState.snd = []; netState.bu = [];
+    netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = [];
   }
 
   function startClientRun(defs, localId) {
@@ -222,6 +226,7 @@
     game.level = 1; game.score = 0;
     game.obstacles = []; game.flags = []; game.enemies = [];
     game.projectiles = []; game.powerups = []; game.particles = [];
+    game.debris = []; game.depots = [];
     game.mode = 'playing';
     game._prevSh = null; game._prevAlive = null;  // reset damage-feedback tracking
     uiMode = 'playing';
@@ -306,7 +311,7 @@
   let demoT = 0;
 
   // ---- camera ---------------------------------------------------------------
-  const cam = { x: 0, y: 2.3, z: 0, yaw: 0, pitch: 0, fov: 1.22 };
+  const cam = { x: 0, y: 2.3, z: 0, yaw: 0, pitch: 0, roll: 0, fov: 1.22 };
 
   function inMenu() {
     return uiMode === 'title' || uiMode === 'setup' || uiMode === 'lobby' || uiMode === 'join';
@@ -320,10 +325,16 @@
       cam.y = 34;
       cam.yaw = angleTo(0 - cam.x, 0 - cam.z);
       cam.pitch = -0.30;
+      cam.roll = 0;
       return;
     }
     const p = game.player;
     if (!p) return;
+    // bank gently into turns for a hovertank feel
+    const ax = Input.axis();
+    const speed01 = p.maxSpeed ? Math.min(1, Math.abs(p.speed || 0) / p.maxSpeed) : 0;
+    const rollTarget = (uiMode === 'playing' && p.alive) ? ax.turn * 0.045 * (0.3 + 0.7 * speed01) : 0;
+    cam.roll += (rollTarget - cam.roll) * Math.min(1, dt * 8);
     const shake = game.shake;
     const sx = (Math.random() - 0.5) * shake * 0.6;
     const sy = (Math.random() - 0.5) * shake * 0.5;
@@ -365,14 +376,31 @@
       if (f.taken) continue;
       renderer.draw(M.flag, m4.trs(f.x, 0, f.z, f.spin, 1, 1, 1));
     }
+
+    // resupply pads pulse slowly in their supply color
+    const t = performance.now() / 1000;
+    for (const d of (src.depots || [])) {
+      const pulse = 0.7 + 0.3 * Math.sin(t * 3 + (d.type === 'ammo' ? 0 : 2));
+      const tint = d.type === 'ammo'
+        ? [0.95 * pulse, 0.8 * pulse, 0.2 * pulse]
+        : [0.25 * pulse, 1.0 * pulse, 0.55 * pulse];
+      renderer.draw(M.depot, m4.trs(d.x, 0, d.z, 0, 1, 1, 1), { tint, unlit: true });
+    }
   }
 
   function drawGame() {
     drawArena(game);
 
+    const now = performance.now();
     for (const e of game.enemies) {
-      const tint = e.hitFlash > 0 ? [1 + e.hitFlash * 2, 1 + e.hitFlash * 2, 1 + e.hitFlash * 2] : null;
-      renderer.draw(TANK_MESH[e.type], m4.trs(e.x, 0, e.z, e.angle, 1, 1, 1), { unlit: true, tint });
+      let tint = e.hitFlash > 0 ? [1 + e.hitFlash * 2, 1 + e.hitFlash * 2, 1 + e.hitFlash * 2] : null;
+      // cloaked phantoms fade toward the void, with a faint shimmer
+      const ck = e.cloak || 0;
+      if (ck > 0.01 && e.hitFlash <= 0) {
+        const v = Math.max(0.02, 1 - ck * (0.92 + 0.08 * Math.sin(now / 120)));
+        tint = [v, v, v];
+      }
+      renderer.draw(TANK_MESH[e.type] || M.tankDrone, m4.trs(e.x, 0, e.z, e.angle, 1, 1, 1), { tint });
     }
 
     // all co-op tanks; own tank only shown in chase cam (it's the camera in 1st person)
@@ -381,12 +409,20 @@
       const isLocal = pl.id === game.localId;
       if (isLocal && !chaseCam) continue;
       const tint = PLAYER_TINTS[pl.colorIdx] || PLAYER_TINTS[0];
-      renderer.draw(M.tankPlayer, m4.trs(pl.x, 0, pl.z, pl.angle, 1, 1, 1), { unlit: true, tint });
+      renderer.draw(M.tankPlayer, m4.trs(pl.x, 0, pl.z, pl.angle, 1, 1, 1), { tint });
     }
 
     for (const pr of game.projectiles) {
-      const mesh = pr.from === 'player' ? M.shotPlayer : M.shotEnemy;
+      const mesh = pr.kind === 'nade' ? M.shotNade : (pr.from === 'player' ? M.shotPlayer : M.shotEnemy);
       renderer.draw(mesh, m4.trs(pr.x, pr.y, pr.z, pr.angle, 1, 1, 1), { unlit: true });
+    }
+
+    // tumbling polygon shards from destroyed tanks
+    for (const d of game.debris) {
+      const model = m4.multiply(
+        m4.trs(d.x, d.y, d.z, d.yaw, d.scale, d.scale, d.scale),
+        m4.rotationX(d.tumble));
+      renderer.draw(M.shard, model, { tint: d.c });
     }
 
     for (const u of game.powerups) {
@@ -460,7 +496,7 @@
           uiMode = 'playing';
           showScreen(null);
           hud.message('SECTOR ' + game.level, '#4fd6bb', 2.5);
-          if (Net.role === 'host') { Net.broadcastLevel(game); netState.timer = 0; netState.snd = []; netState.bu = []; }
+          if (Net.role === 'host') { Net.broadcastLevel(game); netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = []; }
         }
         break;
 
@@ -476,7 +512,10 @@
   function feedLocalInput() {
     const ax = Input.axis();
     const lp = game.player;
-    if (lp && lp.input) { lp.input.turn = ax.turn; lp.input.drive = ax.drive; lp.input.fire = ax.fire; }
+    if (lp && lp.input) {
+      lp.input.turn = ax.turn; lp.input.drive = ax.drive;
+      lp.input.fire = ax.fire; lp.input.nade = ax.nade; lp.input.boost = ax.boost;
+    }
   }
 
   function updateEngine() {
@@ -492,20 +531,22 @@
   function clientCosmetics(dt) {
     game.shake = Math.max(0, game.shake - dt * 3);
     game._updateParticles(dt);
+    game._updateDebris(dt);
     for (const f of game.flags) f.spin += dt * 2.2;
     for (const u of game.powerups) { u.spin += dt * 2.5; u.bob += dt * 3; }
   }
 
   // host: throttle snapshots to ~30 Hz, but never drop transient sounds/bursts
-  const netState = { timer: 0, snd: [], bu: [] };
+  const netState = { timer: 0, snd: [], bu: [], de: [] };
   function hostNetTick(dt) {
     if (game.frameSounds.length) for (const s of game.frameSounds) netState.snd.push(s);
     if (game.frameBursts.length) for (const b of game.frameBursts) netState.bu.push(b);
+    if (game.frameDebris.length) for (const d of game.frameDebris) netState.de.push(d);
     netState.timer += dt;
     if (netState.timer >= 1 / 30) {
       netState.timer = 0;
-      Net.broadcastState(game, netState.snd, netState.bu);
-      netState.snd = []; netState.bu = [];
+      Net.broadcastState(game, netState.snd, netState.bu, netState.de);
+      netState.snd = []; netState.bu = []; netState.de = [];
     }
   }
 

@@ -7,7 +7,7 @@
  * broker, so nothing extra has to be hosted alongside the static site.
  */
 const Net = (() => {
-  const ENEMY_ORDER = ['drone', 'hunter', 'sniper'];
+  const ENEMY_ORDER = ['drone', 'hunter', 'sniper', 'phantom'];
   const ID_PREFIX = 'phantom-arena-v1-';   // namespaces our ids on the shared broker
   const MAX_PLAYERS = 4;
 
@@ -139,7 +139,10 @@ const Net = (() => {
     for (const p of game.players) {
       if (p.id === 'host') continue;
       const inp = state.inputs[p.id];
-      if (inp) { p.input.turn = inp.t; p.input.drive = inp.d; p.input.fire = !!inp.f; }
+      if (inp) {
+        p.input.turn = inp.t; p.input.drive = inp.d;
+        p.input.fire = !!inp.f; p.input.nade = !!inp.g; p.input.boost = !!inp.b;
+      }
     }
   }
 
@@ -150,10 +153,11 @@ const Net = (() => {
       score: game.score,
       obstacles: game.obstacles,
       flags: game.flags.map((f) => ({ x: f.x, z: f.z, taken: f.taken, spin: f.spin })),
+      depots: game.depots,
     });
   }
 
-  function serializeState(game, snd, bu) {
+  function serializeState(game, snd, bu, de) {
     return {
       t: 's',
       md: game.mode,
@@ -165,17 +169,25 @@ const Net = (() => {
         sh: p.shields, ms: p.maxShields, am: p.ammo, ma: p.maxAmmo,
         al: p.alive ? 1 : 0, sp: p.speed, mp: p.maxSpeed,
         ov: p.fx.overdrive, rp: p.fx.rapid, ci: p.colorIdx,
+        bo: Math.round(p.boost || 0), bs: p.boosting ? 1 : 0, nd: p.nades || 0,
       })),
-      en: game.enemies.map((e) => ({ k: ENEMY_ORDER.indexOf(e.type), x: e.x, z: e.z, a: e.angle, h: e.hitFlash })),
-      pr: game.projectiles.map((pr) => ({ x: pr.x, y: pr.y, z: pr.z, a: pr.angle, e: pr.from === 'enemy' ? 1 : 0 })),
+      en: game.enemies.map((e) => ({
+        k: ENEMY_ORDER.indexOf(e.type), x: e.x, z: e.z, a: e.angle, h: e.hitFlash,
+        c: e.cloak ? Math.round(e.cloak * 100) / 100 : 0,
+      })),
+      pr: game.projectiles.map((pr) => ({
+        x: pr.x, y: pr.y, z: pr.z, a: pr.angle,
+        e: pr.from === 'enemy' ? 1 : 0, k: pr.kind === 'nade' ? 1 : 0,
+      })),
       pu: game.powerups.map((u) => ({ k: u.type, x: u.x, z: u.z, s: u.spin, b: u.bob })),
       fg: game.flags.map((f) => (f.taken ? 1 : 0)),
       snd: snd || game.frameSounds.slice(),
       bu: (bu || game.frameBursts).map((b) => ({ x: b.x, y: b.y, z: b.z, n: b.n, c: b.c, p: b.p })),
+      de: (de || game.frameDebris).map((d) => ({ x: d.x, z: d.z, c: d.c })),
     };
   }
 
-  function broadcastState(game, snd, bu) { broadcast(serializeState(game, snd, bu)); }
+  function broadcastState(game, snd, bu, de) { broadcast(serializeState(game, snd, bu, de)); }
   function broadcastScreen(msg) { broadcast(Object.assign({ t: 'sc' }, msg)); }
 
   // ---- CLIENT -------------------------------------------------------------
@@ -224,7 +236,12 @@ const Net = (() => {
   function sendInput(input) {
     const c = state.hostConn;
     if (c && c.open) {
-      try { c.send({ t: 'input', in: { t: input.turn, d: input.drive, f: input.fire ? 1 : 0 } }); } catch (e) {}
+      try {
+        c.send({ t: 'input', in: {
+          t: input.turn, d: input.drive,
+          f: input.fire ? 1 : 0, g: input.nade ? 1 : 0, b: input.boost ? 1 : 0,
+        } });
+      } catch (e) {}
     }
   }
 
@@ -237,10 +254,12 @@ const Net = (() => {
     game.score = msg.score;
     game.obstacles = msg.obstacles;
     game.flags = msg.flags.map((f) => ({ x: f.x, z: f.z, taken: f.taken, spin: f.spin || 0 }));
+    game.depots = msg.depots || [];
     game.enemies = [];
     game.projectiles = [];
     game.powerups = [];
     game.particles = [];
+    game.debris = [];
     game.mode = 'playing';
   }
 
@@ -263,6 +282,8 @@ const Net = (() => {
       p.alive = !!d.al; p.speed = d.sp; p.maxSpeed = d.mp;
       p.fx = { overdrive: d.ov, rapid: d.rp };
       p.colorIdx = d.ci;
+      p.boost = d.bo; p.maxBoost = 100; p.boosting = !!d.bs;
+      p.nades = d.nd; p.maxNades = 6;
       return p;
     });
     game.player = game.players.find((p) => p.id === game.localId) || game.players[0];
@@ -281,12 +302,13 @@ const Net = (() => {
       game._prevAlive = lp.alive;
     }
 
-    game.enemies = msg.en.map((d) => ({ type: ENEMY_ORDER[d.k] || 'drone', x: d.x, z: d.z, angle: d.a, hitFlash: d.h }));
-    game.projectiles = msg.pr.map((d) => ({ x: d.x, y: d.y, z: d.z, angle: d.a, from: d.e ? 'enemy' : 'player' }));
+    game.enemies = msg.en.map((d) => ({ type: ENEMY_ORDER[d.k] || 'drone', x: d.x, z: d.z, angle: d.a, hitFlash: d.h, cloak: d.c || 0 }));
+    game.projectiles = msg.pr.map((d) => ({ x: d.x, y: d.y, z: d.z, angle: d.a, from: d.e ? 'enemy' : 'player', kind: d.k ? 'nade' : undefined }));
     game.powerups = msg.pu.map((d) => ({ type: d.k, x: d.x, z: d.z, spin: d.s, bob: d.b }));
     for (let i = 0; i < game.flags.length && i < msg.fg.length; i++) game.flags[i].taken = !!msg.fg[i];
 
     if (msg.bu) for (const b of msg.bu) game._burst(b.x, b.y, b.z, b.n, b.c, b.p);
+    if (msg.de) for (const d of msg.de) game._spawnShards(d.x, d.z, d.c, false);
     if (msg.snd) for (const s of msg.snd) AudioSys.play(s);
   }
 
