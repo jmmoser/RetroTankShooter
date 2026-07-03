@@ -6,10 +6,10 @@ every flag in the sector, and survive the faceted hunters that emerge from
 the dark. Bouncy walls, turbo boost, lobbed grenades, resupply depots,
 cloaked phantoms and tanks that shatter into tumbling polygon shards.
 
-Built with **plain WebGL, Canvas 2D and Web Audio** — no build step and no
-assets. Single-player runs with zero dependencies and makes no network
-requests. Optional **online co-op** adds one small library (PeerJS, loaded
-from a CDN) for peer-to-peer connections; nothing else needs to be hosted.
+Built with **plain WebGL, Canvas 2D and Web Audio** — no build step, no
+assets, no CDNs. Single-player makes no network requests at all. Optional
+**online co-op** uses one small bundled library (PeerJS, in `js/vendor/`)
+for peer-to-peer connections; nothing else needs to be hosted.
 
 ## Play
 
@@ -111,6 +111,7 @@ js/hud.js       radar, shields/ammo bars, messages (Canvas 2D)
 js/game.js      arena generation, players, enemy AI, projectiles, pickups
 js/net.js       WebRTC co-op networking (host-authoritative, PeerJS)
 js/main.js      screen flow, camera, scene drawing, main loop
+js/vendor/      bundled third-party code (PeerJS, MIT licensed)
 ```
 
 All code, art and sound are original. The gameplay is inspired by the

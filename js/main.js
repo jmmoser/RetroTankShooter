@@ -408,6 +408,12 @@
     showScreen(null);
   }
 
+  // Auto-pause a solo run when the tab is hidden — no cheap deaths while
+  // you're on another tab, and web-game portals require this behavior.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && uiMode === 'playing' && Net.role === 'solo') pauseGame();
+  });
+
   function enterLevelClear() {
     uiMode = 'levelclear';
     showClearStats();
