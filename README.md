@@ -26,6 +26,9 @@ It also works hosted on GitHub Pages (Settings → Pages → deploy from branch)
 Secure **all flags** in the sector to advance. Enemy tanks guard the flags
 and will hunt you on sight. Your hull is gone when shields hit zero.
 
+All menus work with keyboard (arrows + Enter, Esc to go back), mouse and
+touch alike — pick whatever is closest to hand.
+
 | Control | Action |
 | --- | --- |
 | `W S` / `↑ ↓` | Drive forward / reverse |
@@ -47,9 +50,12 @@ Up to **four players** can clear sectors together over the internet — and it
 still works on plain static hosting like GitHub Pages, because there is no
 game server to run.
 
-- One player presses **`H`** to host and is given a 4-character **room code**.
-- Everyone else presses **`J`** and types that code to join the lobby.
-- The host presses **Enter** to launch; teammates spawn alongside each other.
+- One player picks **HOST CO-OP** (or presses `H`) and is given a 4-character
+  **room code** — click the code to copy an **invite link**.
+- Everyone else picks **JOIN CO-OP** (or presses `J`) and types that code, or
+  simply opens the invite link (`index.html?join=CODE`) to jump straight into
+  the lobby.
+- The host hits **LAUNCH**; teammates spawn alongside each other.
 
 Fallen tanks respawn after a few seconds as long as a teammate is still
 fighting; if everyone is destroyed at once, the run ends. Each sector restores

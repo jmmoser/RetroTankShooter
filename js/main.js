@@ -65,6 +65,69 @@
 
   function showScreen(name) {
     for (const k in screens) screens[k].classList.toggle('hidden', k !== name);
+    if (name && menus[name]) menus[name].reset();
+  }
+
+  // ---- menu navigation: one focus model for keyboard, mouse and touch --------
+  // Browsers synthesize hover events when a screen swap puts a button under the
+  // stationary cursor; only real pointer movement may steal menu focus.
+  let lastMX = -1, lastMY = -1;
+
+  function makeMenu(screenEl, defaultId) {
+    const visible = () =>
+      Array.from(screenEl.querySelectorAll('.mbtn')).filter((el) => !el.classList.contains('hidden'));
+    let focused = null;
+    function setFocus(el, silent) {
+      if (focused === el) return;
+      focused = el;
+      screenEl.querySelectorAll('.mbtn').forEach((b) => b.classList.toggle('focus', b === el));
+      if (!silent && el) AudioSys.play('select');
+    }
+    function move(dir) {
+      const list = visible();
+      if (!list.length) return;
+      const i = list.indexOf(focused);
+      setFocus(list[i < 0 ? 0 : (i + dir + list.length) % list.length]);
+    }
+    function activate() {
+      if (focused && !focused.classList.contains('hidden')) focused.click();
+    }
+    function reset() {
+      const list = visible();
+      setFocus(list.find((b) => b.id === defaultId) || list[0] || null, true);
+    }
+    screenEl.addEventListener('mousemove', (e) => {
+      const moved = e.clientX !== lastMX || e.clientY !== lastMY;
+      lastMX = e.clientX; lastMY = e.clientY;
+      if (!moved) return;
+      const b = e.target.closest('.mbtn');
+      if (b && !b.classList.contains('hidden')) setFocus(b, true);
+    });
+    return { move, activate, reset, clear: () => setFocus(null, true) };
+  }
+
+  const menus = {
+    title: makeMenu(screens.title, 'bt-deploy'),
+    setup: makeMenu(screens.setup, 'bt-launch'),
+    lobby: makeMenu(screens.lobby, 'bt-lobby-launch'),
+    join: makeMenu(screens.join, 'bt-join-connect'),
+    clear: makeMenu(screens.clear, 'bt-continue'),
+    over: makeMenu(screens.over, 'bt-retry'),
+    pause: makeMenu(screens.pause, 'bt-resume'),
+  };
+
+  function menuKeys(name) {
+    const m = menus[name];
+    if (!m) return;
+    if (Input.consume('ArrowUp') || Input.consume('KeyW')) m.move(-1);
+    if (Input.consume('ArrowDown') || Input.consume('KeyS')) m.move(1);
+    if (Input.consume('Enter') || Input.consume('NumpadEnter') || Input.consume('Space')) m.activate();
+  }
+
+  function bind(id, fn) {
+    const el = document.getElementById(id);
+    el.addEventListener('click', () => { AudioSys.resume(); AudioSys.play('select'); fn(); });
+    return el;
   }
 
   function updateTitleHigh() {
@@ -90,6 +153,11 @@
     el.addEventListener('dblclick', () => startRun());
   });
 
+  function goSetup() {
+    uiMode = 'setup';
+    showScreen('setup');
+  }
+
   function startRun() {
     game.newRun(loadoutIndex);
     uiMode = 'playing';
@@ -108,6 +176,15 @@
     return isHigh;
   }
 
+  // Which game-over actions make sense depends on the role: solo runs can be
+  // retried instantly, only the co-op host can relaunch the whole squad.
+  function configureOverButtons() {
+    const solo = Net.role === 'solo';
+    document.getElementById('bt-retry').classList.toggle('hidden', !solo);
+    document.getElementById('bt-loadout').classList.toggle('hidden', !solo);
+    document.getElementById('bt-again').classList.toggle('hidden', Net.role !== 'host');
+  }
+
   function gameOver() {
     uiMode = 'gameover';
     const isHigh = recordHighScore();
@@ -116,6 +193,7 @@
       `SECTOR REACHED ${game.level}<br>` +
       (isHigh ? '<span class="gold">&#9733; NEW HIGH SCORE &#9733;</span>'
               : `HIGH SCORE ${highScore}`);
+    configureOverButtons();
     showScreen('over');
   }
 
@@ -123,8 +201,37 @@
   const lobbyCodeEl = document.getElementById('lobby-code');
   const lobbyRosterEl = document.getElementById('lobby-roster');
   const lobbyHintEl = document.getElementById('lobby-hint');
+  const lobbyCopyHintEl = document.getElementById('lobby-copy-hint');
+  const lobbyLaunchBtn = document.getElementById('bt-lobby-launch');
   const joinInput = document.getElementById('join-code');
   const joinError = document.getElementById('join-error');
+  let roomCode = '';
+
+  // Clicking the room code copies an invite — a full ?join= link when hosted
+  // over http(s), just the code when running from file://.
+  const COPY_HINT_DEFAULT = 'CLICK CODE TO COPY INVITE LINK';
+  lobbyCodeEl.addEventListener('click', () => {
+    if (!roomCode) return;
+    AudioSys.resume();
+    const invite = /^https?:$/.test(location.protocol)
+      ? location.origin + location.pathname + '?join=' + roomCode
+      : roomCode;
+    const done = () => {
+      lobbyCopyHintEl.textContent = 'INVITE COPIED — SEND IT TO YOUR SQUAD';
+      AudioSys.play('select');
+      setTimeout(() => { lobbyCopyHintEl.textContent = COPY_HINT_DEFAULT; }, 2500);
+    };
+    const fail = () => { lobbyCopyHintEl.textContent = 'COPY FAILED — CODE IS ' + roomCode; };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(invite).then(done, fail);
+    } else fail();
+  });
+
+  function setRoomCode(code) {
+    roomCode = code || '';
+    lobbyCopyHintEl.textContent = COPY_HINT_DEFAULT;
+    lobbyCopyHintEl.classList.toggle('hidden', !roomCode);
+  }
 
   function selectLobbyLoadout(i) {
     lobbyLoadout = i;
@@ -161,6 +268,8 @@
     lobbyLoadout = 1;
     selectLobbyLoadout(1);
     lobbyCodeEl.textContent = 'CREATING ROOM…';
+    setRoomCode('');
+    lobbyLaunchBtn.classList.remove('hidden');
     renderRoster([]);
     uiMode = 'lobby';
     showScreen('lobby');
@@ -183,8 +292,11 @@
     joinInput.blur();
     lobbyLoadout = 1;
     uiMode = 'lobby';
+    lobbyLaunchBtn.classList.add('hidden');
     showScreen('lobby');
+    menus.lobby.clear();   // no default action for clients — Enter shouldn't leave
     lobbyCodeEl.textContent = 'ROOM ' + code;
+    setRoomCode(code);
     document.querySelectorAll('#lobby-loadouts .ll').forEach((el) => {
       el.classList.toggle('selected', parseInt(el.dataset.i, 10) === 1);
     });
@@ -197,8 +309,16 @@
     else if (e.key === 'Escape') { e.preventDefault(); leaveToTitle(); }
   });
 
+  // Uppercase as you type, strip junk, and connect the moment 4 chars are in.
+  joinInput.addEventListener('input', () => {
+    const v = joinInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (v !== joinInput.value) joinInput.value = v;
+    if (v.length >= 4 && uiMode === 'join') submitJoin();
+  });
+
   function leaveToTitle() {
     Net.leave();
+    setRoomCode('');
     game.mode = 'idle';
     uiMode = 'title';
     showScreen('title');
@@ -240,8 +360,52 @@
       `SECTOR ${game.level} SECURE<br>` +
       `BONUS <span class="gold">+${game.levelBonus}</span><br>` +
       `SCORE ${game.score}`;
-    const advance = document.querySelector('#screen-clear .press-start');
-    if (advance) advance.textContent = Net.role === 'client' ? 'WAITING FOR HOST…' : 'ENTER TO ADVANCE';
+    document.getElementById('bt-continue').classList.toggle('hidden', Net.role === 'client');
+    document.getElementById('clear-wait').classList.toggle('hidden', Net.role !== 'client');
+  }
+
+  function advanceLevel() {
+    if (uiMode !== 'levelclear' || Net.role === 'client') return;
+    game.nextLevel();
+    uiMode = 'playing';
+    showScreen(null);
+    hud.message('SECTOR ' + game.level, '#4fd6bb', 2.5);
+    if (Net.role === 'host') { Net.broadcastLevel(game); netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = []; }
+  }
+
+  // ---- pause / abort -----------------------------------------------------------
+  const btAbort = document.getElementById('bt-abort');
+  let abortArmed = false;
+  function resetAbort() {
+    abortArmed = false;
+    btAbort.classList.remove('armed');
+    btAbort.innerHTML = 'ABORT MISSION<span class="mkey">Q</span>';
+  }
+  // Aborting throws away the run, so it takes two presses to go through.
+  btAbort.addEventListener('click', () => {
+    AudioSys.resume();
+    AudioSys.play('select');
+    if (!abortArmed) {
+      abortArmed = true;
+      btAbort.classList.add('armed');
+      btAbort.innerHTML = 'CONFIRM ABORT?<span class="mkey">Q</span>';
+    } else {
+      resetAbort();
+      leaveToTitle();
+    }
+  });
+
+  function pauseGame() {
+    uiMode = 'paused';
+    resetAbort();
+    showScreen('pause');
+    AudioSys.setEngine(0);
+  }
+
+  function resumeGame() {
+    resetAbort();
+    uiMode = 'playing';
+    showScreen(null);
   }
 
   function enterLevelClear() {
@@ -264,7 +428,10 @@
 
   // ---- network callbacks -----------------------------------------------------
   Net.cb.onRoster = (roster) => { if (uiMode === 'lobby') renderRoster(roster); };
-  Net.cb.onCode = (code) => { if (uiMode === 'lobby') lobbyCodeEl.textContent = 'ROOM CODE  ' + code; };
+  Net.cb.onCode = (code) => {
+    setRoomCode(code);
+    if (uiMode === 'lobby') lobbyCodeEl.textContent = 'ROOM CODE  ' + code;
+  };
   Net.cb.onError = (text) => {
     if (uiMode === 'join') { joinError.textContent = text; }
     else if (uiMode === 'lobby') { lobbyHintEl.textContent = text; lobbyCodeEl.textContent = 'CONNECTION FAILED'; }
@@ -299,6 +466,7 @@
       document.getElementById('over-stats').innerHTML =
         `FINAL SCORE <span class="gold">${game.score}</span><br>SECTOR REACHED ${game.level}`;
       uiMode = 'gameover';
+      configureOverButtons();
       showScreen('over');
     }
   };
@@ -445,18 +613,16 @@
       case 'title':
         if (Input.consume('KeyH')) { enterLobbyAsHost(); break; }
         if (Input.consume('KeyJ')) { enterJoin(); break; }
-        if (Input.consume('Enter') || Input.consume('Space') || Input.consume('AnyTouch')) {
-          uiMode = 'setup';
-          showScreen('setup');
-          AudioSys.play('select');
-        }
+        menuKeys('title');
         break;
 
       case 'setup':
         if (Input.consume('Digit1')) selectLoadout(0);
         if (Input.consume('Digit2')) selectLoadout(1);
         if (Input.consume('Digit3')) selectLoadout(2);
-        if (Input.consume('Enter')) startRun();
+        if (Input.consume('ArrowLeft') || Input.consume('KeyA')) selectLoadout((loadoutIndex + 2) % 3);
+        if (Input.consume('ArrowRight') || Input.consume('KeyD')) selectLoadout((loadoutIndex + 1) % 3);
+        menuKeys('setup');
         if (Input.consume('Escape')) { uiMode = 'title'; showScreen('title'); }
         break;
 
@@ -464,49 +630,70 @@
         if (Input.consume('Digit1')) selectLobbyLoadout(0);
         if (Input.consume('Digit2')) selectLobbyLoadout(1);
         if (Input.consume('Digit3')) selectLobbyLoadout(2);
-        if (Net.role === 'host' && Input.consume('Enter')) startHostRun();
+        if (Input.consume('ArrowLeft') || Input.consume('KeyA')) selectLobbyLoadout((lobbyLoadout + 2) % 3);
+        if (Input.consume('ArrowRight') || Input.consume('KeyD')) selectLobbyLoadout((lobbyLoadout + 1) % 3);
+        menuKeys('lobby');
         if (Input.consume('Escape')) leaveToTitle();
         break;
 
       case 'join':
-        // handled by the input field's own key listener; nothing here
+        // while the field is focused its own listener handles keys; these only
+        // fire if focus wandered off the input
+        if (Input.consume('Enter')) submitJoin();
+        if (Input.consume('Escape')) leaveToTitle();
         break;
 
       case 'playing':
         if (Input.consume('KeyC')) chaseCam = !chaseCam;
-        if (Net.role === 'solo' && (Input.consume('KeyP') || Input.consume('Escape'))) {
-          uiMode = 'paused';
-          showScreen('pause');
-          AudioSys.setEngine(0);
-        }
+        if (Net.role === 'solo' && (Input.consume('KeyP') || Input.consume('Escape'))) pauseGame();
         break;
 
       case 'paused':
-        if (Input.consume('KeyP') || Input.consume('Escape')) {
-          uiMode = 'playing';
-          showScreen(null);
-        }
-        if (Input.consume('KeyQ')) leaveToTitle();
+        if (Input.consume('KeyP') || Input.consume('Escape')) { resumeGame(); break; }
+        if (Input.consume('KeyQ')) btAbort.click();
+        menuKeys('pause');
         break;
 
       case 'levelclear':
-        if (Net.role !== 'client' &&
-            (Input.consume('Enter') || Input.consume('Space') || Input.consume('AnyTouch'))) {
-          game.nextLevel();
-          uiMode = 'playing';
-          showScreen(null);
-          hud.message('SECTOR ' + game.level, '#4fd6bb', 2.5);
-          if (Net.role === 'host') { Net.broadcastLevel(game); netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = []; }
-        }
+        menuKeys('clear');
         break;
 
       case 'gameover':
-        if (Input.consume('Enter') || Input.consume('Space') || Input.consume('AnyTouch')) {
-          leaveToTitle();
-        }
+        menuKeys('over');
+        if (Input.consume('Escape')) leaveToTitle();
         break;
     }
   }
+
+  // ---- menu button wiring ------------------------------------------------------
+  bind('bt-deploy', goSetup);
+  bind('bt-host', enterLobbyAsHost);
+  bind('bt-join', enterJoin);
+  bind('bt-setup-back', () => { uiMode = 'title'; showScreen('title'); });
+  bind('bt-launch', startRun);
+  bind('bt-join-back', leaveToTitle);
+  bind('bt-join-connect', submitJoin);
+  bind('bt-lobby-leave', leaveToTitle);
+  bind('bt-lobby-launch', () => { if (Net.role === 'host') startHostRun(); });
+  bind('bt-continue', advanceLevel);
+  bind('bt-retry', startRun);
+  bind('bt-again', () => { if (Net.role === 'host') startHostRun(); });
+  bind('bt-loadout', goSetup);
+  bind('bt-title', leaveToTitle);
+  bind('bt-resume', resumeGame);
+
+  menus.title.reset();   // title is visible on boot without a showScreen() call
+
+  // Deep link: index.html?join=CODE goes straight into the co-op join flow, so
+  // a host can just send the copied invite link.
+  try {
+    const codeParam = new URLSearchParams(location.search).get('join');
+    if (codeParam && /^[a-z0-9]{4}$/i.test(codeParam)) {
+      enterJoin();
+      joinInput.value = codeParam.toUpperCase();
+      submitJoin();
+    }
+  } catch (e) {}
 
   // ---- local input + engine audio --------------------------------------------
   function feedLocalInput() {
