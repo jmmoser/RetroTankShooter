@@ -41,6 +41,11 @@
     shard: renderer.createMesh(Geometry.shard()),
     depot: renderer.createMesh(Geometry.depot()),
     powerup: renderer.createMesh(Geometry.powerup()),
+    // ominous backdrop, camera-anchored so it sits at infinity
+    sky: renderer.createMesh(Geometry.skyDome(660)),
+    mountains: renderer.createMesh(Geometry.mountains(600)),
+    stars: renderer.createMesh(Geometry.stars(640, 110), renderer.gl.POINTS),
+    eclipse: renderer.createMesh(Geometry.eclipse(630)),
   };
   const TANK_MESH = { drone: M.tankDrone, hunter: M.tankHunter, sniper: M.tankSniper, phantom: M.tankPhantom };
 
@@ -529,7 +534,24 @@
   }
 
   // ---- scene rendering --------------------------------------------------------
+  // The backdrop follows the camera (x/z only) so it never parallaxes closer:
+  // ember horizon, black ridgelines, dead stars, and an eclipsed sun. The glow
+  // breathes slowly and occasionally flares like distant sheet lightning.
+  function drawSky() {
+    const t = performance.now() / 1000;
+    const n = Math.sin(t * 11.3) * Math.sin(t * 4.7) * Math.sin(t * 1.9);
+    const flare = n > 0.9 ? (n - 0.9) * 5 : 0;
+    const g = 0.85 + 0.15 * Math.sin(t * 0.43) + flare;
+    const model = m4.translation(cam.x, 0, cam.z);
+    renderer.draw(M.sky, model, { unlit: true, nofog: true, tint: [g, g * 0.85, g * 0.85] });
+    renderer.draw(M.stars, model, { unlit: true, nofog: true, points: true });
+    const rim = 0.8 + 0.2 * Math.sin(t * 0.9) + flare;
+    renderer.draw(M.eclipse, model, { unlit: true, nofog: true, tint: [rim, rim, rim] });
+    renderer.draw(M.mountains, model, { unlit: true, nofog: true, tint: [g, g, g] });
+  }
+
   function drawArena(src) {
+    drawSky();
     renderer.draw(M.ground, m4.identity());
     renderer.draw(M.grid, m4.identity(), { unlit: true });
 

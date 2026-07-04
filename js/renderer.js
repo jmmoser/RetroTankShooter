@@ -137,7 +137,8 @@ class Renderer {
     this.fogColor = [0.004, 0.014, 0.012];
     gl.clearColor(this.fogColor[0], this.fogColor[1], this.fogColor[2], 1);
     gl.uniform3fv(this.uniforms.uFogColor, this.fogColor);
-    gl.uniform1f(this.uniforms.uFogDensity, 0.0058);
+    this.fogDensity = 0.0058;
+    gl.uniform1f(this.uniforms.uFogDensity, this.fogDensity);
     const L = [0.35, 0.8, 0.48];
     const ll = Math.hypot(L[0], L[1], L[2]);
     gl.uniform3f(this.uniforms.uLightDir, L[0] / ll, L[1] / ll, L[2] / ll);
@@ -224,15 +225,26 @@ class Renderer {
     gl.vertexAttribPointer(this.attribs.color, 3, gl.FLOAT, false, stride, 24);
   }
 
+  /* opts: unlit, tint, nofog (skybox geometry must not dissolve into fog),
+   * points (GL_POINTS mesh with size in aNormal.x, like the particle path) */
   draw(mesh, model, opts) {
     const gl = this.gl;
     gl.uniformMatrix4fv(this.uniforms.uModel, false, model || this.identityModel);
     gl.uniform1f(this.uniforms.uUnlit, opts && opts.unlit ? 1 : 0);
     const tint = (opts && opts.tint) || null;
     if (tint) gl.uniform3fv(this.uniforms.uTint, tint);
+    const nofog = opts && opts.nofog;
+    if (nofog) gl.uniform1f(this.uniforms.uFogDensity, 0);
+    const points = opts && opts.points;
+    if (points) {
+      gl.uniform1f(this.uniforms.uPointMode, 1);
+      gl.uniform1f(this.uniforms.uPixelScale, this.pixelScale);
+    }
     this._bindVertexFormat(mesh.vbo);
     gl.drawArrays(mesh.mode, 0, mesh.count);
     if (tint) gl.uniform3f(this.uniforms.uTint, 1, 1, 1);
+    if (nofog) gl.uniform1f(this.uniforms.uFogDensity, this.fogDensity);
+    if (points) gl.uniform1f(this.uniforms.uPointMode, 0);
   }
 
   /* particles: array of {x,y,z,size,r,g,b} */
