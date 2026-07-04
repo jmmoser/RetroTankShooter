@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>PHANTOM ARENA — Retro Tank Shooter</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2302060a'/%3E%3Cpath d='M2 10h12v3H2z' fill='%234fd6bb'/%3E%3Cpath d='M5 7h6v3H5z' fill='%232fa08c'/%3E%3Cpath d='M8 8h6v1H8z' fill='%234fd6bb'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -25,11 +26,14 @@
         </div>
       </div>
     </div>
-    <div class="press-start blink">PRESS ENTER TO DEPLOY</div>
-    <div class="title-coop">CO-OP &nbsp; H &nbsp;HOST GAME &nbsp;&middot;&nbsp; J &nbsp;JOIN GAME</div>
+    <div id="title-menu" class="menu">
+      <div class="mbtn" id="bt-deploy">DEPLOY<span class="mkey">ENTER</span></div>
+      <div class="mbtn" id="bt-host">HOST CO-OP<span class="mkey">H</span></div>
+      <div class="mbtn" id="bt-join">JOIN CO-OP<span class="mkey">J</span></div>
+    </div>
     <div class="title-help">
-      &uarr;&darr; / W S &nbsp;DRIVE &nbsp;&nbsp; &larr;&rarr; / A D &nbsp;STEER &nbsp;&nbsp; SPACE &nbsp;FIRE<br>
-      X &nbsp;GRENADE &nbsp;&nbsp; SHIFT &nbsp;BOOST &nbsp;&nbsp; C &nbsp;CAMERA &nbsp;&nbsp; M &nbsp;SOUND &nbsp;&nbsp; P &nbsp;PAUSE
+      &uarr;&darr; &nbsp;SELECT &nbsp;&middot;&nbsp; ENTER &nbsp;CONFIRM &nbsp;&middot;&nbsp; M &nbsp;SOUND<br>
+      IN BATTLE: &nbsp;W S &nbsp;DRIVE &nbsp;&nbsp; A D &nbsp;STEER &nbsp;&nbsp; SPACE &nbsp;FIRE &nbsp;&nbsp; X &nbsp;GRENADE &nbsp;&nbsp; SHIFT &nbsp;BOOST &nbsp;&nbsp; C &nbsp;CAMERA &nbsp;&nbsp; P &nbsp;PAUSE
     </div>
     <div id="title-high" class="title-high"></div>
   </div>
@@ -38,7 +42,8 @@
   <div id="screen-lobby" class="screen hidden">
     <div class="panel">
       <div class="panel-head">CO-OP LOBBY</div>
-      <div id="lobby-code" class="panel-sub"></div>
+      <div id="lobby-code" class="lobby-code"></div>
+      <div id="lobby-copy-hint" class="menu-hint hidden">CLICK CODE TO COPY INVITE LINK</div>
       <div id="lobby-roster" class="lobby-roster"></div>
       <div class="panel-sub">CHOOSE YOUR CHASSIS</div>
       <div id="lobby-loadouts" class="lobby-loadouts">
@@ -47,7 +52,10 @@
         <div class="ll" data-i="2"><span class="lo-key">3</span> JUGGERNAUT</div>
       </div>
       <div id="lobby-hint" class="press-start blink"></div>
-      <div class="title-help">ESC &nbsp;LEAVE LOBBY</div>
+      <div class="btn-row">
+        <div class="mbtn ghost" id="bt-lobby-leave">LEAVE<span class="mkey">ESC</span></div>
+        <div class="mbtn" id="bt-lobby-launch">LAUNCH<span class="mkey">ENTER</span></div>
+      </div>
     </div>
   </div>
 
@@ -58,7 +66,10 @@
       <div class="panel-sub">ENTER ROOM CODE</div>
       <input id="join-code" class="join-input" maxlength="4" autocomplete="off"
              autocapitalize="characters" spellcheck="false" inputmode="text">
-      <div class="press-start">ENTER &nbsp;CONNECT &nbsp;&middot;&nbsp; ESC &nbsp;CANCEL</div>
+      <div class="btn-row">
+        <div class="mbtn ghost" id="bt-join-back">BACK<span class="mkey">ESC</span></div>
+        <div class="mbtn" id="bt-join-connect">CONNECT<span class="mkey">ENTER</span></div>
+      </div>
       <div id="join-error" class="join-error"></div>
     </div>
   </div>
@@ -91,7 +102,11 @@
           <div class="lo-stat">AMMO&nbsp; <span class="pips">&#9608;&#9608;&#9608;&#9617;&#9617;</span></div>
         </div>
       </div>
-      <div class="press-start blink">1 / 2 / 3 TO SELECT &nbsp;&middot;&nbsp; ENTER TO LAUNCH</div>
+      <div class="menu-hint">&larr; &rarr; &nbsp;OR&nbsp; 1 2 3 &nbsp;SELECT CHASSIS</div>
+      <div class="btn-row">
+        <div class="mbtn ghost" id="bt-setup-back">BACK<span class="mkey">ESC</span></div>
+        <div class="mbtn" id="bt-launch">LAUNCH<span class="mkey">ENTER</span></div>
+      </div>
     </div>
   </div>
 
@@ -100,7 +115,10 @@
     <div class="panel small">
       <div class="panel-head">SECTOR CLEARED</div>
       <div id="clear-stats" class="clear-stats"></div>
-      <div class="press-start blink">ENTER TO ADVANCE</div>
+      <div class="btn-row">
+        <div class="mbtn" id="bt-continue">NEXT SECTOR<span class="mkey">ENTER</span></div>
+      </div>
+      <div id="clear-wait" class="press-start blink hidden">WAITING FOR HOST&hellip;</div>
     </div>
   </div>
 
@@ -109,7 +127,12 @@
     <div class="panel small">
       <div class="panel-head red">TANK DESTROYED</div>
       <div id="over-stats" class="clear-stats"></div>
-      <div class="press-start blink">ENTER TO RETRY</div>
+      <div class="menu">
+        <div class="mbtn" id="bt-retry">RETRY MISSION<span class="mkey">ENTER</span></div>
+        <div class="mbtn" id="bt-again">RELAUNCH SQUAD<span class="mkey">ENTER</span></div>
+        <div class="mbtn ghost" id="bt-loadout">CHANGE LOADOUT</div>
+        <div class="mbtn ghost" id="bt-title">TITLE SCREEN</div>
+      </div>
     </div>
   </div>
 
@@ -117,12 +140,15 @@
   <div id="screen-pause" class="screen hidden">
     <div class="panel small">
       <div class="panel-head">PAUSED</div>
-      <div class="press-start">P TO RESUME &nbsp;&middot;&nbsp; Q TO ABORT MISSION</div>
+      <div class="menu">
+        <div class="mbtn" id="bt-resume">RESUME<span class="mkey">P</span></div>
+        <div class="mbtn ghost danger" id="bt-abort">ABORT MISSION<span class="mkey">Q</span></div>
+      </div>
     </div>
   </div>
 </div>
 
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="js/vendor/peerjs.min.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/input.js"></script>
 <script src="js/geometry.js"></script>
