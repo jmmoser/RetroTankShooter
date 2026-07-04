@@ -243,6 +243,114 @@ const Geometry = (() => {
     return b.build();
   }
 
+  /* ---- ominous sky: the void beyond the arena ---------------------------
+   * Spectre-style backdrop — a blood-ember horizon glow, jagged black
+   * ridgelines, sparse dying stars and a dead sun. All of it is drawn unlit
+   * and fog-free, re-centered on the camera every frame so it reads as
+   * infinitely far away. Vertex colors are pushed by hand for gradients. */
+
+  /* Deterministic pseudo-random so the skyline is identical every frame. */
+  function hash01(i) {
+    const s = Math.sin(i * 127.1 + 311.7) * 43758.5453;
+    return s - Math.floor(s);
+  }
+
+  /* Cylindrical gradient backdrop: hottest right at the horizon line,
+   * dissolving into black overhead. Wound to face inward. */
+  function skyDome(radius) {
+    const verts = [];
+    const seg = 64;
+    const bands = [
+      [-60, [0.060, 0.009, 0.022]],
+      [0,   [0.170, 0.026, 0.048]],
+      [30,  [0.058, 0.011, 0.028]],
+      [110, [0.014, 0.003, 0.010]],
+      [380, [0, 0, 0]],
+    ];
+    const push = (a, y, c) => verts.push(
+      Math.cos(a) * radius, y, Math.sin(a) * radius, 0, 1, 0, c[0], c[1], c[2]);
+    for (let i = 0; i < seg; i++) {
+      const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+      for (let b = 0; b < bands.length - 1; b++) {
+        const y0 = bands[b][0], c0 = bands[b][1];
+        const y1 = bands[b + 1][0], c1 = bands[b + 1][1];
+        push(a0, y0, c0); push(a1, y0, c0); push(a1, y1, c1);
+        push(a0, y0, c0); push(a1, y1, c1); push(a0, y1, c1);
+      }
+    }
+    return new Float32Array(verts);
+  }
+
+  /* Jagged ridgelines wrapped around the horizon, two layers deep. The far
+   * layer catches a faint ember rim on its peaks; the near one is pure
+   * cutout — black teeth against the glow. */
+  function mountains(radius) {
+    const verts = [];
+    const layers = [
+      { r: radius,        n: 46, hMin: 12, hMax: 55, seed: 7,
+        base: [0.010, 0.002, 0.006], peak: [0.075, 0.013, 0.026] },
+      { r: radius * 0.82, n: 30, hMin: 7,  hMax: 30, seed: 91,
+        base: [0.003, 0.001, 0.003], peak: [0.028, 0.005, 0.011] },
+    ];
+    for (const L of layers) {
+      for (let i = 0; i < L.n; i++) {
+        const a0 = (i / L.n) * Math.PI * 2;
+        const a1 = ((i + 1) / L.n) * Math.PI * 2;
+        const am = (a0 + a1) / 2 + (hash01(i * 3.7 + L.seed) - 0.5) * (a1 - a0) * 0.7;
+        const h = L.hMin + hash01(i + L.seed) * (L.hMax - L.hMin);
+        verts.push(Math.cos(a0) * L.r, -8, Math.sin(a0) * L.r, 0, 1, 0, L.base[0], L.base[1], L.base[2]);
+        verts.push(Math.cos(a1) * L.r, -8, Math.sin(a1) * L.r, 0, 1, 0, L.base[0], L.base[1], L.base[2]);
+        verts.push(Math.cos(am) * L.r, h, Math.sin(am) * L.r, 0, 1, 0, L.peak[0], L.peak[1], L.peak[2]);
+      }
+    }
+    return new Float32Array(verts);
+  }
+
+  /* Sparse dim stars; a handful glint ember-red. GL_POINTS, size rides in
+   * aNormal.x the same way the particle system does it. */
+  function stars(radius, count) {
+    const verts = [];
+    for (let i = 0; i < count; i++) {
+      const az = hash01(i * 2.7 + 5) * Math.PI * 2;
+      const el = 0.10 + hash01(i * 9.1 + 13) * 1.15;
+      const y = Math.sin(el) * radius, rr = Math.cos(el) * radius;
+      const size = 1.2 + hash01(i * 4.3 + 31) * 2.0;
+      const b = 0.20 + hash01(i * 1.3 + 77) * 0.45;
+      const c = hash01(i * 6.7 + 3) > 0.82
+        ? [b, b * 0.18, b * 0.24]          // dying-ember red
+        : [b * 0.50, b * 0.58, b * 0.66];  // cold faint blue-white
+      verts.push(Math.cos(az) * rr, y, Math.sin(az) * rr, size, 0, 0, c[0], c[1], c[2]);
+    }
+    return new Float32Array(verts);
+  }
+
+  /* Dead sun low over the ridge line: a black disc wrapped in a thin
+   * blood-red corona that bleeds out into the dark. */
+  function eclipse(radius) {
+    const verts = [];
+    const az = 2.3, el = 0.21;   // low over the ridge, clear of the radar HUD
+    const cx = Math.cos(az) * Math.cos(el) * radius;
+    const cy = Math.sin(el) * radius;
+    const cz = Math.sin(az) * Math.cos(el) * radius;
+    const ux = -Math.sin(az), uz = Math.cos(az);   // horizontal tangent
+    const seg = 40;
+    const discR = radius * 0.072, rimR = discR * 1.75;
+    const disc = [0.008, 0, 0.004];
+    const rim = [0.42, 0.055, 0.085];
+    const dark = [0, 0, 0];
+    const p = (th, r) => [cx + Math.cos(th) * ux * r, cy + Math.sin(th) * r, cz + Math.cos(th) * uz * r];
+    const push = (pt, c) => verts.push(pt[0], pt[1], pt[2], 0, 1, 0, c[0], c[1], c[2]);
+    for (let i = 0; i < seg; i++) {
+      const t0 = (i / seg) * Math.PI * 2, t1 = ((i + 1) / seg) * Math.PI * 2;
+      // disc, wound to face the arena
+      push([cx, cy, cz], disc); push(p(t0, discR), disc); push(p(t1, discR), disc);
+      // corona: bright at the limb, fading to nothing outward
+      push(p(t1, discR), rim); push(p(t0, discR), rim); push(p(t0, rimR), dark);
+      push(p(t1, discR), rim); push(p(t0, rimR), dark); push(p(t1, rimR), dark);
+    }
+    return new Float32Array(verts);
+  }
+
   /* Ground: near-black plane + cold grid lines (line list, y slightly raised). */
   function ground(half, step) {
     const b = new MeshBuilder();
@@ -266,5 +374,5 @@ const Geometry = (() => {
     return new Float32Array(verts);
   }
 
-  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, wallSegment, ground, gridLines };
+  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, wallSegment, ground, gridLines, skyDome, mountains, stars, eclipse };
 })();
