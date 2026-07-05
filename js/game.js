@@ -3,10 +3,27 @@
  * Spectre Challenger-style systems live here: bouncy walls, a turbo boost
  * gauge, lobbed grenades with splash, resupply depots, cloaking phantom
  * tanks, and tanks that shatter into tumbling polygon shards.
+ *
+ * On top of that: a sector ALERT level that escalates as flags fall
+ * (reinforcements warp in, survivors get faster), a kill-chain COMBO
+ * multiplier broken by taking damage, and a WARLORD boss every 5 sectors.
  */
 
 const ARENA_HALF = 230;          // arena is a square, +/- ARENA_HALF
 const WALL_PAD = 3;              // keep tanks this far from the wall
+const COMBO_WINDOW = 4;          // seconds between kills to keep the chain
+const BOSS_EVERY = 5;            // a WARLORD guards every Nth sector
+
+// Boss turret mounts in hull-local space (model faces -Z). Shared with the
+// renderer and net code so clients can rebuild turret positions by index.
+const BOSS_TURRET_OFFSETS = [[-4.2, -2.6], [4.2, -2.6], [-3.4, 4.4], [3.4, 4.4]];
+const BOSS_TURRET_Y = 3.4;
+
+/* World position of a boss turret (hull-local offset rotated by hull yaw). */
+function bossTurretWorld(b, tu) {
+  const c = Math.cos(b.angle), s = Math.sin(b.angle);
+  return [b.x + tu.dx * c + tu.dz * s, b.z - tu.dx * s + tu.dz * c];
+}
 
 const LOADOUTS = [
   { name: 'SCOUT',      speed: 5, armor: 2, ammo: 3, nades: 4 },
@@ -83,6 +100,15 @@ class Game {
     this.frameDebris = []; // shard spawns this update — drained by the net layer
     this.levelBonus = 0;
     this.killsThisLevel = 0;
+    this.combo = 0;        // kills in the current chain
+    this.comboT = 0;       // time left before the chain expires
+    this.mult = 1;         // score multiplier from the chain
+    this.alert = 0;        // 0..1 — fraction of flags secured this sector
+    this.alertTier = 0;    // reinforcement waves already triggered
+    this.pendingSpawns = []; // warp-in telegraphs: { x, z, type, t, tick }
+    this.boss = null;      // WARLORD state on boss sectors
+    this.bossLevel = false;
+    this.rings = [];       // expanding shockwaves: { x, z, r, speed, dmg, hit }
   }
 
   /* Queue a sound: plays locally and is mirrored to clients by the host. */
@@ -167,6 +193,12 @@ class Game {
     this.depots = [];
     this.shake = 0;
     this.killsThisLevel = 0;
+    this.combo = 0; this.comboT = 0; this.mult = 1;
+    this.alert = 0; this.alertTier = 0;
+    this.pendingSpawns = [];
+    this.rings = [];
+    this.boss = null;
+    this.bossLevel = L >= BOSS_EVERY && L % BOSS_EVERY === 0;
 
     const n = this.players.length;
     this.players.forEach((p, i) => {
@@ -180,10 +212,25 @@ class Game {
       p.depotAcc = 0; p.onDepot = false;
     });
 
-    this._genObstacles(48 + Math.min(L * 3, 36));
-    this._genFlags(6 + Math.min(L, 10));
-    this._genEnemies();
-    this._genDepots();
+    if (this.bossLevel) {
+      // boss arena: no flags, more open ground, a small escort — the WARLORD
+      // itself is the objective.
+      this._genObstacles(30);
+      this._genDepots();
+      this._spawnBoss();
+      const escorts = Math.min(2 + Math.floor(L / BOSS_EVERY), 5);
+      for (let i = 0; i < escorts; i++) {
+        const pos = this._findSpot(4, 65);
+        if (pos) this._spawnEnemy(i % 2 === 0 ? 'hunter' : 'drone', pos[0], pos[1]);
+      }
+      this._sfx('alarm');
+      this.hud.message('WARLORD DETECTED — DESTROY IT', '#ff4a3c', 3.5);
+    } else {
+      this._genObstacles(48 + Math.min(L * 3, 36));
+      this._genFlags(6 + Math.min(L, 10));
+      this._genEnemies();
+      this._genDepots();
+    }
     // a couple of starter pickups scattered on the field
     for (let i = 0; i < 2; i++) {
       const pos = this._findSpot(4, 40);
@@ -202,10 +249,30 @@ class Game {
 
   _collidesObstacle(x, z, r) {
     for (const o of this.obstacles) {
+      if (o.dead) continue;   // crushed by the boss
       const hx = o.w / 2 + r, hz = o.d / 2 + r;
       if (Math.abs(x - o.x) < hx && Math.abs(z - o.z) < hz) return o;
     }
     return null;
+  }
+
+  /* Find a clear spot in a ring around (cx, cz), keeping distance from all
+   * players — used to warp reinforcements in near the objective. */
+  _findSpotNear(cx, cz, rMin, rMax, clearR, minPlayerDist) {
+    for (let tries = 0; tries < 40; tries++) {
+      const a = rand(0, Math.PI * 2);
+      const r = rand(rMin, rMax);
+      const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+      if (Math.abs(x) > ARENA_HALF - 12 || Math.abs(z) > ARENA_HALF - 12) continue;
+      if (this._collidesObstacle(x, z, clearR)) continue;
+      let nearPlayer = false;
+      for (const p of this.players) {
+        if (p.alive && Math.hypot(x - p.x, z - p.z) < minPlayerDist) { nearPlayer = true; break; }
+      }
+      if (nearPlayer) continue;
+      return [x, z];
+    }
+    return this._findSpot(clearR, minPlayerDist);
   }
 
   _findSpot(clearR, minPlayerDist) {
@@ -262,6 +329,34 @@ class Game {
     }
   }
 
+  _spawnEnemy(type, x, z) {
+    const L = this.level;
+    const spec = ENEMY_TYPES[type];
+    const diff = 1 + (L - 1) * 0.085;
+    this.enemies.push({
+      type,
+      x, z,
+      angle: rand(0, Math.PI * 2),
+      hp: spec.hp,
+      maxHp: spec.hp,
+      speed: spec.speed * diff,
+      turn: spec.turn * diff,
+      fireRange: spec.fireRange,
+      fireCd: rand(1, spec.fireCd),
+      fireDelay: spec.fireCd / diff,
+      aggro: spec.aggro,
+      score: spec.score,
+      shotSpeed: spec.shotSpeed,
+      dmg: spec.dmg,
+      lead: spec.lead || 0,
+      cloak: spec.cloaks ? 1 : 0,
+      decloakT: 0,
+      wanderX: x, wanderZ: z,
+      wanderT: 0,
+      hitFlash: 0,
+    });
+  }
+
   _genEnemies() {
     const L = this.level;
     const total = Math.min(4 + Math.floor(L * 1.5), 16);
@@ -272,30 +367,7 @@ class Game {
       if (L >= 5 && i % 5 === 3) type = 'phantom';
       const pos = this._findSpot(4, 65);
       if (!pos) continue;
-      const spec = ENEMY_TYPES[type];
-      const diff = 1 + (L - 1) * 0.085;
-      this.enemies.push({
-        type,
-        x: pos[0], z: pos[1],
-        angle: rand(0, Math.PI * 2),
-        hp: spec.hp,
-        maxHp: spec.hp,
-        speed: spec.speed * diff,
-        turn: spec.turn * diff,
-        fireRange: spec.fireRange,
-        fireCd: rand(1, spec.fireCd),
-        fireDelay: spec.fireCd / diff,
-        aggro: spec.aggro,
-        score: spec.score,
-        shotSpeed: spec.shotSpeed,
-        dmg: spec.dmg,
-        lead: spec.lead || 0,
-        cloak: spec.cloaks ? 1 : 0,
-        decloakT: 0,
-        wanderX: pos[0], wanderZ: pos[1],
-        wanderT: 0,
-        hitFlash: 0,
-      });
+      this._spawnEnemy(type, pos[0], pos[1]);
     }
   }
 
@@ -312,8 +384,17 @@ class Game {
     if (this.mode !== 'playing') return;
     this.shake = Math.max(0, this.shake - dt * 3);
 
+    // kill-chain combo: expires quietly when the window runs out
+    if (this.comboT > 0) {
+      this.comboT -= dt;
+      if (this.comboT <= 0) { this.comboT = 0; this.combo = 0; this.mult = 1; }
+    }
+
     for (const p of this.players) this._updatePlayer(p, dt);
     this._updateEnemies(dt);
+    this._updateBoss(dt);
+    this._updateRings(dt);
+    this._updateSpawns(dt);
     this._updateProjectiles(dt);
     this._updatePickups(dt);
     this._updateDepots(dt);
@@ -322,11 +403,104 @@ class Game {
 
     for (const f of this.flags) f.spin += dt * 2.2;
 
-    if (this._anyAlive() && this.flagsLeft() === 0) {
+    const objectiveDone = this.bossLevel
+      ? (this.boss && this.boss.dead && this.boss.deathT <= 0)
+      : this.flagsLeft() === 0;
+    if (this._anyAlive() && objectiveDone) {
       this._levelClear();
     } else if (!this._anyAlive()) {
       this._beginDeath();
     }
+  }
+
+  // ---- alert escalation -----------------------------------------------------
+  // Securing flags raises the sector alert: survivors get faster and meaner,
+  // and crossing a threshold warps reinforcements in near the objective.
+
+  _onFlagSecured() {
+    const total = this.flags.length;
+    if (!total) return;
+    let taken = 0;
+    for (const f of this.flags) if (f.taken) taken++;
+    this.alert = taken / total;
+
+    const thresholds = [0.45, 0.75, 0.92];
+    while (this.alertTier < thresholds.length && this.alert >= thresholds[this.alertTier]) {
+      this.alertTier++;
+      if (this.flagsLeft() === 0) break;   // sector's done — no pointless wave
+      const wave = Math.min(4, 1 + Math.floor((this.level + this.alertTier) / 3));
+      let queued = 0;
+      for (let i = 0; i < wave; i++) {
+        if (this.enemies.length + this.pendingSpawns.length >= 18) break;
+        const live = this.flags.filter((f) => !f.taken);
+        const f = live[(Math.random() * live.length) | 0];
+        const pos = this._findSpotNear(f.x, f.z, 12, 30, 4, 45);
+        if (!pos) continue;
+        this.pendingSpawns.push({ x: pos[0], z: pos[1], type: this._reinforcementType(), t: 1.8, tick: 0 });
+        queued++;
+      }
+      if (queued > 0) {
+        this._sfx('alarm');
+        this.hud.message('ALERT LEVEL ' + this.alertTier + ' — REINFORCEMENTS INBOUND', '#ff4a3c', 2.4);
+      }
+    }
+  }
+
+  _reinforcementType() {
+    const L = this.level, r = Math.random();
+    if (L >= 5 && r < 0.18) return 'phantom';
+    if (L >= 4 && r < 0.40) return 'sniper';
+    if (L >= 2 && r < 0.75) return 'hunter';
+    return 'drone';
+  }
+
+  /* Warp-in telegraphs: crackle for a beat, then the reinforcement appears. */
+  _updateSpawns(dt) {
+    for (let i = this.pendingSpawns.length - 1; i >= 0; i--) {
+      const s = this.pendingSpawns[i];
+      s.t -= dt;
+      s.tick -= dt;
+      if (s.tick <= 0) {
+        s.tick = 0.16;
+        this._burst(s.x, 0.6, s.z, 3, [1, 0.25, 0.55], 7);
+      }
+      if (s.t <= 0) {
+        this.pendingSpawns.splice(i, 1);
+        this._spawnEnemy(s.type, s.x, s.z);
+        this._burst(s.x, 1.5, s.z, 22, [1, 0.3, 0.6], 11);
+        this._sfx('warp');
+      }
+    }
+  }
+
+  // ---- combo multiplier -------------------------------------------------------
+  // Kills chain into a score multiplier; taking any damage breaks it.
+
+  _awardKill(baseScore, ownerId) {
+    this.combo++;
+    this.comboT = COMBO_WINDOW;
+    const mult = this.combo >= 8 ? 5 : this.combo >= 5 ? 4 : this.combo >= 3 ? 3 : this.combo >= 2 ? 2 : 1;
+    if (mult > this.mult) {
+      this._sfx('combo');
+      this.hud.message('COMBO ×' + mult, '#ffd24a', 1.4);
+    }
+    this.mult = mult;
+    const pts = baseScore * mult;
+    this.score += pts;
+    if (ownerId === this.localId) {
+      this.hud.scorePop('+' + pts + (mult > 1 ? ' ×' + mult : ''));
+    }
+    return pts;
+  }
+
+  _breakCombo() {
+    if (this.mult > 1) {
+      this._sfx('comboBreak');
+      this.hud.message('COMBO BROKEN', '#ff4a3c', 1.5);
+    }
+    this.combo = 0;
+    this.comboT = 0;
+    this.mult = 1;
   }
 
   _respawn(p) {
@@ -460,12 +634,25 @@ class Game {
     if (t.x < -lim || t.x > lim) { t.x = Math.max(-lim, Math.min(lim, t.x)); hit = true; }
     if (t.z < -lim || t.z > lim) { t.z = Math.max(-lim, Math.min(lim, t.z)); hit = true; }
     for (const o of this.obstacles) {
+      if (o.dead) continue;
       const hx = o.w / 2 + radius, hz = o.d / 2 + radius;
       const dx = t.x - o.x, dz = t.z - o.z;
       if (Math.abs(dx) < hx && Math.abs(dz) < hz) {
         const px = hx - Math.abs(dx), pz = hz - Math.abs(dz);
         if (px < pz) t.x = o.x + Math.sign(dx || 1) * hx;
         else t.z = o.z + Math.sign(dz || 1) * hz;
+        hit = true;
+      }
+    }
+    // the WARLORD's hull is solid too
+    const b = this.boss;
+    if (b && !b.dead) {
+      const dx = t.x - b.x, dz = t.z - b.z;
+      const d = Math.hypot(dx, dz), min = b.radius + radius;
+      if (d < min) {
+        const f = (min - d) / (d || 1);
+        t.x += dx * f;
+        t.z += dz * f;
         hit = true;
       }
     }
@@ -479,6 +666,7 @@ class Game {
     for (let i = 1; i < steps; i++) {
       const x = x0 + (dx * i) / steps, z = z0 + (dz * i) / steps;
       for (const o of this.obstacles) {
+        if (o.dead) continue;
         if (Math.abs(x - o.x) < o.w / 2 && Math.abs(z - o.z) < o.d / 2) return false;
       }
     }
@@ -486,6 +674,8 @@ class Game {
   }
 
   _updateEnemies(dt) {
+    // sector alert makes survivors faster and more trigger-happy
+    const alertMul = 1 + this.alert * 0.4;
     for (const e of this.enemies) {
       e.hitFlash = Math.max(0, e.hitFlash - dt * 4);
       const p = this._nearestPlayer(e.x, e.z);
@@ -532,14 +722,14 @@ class Game {
       }
 
       const diff = wrapAngle(desired - e.angle);
-      const maxTurn = e.turn * dt;
+      const maxTurn = e.turn * alertMul * dt;
       e.angle += Math.max(-maxTurn, Math.min(maxTurn, diff));
 
       // snipers hold still at range; others close in
       const wantStop = e.type === 'sniper' && hunting && distP < e.fireRange * 0.8;
       if (!wantStop && Math.abs(diff) < 1.2 && !(hunting && distP < 9)) {
-        e.x += fwdX(e.angle) * e.speed * dt;
-        e.z += fwdZ(e.angle) * e.speed * dt;
+        e.x += fwdX(e.angle) * e.speed * alertMul * dt;
+        e.z += fwdZ(e.angle) * e.speed * alertMul * dt;
       }
       this._collideTank(e, 1.9);
 
@@ -572,7 +762,7 @@ class Game {
         }
         const canFire = !ENEMY_TYPES[e.type].cloaks || e.cloak < 0.35;
         if (aimDiff < 0.12 && canFire && this._losClear(e.x, e.z, p.x, p.z)) {
-          e.fireCd = e.fireDelay;
+          e.fireCd = e.fireDelay / (1 + this.alert * 0.3);
           this.projectiles.push({
             x: e.x + fwdX(e.angle) * 3.2,
             z: e.z + fwdZ(e.angle) * 3.2,
@@ -631,6 +821,29 @@ class Game {
             break;
           }
         }
+        const b = this.boss;
+        if (!dead && b && !b.dead) {
+          // turrets are soft targets; the hull deflects shots until the
+          // last turret falls and the core is exposed
+          for (const tu of b.turrets) {
+            if (tu.hp <= 0) continue;
+            const [wx, wz] = bossTurretWorld(b, tu);
+            if (dist2(pr.x, pr.z, wx, wz) < 2.6 * 2.6) {
+              dead = true;
+              this._hurtBossTurret(tu, pr.dmg, pr.owner);
+              break;
+            }
+          }
+          if (!dead && dist2(pr.x, pr.z, b.x, b.z) < b.radius * b.radius) {
+            dead = true;
+            if (b.vulnerable) {
+              this._hurtBossCore(pr.dmg, pr.owner);
+            } else {
+              this._burst(pr.x, 2.2, pr.z, 6, [0.5, 0.7, 1.0], 6);
+              this._sfx('deflect');
+            }
+          }
+        }
       } else if (!dead && pr.from === 'enemy') {
         for (const pl of this.players) {
           if (!pl.alive) continue;
@@ -660,6 +873,17 @@ class Game {
         this._hurtEnemy(j, dmg, pr.owner);
       }
     }
+    const b = this.boss;
+    if (b && !b.dead) {
+      for (const tu of b.turrets) {
+        if (tu.hp <= 0) continue;
+        const [wx, wz] = bossTurretWorld(b, tu);
+        if (Math.hypot(pr.x - wx, pr.z - wz) < R) this._hurtBossTurret(tu, pr.dmg * 0.8, pr.owner);
+      }
+      if (b.vulnerable && Math.hypot(pr.x - b.x, pr.z - b.z) < R + b.radius * 0.5) {
+        this._hurtBossCore(pr.dmg * 0.8, pr.owner);
+      }
+    }
   }
 
   _hurtEnemy(index, dmg, ownerId) {
@@ -675,14 +899,13 @@ class Game {
   _killEnemy(index, ownerId) {
     const e = this.enemies[index];
     this.enemies.splice(index, 1);
-    this.score += e.score;
     this.killsThisLevel++;
+    this._awardKill(e.score, ownerId);
     this._burst(e.x, 1.5, e.z, 34, [1, 0.55, 0.15], 14);
     this._burst(e.x, 1.5, e.z, 16, [0.9, 0.9, 0.9], 9);
     this._spawnShards(e.x, e.z, DEBRIS_COLORS[e.type] || DEBRIS_COLORS.drone);
     this._sfx('explosion');
     this.shake = Math.min(this.shake + 0.4, 1);
-    if (ownerId === this.localId) this.hud.scorePop('+' + e.score);
     // chance to drop a pickup
     if (Math.random() < 0.35) {
       const keys = Object.keys(POWERUP_TYPES);
@@ -693,6 +916,7 @@ class Game {
   _damagePlayer(p, dmg) {
     const isLocal = p.id === this.localId;
     p.shields -= dmg;
+    this._breakCombo();   // any hit on the squad snaps the kill chain
     if (isLocal) {
       this.hud.damage(Math.min(0.8, dmg / 30));
       this.shake = Math.min(this.shake + 0.5, 1.2);
@@ -720,17 +944,19 @@ class Game {
         if (f.taken) continue;
         if (dist2(p.x, p.z, f.x, f.z) < 3.4 * 3.4) {
           f.taken = true;
-          this.score += 100 * this.level;
+          const pts = 100 * this.level * this.mult;
+          this.score += pts;
           this._burst(f.x, 2.5, f.z, 18, [0.3, 1, 0.5], 8);
           this._sfx('flag');
           if (isLocal) {
             this.hud.pickup();
-            this.hud.scorePop('+' + 100 * this.level);
+            this.hud.scorePop('+' + pts + (this.mult > 1 ? ' ×' + this.mult : ''));
           }
           const left = this.flagsLeft();
           if (isLocal) {
             this.hud.message(left > 0 ? `FLAG SECURED — ${left} LEFT` : 'ALL FLAGS SECURED', '#3cff78', 1.6);
           }
+          this._onFlagSecured();
         }
       }
       // powerups
@@ -794,6 +1020,267 @@ class Game {
     if (p.id === this.localId) {
       this.hud.pickup();
       this.hud.message(spec.label, '#ffd24a', 1.4);
+    }
+  }
+
+  // ---- WARLORD boss -----------------------------------------------------------
+  // Every BOSS_EVERY sectors the flags are gone and a WARLORD holds the arena:
+  // a huge hovercruiser with four destroyable turrets shielding its core. It
+  // crushes cover as it drives, telegraphs a ramming charge, and once the core
+  // is exposed it slams out shockwave rings you outrun with boost or block
+  // with the surviving slabs.
+
+  _spawnBoss() {
+    const n = Math.floor(this.level / BOSS_EVERY);   // boss number: 1, 2, ...
+    const pos = this._findSpot(12, 140) || [0, -ARENA_HALF + 50];
+    const turretHp = 90 + n * 30;
+    const coreMax = 400 + (n - 1) * 220;
+    this.boss = {
+      x: pos[0], z: pos[1],
+      angle: rand(0, Math.PI * 2),
+      radius: 7,
+      speed: 7 + n * 1.5,
+      turn: 0.9,
+      coreHp: coreMax, coreMax,
+      turrets: BOSS_TURRET_OFFSETS.map(([dx, dz]) => ({
+        dx, dz, hp: turretHp, maxHp: turretHp,
+        aim: rand(0, Math.PI * 2), fireCd: rand(1.5, 3.5),
+      })),
+      vulnerable: false,
+      state: 'roam',        // roam | telegraph | charge | recover
+      stateT: 0,
+      chargeCd: 7,
+      chargeHits: {},
+      shockCd: 0,
+      hitFlash: 0,
+      dead: false, deathT: 0,
+      dmg: 15 + n * 3,
+      fireDelay: Math.max(1.2, 2.4 - n * 0.2),
+      score: 2500 * n,
+      ringSpeed: 26 + n * 2,
+    };
+  }
+
+  _updateBoss(dt) {
+    const b = this.boss;
+    if (!b) return;
+    if (b.dead) {
+      // death throes: keep sparking until the sector-clear check fires
+      b.deathT -= dt;
+      if (Math.random() < 0.3) {
+        this._burst(b.x + rand(-5, 5), rand(1, 4), b.z + rand(-5, 5), 10, [1, 0.5, 0.15], 10);
+      }
+      return;
+    }
+    b.hitFlash = Math.max(0, b.hitFlash - dt * 4);
+    const p = this._nearestPlayer(b.x, b.z);
+
+    // the hull crushes any slab it touches — cover is temporary
+    for (const o of this.obstacles) {
+      if (o.dead) continue;
+      if (Math.abs(b.x - o.x) < o.w / 2 + b.radius * 0.8 &&
+          Math.abs(b.z - o.z) < o.d / 2 + b.radius * 0.8) {
+        o.dead = true;
+        this._burst(o.x, o.h * 0.5, o.z, 26, o.color, 13);
+        this._sfx('hitWall');
+        this.shake = Math.min(this.shake + 0.25, 1);
+      }
+    }
+
+    if (b.state === 'roam') {
+      b.chargeCd -= dt;
+      if (p) {
+        const desired = angleTo(p.x - b.x, p.z - b.z);
+        const diff = wrapAngle(desired - b.angle);
+        const maxTurn = b.turn * dt;
+        b.angle += Math.max(-maxTurn, Math.min(maxTurn, diff));
+        const distP = Math.hypot(p.x - b.x, p.z - b.z);
+        if (Math.abs(diff) < 1.0 && distP > 18) {
+          b.x += fwdX(b.angle) * b.speed * dt;
+          b.z += fwdZ(b.angle) * b.speed * dt;
+        }
+        if (b.chargeCd <= 0 && distP > 35 && distP < 160) {
+          b.state = 'telegraph';
+          b.stateT = 1.15;
+          this._sfx('charge');
+        }
+      }
+    } else if (b.state === 'telegraph') {
+      // tracks the target while spinning up, then commits
+      if (p) {
+        const desired = angleTo(p.x - b.x, p.z - b.z);
+        const diff = wrapAngle(desired - b.angle);
+        const maxTurn = 2.4 * dt;
+        b.angle += Math.max(-maxTurn, Math.min(maxTurn, diff));
+      }
+      b.stateT -= dt;
+      if (b.stateT <= 0) {
+        b.state = 'charge';
+        b.stateT = 2.1;
+        b.chargeHits = {};
+        this.shake = Math.min(this.shake + 0.4, 1.2);
+      }
+    } else if (b.state === 'charge') {
+      b.stateT -= dt;
+      const spd = b.speed * 5.5;
+      b.x += fwdX(b.angle) * spd * dt;
+      b.z += fwdZ(b.angle) * spd * dt;
+      // anyone caught under the hull takes one heavy hit and is shoved aside
+      for (const pl of this.players) {
+        if (!pl.alive || b.chargeHits[pl.id]) continue;
+        if (dist2(pl.x, pl.z, b.x, b.z) < (b.radius + 2.5) * (b.radius + 2.5)) {
+          b.chargeHits[pl.id] = true;
+          this._damagePlayer(pl, 30);
+          const dx = pl.x - b.x, dz = pl.z - b.z;
+          const d = Math.hypot(dx, dz) || 1;
+          pl.x += (dx / d) * 6;
+          pl.z += (dz / d) * 6;
+          pl.speed *= -0.5;
+        }
+      }
+      const lim = ARENA_HALF - WALL_PAD - b.radius;
+      const slammed = Math.abs(b.x) > lim || Math.abs(b.z) > lim;
+      if (slammed) {
+        b.x = Math.max(-lim, Math.min(lim, b.x));
+        b.z = Math.max(-lim, Math.min(lim, b.z));
+        this._spawnRing(b.x, b.z, 22);
+        this.shake = Math.min(this.shake + 0.8, 1.6);
+        this._sfx('bounce');
+      }
+      if (slammed || b.stateT <= 0) {
+        b.state = 'recover';
+        b.stateT = 1.5;
+      }
+    } else if (b.state === 'recover') {
+      b.stateT -= dt;
+      if (b.stateT <= 0) {
+        b.state = 'roam';
+        b.chargeCd = b.vulnerable ? rand(4, 6) : rand(6, 9);
+      }
+    }
+
+    const lim = ARENA_HALF - WALL_PAD - b.radius;
+    b.x = Math.max(-lim, Math.min(lim, b.x));
+    b.z = Math.max(-lim, Math.min(lim, b.z));
+
+    // the exposed core periodically slams out a shockwave
+    if (b.vulnerable && b.state !== 'charge') {
+      b.shockCd -= dt;
+      if (b.shockCd <= 0) {
+        b.shockCd = rand(5, 7);
+        this._spawnRing(b.x, b.z, 22);
+      }
+    }
+
+    // turrets track and fire independently of the hull
+    for (const tu of b.turrets) {
+      if (tu.hp <= 0) continue;
+      const [wx, wz] = bossTurretWorld(b, tu);
+      const t = this._nearestPlayer(wx, wz);
+      if (!t) continue;
+      const dist = Math.hypot(t.x - wx, t.z - wz);
+      let aimX = t.x, aimZ = t.z;
+      if (Math.abs(t.speed) > 1) {
+        const tFly = dist / 55;
+        aimX += fwdX(t.angle) * t.speed * tFly * 0.7;
+        aimZ += fwdZ(t.angle) * t.speed * tFly * 0.7;
+      }
+      const want = angleTo(aimX - wx, aimZ - wz);
+      const diff = wrapAngle(want - tu.aim);
+      const maxTurn = 2.2 * dt;
+      tu.aim += Math.max(-maxTurn, Math.min(maxTurn, diff));
+      tu.fireCd -= dt;
+      if (tu.fireCd <= 0 && dist < 130 && Math.abs(diff) < 0.15 && this._losClear(wx, wz, t.x, t.z)) {
+        tu.fireCd = b.fireDelay + rand(0, 0.6);
+        this.projectiles.push({
+          x: wx + fwdX(tu.aim) * 2.8, z: wz + fwdZ(tu.aim) * 2.8,
+          y: 1.6, angle: tu.aim,
+          speed: 55, from: 'enemy', dmg: b.dmg, life: 4,
+        });
+        this._sfx('enemyFire');
+      }
+    }
+  }
+
+  _hurtBossTurret(tu, dmg, ownerId) {
+    const b = this.boss;
+    tu.hp -= dmg;
+    b.hitFlash = 1;
+    const [wx, wz] = bossTurretWorld(b, tu);
+    this._burst(wx, 3.2, wz, 10, [1, 0.6, 0.3], 8);
+    if (tu.hp <= 0) {
+      tu.hp = 0;
+      this.killsThisLevel++;
+      this._awardKill(400, ownerId);
+      this._burst(wx, 3.4, wz, 30, [1, 0.55, 0.15], 13);
+      this._spawnShards(wx, wz, [1.0, 0.5, 0.2]);
+      this._sfx('explosion');
+      this.shake = Math.min(this.shake + 0.4, 1);
+      if (!b.turrets.some((t) => t.hp > 0)) {
+        b.vulnerable = true;
+        b.speed *= 1.35;   // enraged
+        b.shockCd = 2.5;
+        this._sfx('coreExposed');
+        this.hud.message('CORE EXPOSED — ATTACK', '#ffd24a', 3);
+      }
+    } else {
+      this._sfx('hitEnemy');
+    }
+  }
+
+  _hurtBossCore(dmg, ownerId) {
+    const b = this.boss;
+    b.coreHp -= dmg;
+    b.hitFlash = 1;
+    this._burst(b.x, 4.6, b.z, 12, [1, 0.35, 0.6], 9);
+    if (b.coreHp <= 0) this._killBoss(ownerId);
+    else this._sfx('hitEnemy');
+  }
+
+  _killBoss(ownerId) {
+    const b = this.boss;
+    b.coreHp = 0;
+    b.dead = true;
+    b.deathT = 2.2;
+    this.rings = [];
+    this.killsThisLevel++;
+    this._awardKill(b.score, ownerId);
+    for (let i = 0; i < 3; i++) {
+      this._burst(b.x + rand(-5, 5), rand(1, 4), b.z + rand(-5, 5), 40, [1, 0.5, 0.1], 16);
+    }
+    this._burst(b.x, 3, b.z, 30, [1, 0.9, 0.6], 12);
+    this._spawnShards(b.x, b.z, [0.85, 0.16, 0.28]);
+    this._spawnShards(b.x + 3, b.z, [0.55, 0.10, 0.18]);
+    this._spawnShards(b.x - 3, b.z, [1.0, 0.45, 0.25]);
+    this._sfx('bossDown');
+    this.shake = 2;
+    this.hud.message('WARLORD DESTROYED', '#3cff78', 3);
+  }
+
+  _spawnRing(x, z, dmg) {
+    this.rings.push({
+      x, z,
+      r: this.boss ? this.boss.radius : 6,
+      speed: this.boss ? this.boss.ringSpeed : 28,
+      dmg, hit: {},
+    });
+    this._sfx('shock');
+    this._burst(x, 0.8, z, 26, [1, 0.55, 0.2], 12);
+  }
+
+  _updateRings(dt) {
+    for (let i = this.rings.length - 1; i >= 0; i--) {
+      const r = this.rings[i];
+      r.r += r.speed * dt;
+      for (const p of this.players) {
+        if (!p.alive || r.hit[p.id]) continue;
+        const d = Math.hypot(p.x - r.x, p.z - r.z);
+        if (Math.abs(d - r.r) < 2.4) {
+          r.hit[p.id] = true;   // the wave passed — cover decides if it hurt
+          if (this._losClear(r.x, r.z, p.x, p.z)) this._damagePlayer(p, r.dmg);
+        }
+      }
+      if (r.r > 190) this.rings.splice(i, 1);
     }
   }
 
@@ -912,6 +1399,7 @@ class Game {
     this._updateParticles(dt);
     this._updateDebris(dt);
     this._updateProjectiles(dt);
+    this._updateRings(dt);
     for (const f of this.flags) f.spin += dt * 2.2;
     if (this.deathTimer <= 0) {
       this.mode = 'gameover';

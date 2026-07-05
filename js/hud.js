@@ -67,8 +67,88 @@ class HUD {
     this._crosshair(ctx, W, H, s);
     this._radar(ctx, W, H, s, game);
     this._bars(ctx, W, H, s, game);
+    this._objective(ctx, W, H, s, game);
+    this._combo(ctx, W, H, s, game);
     this._scorePops(ctx, W, H, s, dt);
     this._renderMessages(ctx, W, H, s, dt);
+  }
+
+  /* Below the radar: the WARLORD health bar on boss sectors, or the sector
+   * alert meter once flags start falling. */
+  _objective(ctx, W, H, s, game) {
+    const b = game.boss;
+    const font = (px, bold) => `${bold ? 'bold ' : ''}${Math.round(px * s)}px "Courier New", monospace`;
+    const topY = (74 * 2 + 18) * s;   // just under the radar dish
+    ctx.textAlign = 'center';
+
+    if (b && !b.dead) {
+      const bw = 320 * s, bh = 11 * s;
+      const bx = W / 2 - bw / 2, by = topY + 24 * s;
+      ctx.font = font(14, true);
+      ctx.fillStyle = '#ff4a3c';
+      ctx.shadowColor = '#ff4a3c';
+      ctx.shadowBlur = 8;
+      ctx.fillText(b.vulnerable ? 'WARLORD — CORE EXPOSED' : 'WARLORD', W / 2, by - 10 * s);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255,74,60,0.8)';
+      ctx.lineWidth = Math.max(1, s);
+      ctx.strokeRect(bx, by, bw, bh);
+      const frac = Math.max(0, b.coreHp / b.coreMax);
+      ctx.fillStyle = b.vulnerable ? '#ff4a3c' : 'rgba(255,74,60,0.35)';
+      ctx.fillRect(bx + 2 * s, by + 2 * s, (bw - 4 * s) * frac, bh - 4 * s);
+      if (!b.vulnerable) {
+        // shielded phase: show the turrets that still guard the core
+        ctx.font = font(11, true);
+        ctx.fillStyle = '#ffd24a';
+        ctx.fillText('DESTROY THE TURRETS', W / 2, by + bh + 12 * s);
+        const alive = b.turrets.filter((t) => t.hp > 0).length;
+        const pw = 14 * s, gap = 6 * s;
+        const total = b.turrets.length;
+        let px = W / 2 - (total * pw + (total - 1) * gap) / 2;
+        for (let i = 0; i < total; i++) {
+          ctx.fillStyle = i < alive ? '#ff9d4a' : 'rgba(255,157,74,0.18)';
+          ctx.fillRect(px, by + bh + 18 * s, pw, 5 * s);
+          px += pw + gap;
+        }
+      }
+      return;
+    }
+
+    if (game.alert > 0 && game.flagsLeft() > 0) {
+      const aw = 110 * s, ah = 5 * s;
+      const ax = W / 2 - aw / 2, ay = topY + 16 * s;
+      const a01 = Math.min(1, game.alert);
+      const r = Math.round(120 + a01 * 135), g = Math.round(200 - a01 * 130);
+      ctx.font = font(10, true);
+      ctx.fillStyle = `rgba(${r},${g},80,0.9)`;
+      ctx.fillText('ALERT', W / 2, ay - 7 * s);
+      ctx.strokeStyle = `rgba(${r},${g},80,0.6)`;
+      ctx.lineWidth = Math.max(1, s);
+      ctx.strokeRect(ax, ay, aw, ah);
+      ctx.fillStyle = `rgb(${r},${g},80)`;
+      ctx.fillRect(ax + s, ay + s, (aw - 2 * s) * a01, ah - 2 * s);
+    }
+  }
+
+  /* Kill-chain multiplier under the crosshair, with its decay timer. */
+  _combo(ctx, W, H, s, game) {
+    if (!game.mult || game.mult <= 1) return;
+    const t = performance.now() / 1000;
+    const y = H / 2 + 74 * s;
+    const pulse = 1 + 0.06 * Math.sin(t * 10);
+    ctx.textAlign = 'center';
+    ctx.font = `bold ${Math.round(34 * s * pulse)}px "Courier New", monospace`;
+    ctx.fillStyle = '#ffd24a';
+    ctx.shadowColor = '#ffd24a';
+    ctx.shadowBlur = 16;
+    ctx.fillText('×' + game.mult, W / 2, y);
+    ctx.shadowBlur = 0;
+    const frac = Math.max(0, Math.min(1, (game.comboT || 0) / 4));
+    const bw = 100 * s, bh = 4 * s;
+    ctx.fillStyle = 'rgba(232,199,90,0.25)';
+    ctx.fillRect(W / 2 - bw / 2, y + 16 * s, bw, bh);
+    ctx.fillStyle = '#e8c75a';
+    ctx.fillRect(W / 2 - bw / 2, y + 16 * s, bw * frac, bh);
   }
 
   _scorePops(ctx, W, H, s, dt) {
@@ -153,17 +233,55 @@ class HUD {
 
     ctx.fillStyle = 'rgba(60,110,95,0.8)';
     for (const o of game.obstacles) {
+      if (o.dead) continue;
       const [bx, by] = toRadar(o.x, o.z);
       ctx.fillRect(bx - 1.5 * s, by - 1.5 * s, 3 * s, 3 * s);
     }
 
     const flagPulse = 0.6 + 0.4 * Math.sin(t * 5);
+    const beaconOn = game.flagsLeft() <= 2;   // last flags: clamp to the rim
     ctx.fillStyle = `rgba(60,255,120,${flagPulse})`;
     for (const f of game.flags) {
       if (f.taken) continue;
-      const [bx, by] = toRadar(f.x, f.z);
+      let [bx, by] = toRadar(f.x, f.z);
+      const dx = bx - cx, dy = by - cy;
+      const d = Math.hypot(dx, dy);
+      if (d > R - 5 * s) {
+        if (!beaconOn) continue;   // out of range and no beacon yet
+        // pin an arrowhead on the rim pointing at the flag
+        const nx = dx / d, ny = dy / d;
+        const px2 = cx + nx * (R - 6 * s), py2 = cy + ny * (R - 6 * s);
+        ctx.beginPath();
+        ctx.moveTo(px2 + nx * 5 * s, py2 + ny * 5 * s);
+        ctx.lineTo(px2 - ny * 4 * s, py2 + nx * 4 * s);
+        ctx.lineTo(px2 + ny * 4 * s, py2 - nx * 4 * s);
+        ctx.closePath();
+        ctx.fill();
+        continue;
+      }
       ctx.beginPath();
       ctx.arc(bx, by, 3 * s, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // the WARLORD: a big pulsing diamond, pinned to the rim when out of range
+    if (game.boss && !game.boss.dead) {
+      const b = game.boss;
+      let [bx, by] = toRadar(b.x, b.z);
+      const dx = bx - cx, dy = by - cy;
+      const d = Math.hypot(dx, dy);
+      if (d > R - 7 * s) {
+        bx = cx + (dx / d) * (R - 7 * s);
+        by = cy + (dy / d) * (R - 7 * s);
+      }
+      const br = (5.5 + Math.sin(t * 6) * 1.2) * s;
+      ctx.fillStyle = '#ff4a3c';
+      ctx.beginPath();
+      ctx.moveTo(bx, by - br);
+      ctx.lineTo(bx + br, by);
+      ctx.lineTo(bx, by + br);
+      ctx.lineTo(bx - br, by);
+      ctx.closePath();
       ctx.fill();
     }
 
@@ -277,9 +395,15 @@ class HUD {
     ctx.fillText('SCORE ' + String(game.score).padStart(7, '0'), W - pad, H - pad - 64 * s);
     ctx.font = font(14, false);
     ctx.fillText('SECTOR ' + game.level, W - pad, H - pad - 38 * s);
-    const fl = game.flagsLeft();
-    ctx.fillStyle = fl > 0 ? '#3cff78' : '#e8c75a';
-    ctx.fillText('FLAGS ' + fl, W - pad, H - pad - 12 * s);
+    if (game.bossLevel) {
+      const bossUp = game.boss && !game.boss.dead;
+      ctx.fillStyle = bossUp ? '#ff4a3c' : '#e8c75a';
+      ctx.fillText(bossUp ? 'TARGET WARLORD' : 'TARGET DOWN', W - pad, H - pad - 12 * s);
+    } else {
+      const fl = game.flagsLeft();
+      ctx.fillStyle = fl > 0 ? '#3cff78' : '#e8c75a';
+      ctx.fillText('FLAGS ' + fl, W - pad, H - pad - 12 * s);
+    }
 
     // ---- active effects
     let ey = H - pad - 96 * s;

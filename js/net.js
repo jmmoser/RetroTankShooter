@@ -181,6 +181,20 @@ const Net = (() => {
       })),
       pu: game.powerups.map((u) => ({ k: u.type, x: u.x, z: u.z, s: u.spin, b: u.bob })),
       fg: game.flags.map((f) => (f.taken ? 1 : 0)),
+      al: game.alert,
+      cb: game.combo, ct: game.comboT, mu: game.mult,
+      // WARLORD boss: turret offsets are rebuilt client-side by index
+      bo: (game.boss && !game.boss.dead) ? {
+        x: game.boss.x, z: game.boss.z, a: game.boss.angle,
+        ch: Math.round(game.boss.coreHp), cm: game.boss.coreMax,
+        vu: game.boss.vulnerable ? 1 : 0,
+        st: game.boss.state === 'telegraph' ? 1 : game.boss.state === 'charge' ? 2 : 0,
+        hf: game.boss.hitFlash,
+        tu: game.boss.turrets.map((t) => ({ v: t.hp > 0 ? 1 : 0, a: t.aim })),
+      } : null,
+      ri: game.rings.map((r) => ({ x: r.x, z: r.z, r: r.r })),
+      // slabs the boss has crushed (only ever changes on boss sectors)
+      og: game.bossLevel ? game.obstacles.map((o) => (o.dead ? 0 : 1)) : undefined,
       snd: snd || game.frameSounds.slice(),
       bu: (bu || game.frameBursts).map((b) => ({ x: b.x, y: b.y, z: b.z, n: b.n, c: b.c, p: b.p })),
       de: (de || game.frameDebris).map((d) => ({ x: d.x, z: d.z, c: d.c })),
@@ -260,6 +274,11 @@ const Net = (() => {
     game.powerups = [];
     game.particles = [];
     game.debris = [];
+    game.boss = null;
+    game.rings = [];
+    game.bossLevel = msg.level >= BOSS_EVERY && msg.level % BOSS_EVERY === 0;
+    game.alert = 0;
+    game.combo = 0; game.comboT = 0; game.mult = 1;
     game.mode = 'playing';
   }
 
@@ -307,9 +326,43 @@ const Net = (() => {
     game.powerups = msg.pu.map((d) => ({ type: d.k, x: d.x, z: d.z, spin: d.s, bob: d.b }));
     for (let i = 0; i < game.flags.length && i < msg.fg.length; i++) game.flags[i].taken = !!msg.fg[i];
 
+    game.alert = msg.al || 0;
+    game.combo = msg.cb || 0;
+    game.comboT = msg.ct || 0;
+    game.mult = msg.mu || 1;
+
+    game.boss = msg.bo ? {
+      x: msg.bo.x, z: msg.bo.z, angle: msg.bo.a,
+      coreHp: msg.bo.ch, coreMax: msg.bo.cm,
+      vulnerable: !!msg.bo.vu,
+      state: msg.bo.st === 1 ? 'telegraph' : msg.bo.st === 2 ? 'charge' : 'roam',
+      hitFlash: msg.bo.hf || 0,
+      dead: false,
+      turrets: msg.bo.tu.map((t, i) => ({
+        hp: t.v ? 1 : 0, aim: t.a,
+        dx: BOSS_TURRET_OFFSETS[i][0], dz: BOSS_TURRET_OFFSETS[i][1],
+      })),
+    } : null;
+    game.rings = (msg.ri || []).map((r) => ({ x: r.x, z: r.z, r: r.r }));
+    if (msg.og) {
+      for (let i = 0; i < game.obstacles.length && i < msg.og.length; i++) {
+        game.obstacles[i].dead = !msg.og[i];
+      }
+    }
+
     if (msg.bu) for (const b of msg.bu) game._burst(b.x, b.y, b.z, b.n, b.c, b.p);
     if (msg.de) for (const d of msg.de) game._spawnShards(d.x, d.z, d.c, false);
-    if (msg.snd) for (const s of msg.snd) AudioSys.play(s);
+    if (msg.snd) {
+      for (const s of msg.snd) {
+        AudioSys.play(s);
+        // clients don't run the sim — mirror the host's event banners off
+        // the sounds that always accompany them
+        if (s === 'alarm') game.hud.message('REINFORCEMENTS INBOUND', '#ff4a3c', 2.4);
+        else if (s === 'coreExposed') game.hud.message('CORE EXPOSED — ATTACK', '#ffd24a', 3);
+        else if (s === 'bossDown') game.hud.message('WARLORD DESTROYED', '#3cff78', 3);
+        else if (s === 'comboBreak') game.hud.message('COMBO BROKEN', '#ff4a3c', 1.5);
+      }
+    }
   }
 
   function leave() {

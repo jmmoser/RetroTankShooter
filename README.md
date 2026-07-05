@@ -26,6 +26,23 @@ It also works hosted on GitHub Pages (Settings → Pages → deploy from branch)
 Secure **all flags** in the sector to advance. Enemy tanks guard the flags
 and will hunt you on sight. Your hull is gone when shields hit zero.
 
+Every flag you take raises the sector **alert level**: survivors get faster
+and more trigger-happy, and crossing a threshold warps **reinforcements** in
+near the remaining flags — sectors end in a crescendo, not a mop-up. When
+only a couple of flags remain they light up with **beacon pillars** (and pin
+to the radar rim), so the last objective is a fight, never a search.
+
+Kills within a few seconds of each other chain into a **combo multiplier**
+(up to ×5) that also boosts flag captures — but taking a single hit breaks
+the chain. Boost into a cluster and grenade it for big numbers; play sloppy
+and the score dries up.
+
+Every **5th sector** has no flags at all. Instead, a **WARLORD** holds the
+arena: a huge hovercruiser that crushes the very slabs you'd hide behind,
+telegraphs a ramming charge, and shields its core behind four destroyable
+turrets. Strip the turrets, then hammer the exposed core — while outrunning
+(boost!) or blocking (cover!) the shockwave rings it slams out.
+
 All menus work with keyboard (arrows + Enter, Esc to go back), mouse and
 touch alike — pick whatever is closest to hand.
 
@@ -86,6 +103,8 @@ Before deploying, allocate your tank's power — a classic trade-off:
 - **Sniper** (violet, sector 4+) — holds range, hits hard from far away
 - **Phantom** (ice, sector 5+) — cloaked stalker; shimmers into view a moment
   before it fires, and vanishes from radar while cloaked
+- **Warlord** (crimson, every 5th sector) — boss hovercruiser; four turrets
+  shield its core, it crushes cover, rams, and emits shockwave rings
 
 ### Pickups & depots
 

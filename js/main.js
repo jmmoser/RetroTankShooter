@@ -41,6 +41,11 @@
     shard: renderer.createMesh(Geometry.shard()),
     depot: renderer.createMesh(Geometry.depot()),
     powerup: renderer.createMesh(Geometry.powerup()),
+    beacon: renderer.createMesh(Geometry.beacon()),
+    bossBody: renderer.createMesh(Geometry.bossBody()),
+    bossTurret: renderer.createMesh(Geometry.bossTurret()),
+    bossCore: renderer.createMesh(Geometry.bossCore()),
+    ring: renderer.createMesh(Geometry.ring(), renderer.gl.LINES),
     // ominous backdrop, camera-anchored so it sits at infinity
     sky: renderer.createMesh(Geometry.skyDome(660)),
     mountains: renderer.createMesh(Geometry.mountains(600)),
@@ -352,6 +357,9 @@
     game.obstacles = []; game.flags = []; game.enemies = [];
     game.projectiles = []; game.powerups = []; game.particles = [];
     game.debris = []; game.depots = [];
+    game.boss = null; game.rings = []; game.pendingSpawns = [];
+    game.bossLevel = false; game.alert = 0;
+    game.combo = 0; game.comboT = 0; game.mult = 1;
     game.mode = 'playing';
     game._prevSh = null; game._prevAlive = null;  // reset damage-feedback tracking
     uiMode = 'playing';
@@ -374,7 +382,7 @@
     game.nextLevel();
     uiMode = 'playing';
     showScreen(null);
-    hud.message('SECTOR ' + game.level, '#4fd6bb', 2.5);
+    hud.message('SECTOR ' + game.level, game.bossLevel ? '#ff4a3c' : '#4fd6bb', 2.5);
     if (Net.role === 'host') { Net.broadcastLevel(game); netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = []; }
   }
 
@@ -462,7 +470,12 @@
     Net.applyLevel(game, msg);
     uiMode = 'playing';
     showScreen(null);
-    hud.message('SECTOR ' + game.level, '#4fd6bb', 2.5);
+    if (game.bossLevel) {
+      hud.message('SECTOR ' + game.level + ' — WARLORD DETECTED', '#ff4a3c', 3.5);
+      AudioSys.play('alarm');
+    } else {
+      hud.message('SECTOR ' + game.level, '#4fd6bb', 2.5);
+    }
   };
   Net.cb.onState = (msg) => { if (Net.role === 'client') Net.applyState(game, msg); };
   Net.cb.onScreen = (msg) => {
@@ -564,6 +577,7 @@
     }
 
     for (const o of src.obstacles) {
+      if (o.dead) continue;   // crushed under the WARLORD
       const mesh = o.type === 'pyramid' ? M.pyramid : M.block;
       renderer.draw(mesh, m4.trs(o.x, 0, o.z, 0, o.w, o.h, o.d), { tint: o.color });
     }
@@ -588,6 +602,51 @@
     drawArena(game);
 
     const now = performance.now();
+
+    // last flags get a pillar of light: no more hunting the final objective
+    const fl = game.flagsLeft();
+    if (fl > 0 && fl <= 2) {
+      const pulse = 0.55 + 0.45 * Math.sin(now / 180);
+      for (const f of game.flags) {
+        if (f.taken) continue;
+        renderer.draw(M.beacon, m4.trs(f.x, 0, f.z, 0, 1, 1, 1),
+          { tint: [0.25 * pulse, 1.0 * pulse, 0.5 * pulse], unlit: true, nofog: true });
+      }
+    }
+
+    // the WARLORD: hull, live turrets (own aim), and its core
+    const b = game.boss;
+    if (b && !b.dead) {
+      let bodyTint = null;
+      if (b.hitFlash > 0) {
+        const f = 1 + b.hitFlash * 1.6;
+        bodyTint = [f, f, f];
+      } else if (b.state === 'telegraph') {
+        // charge windup: the hull strobes hot
+        const f = 0.75 + 0.65 * Math.sin(now / 45);
+        bodyTint = [1 + f, 0.7 + f * 0.3, 0.7 + f * 0.3];
+      }
+      renderer.draw(M.bossBody, m4.trs(b.x, 0, b.z, b.angle, 1, 1, 1), { tint: bodyTint });
+      for (const tu of b.turrets) {
+        if (tu.hp <= 0) continue;
+        const [wx, wz] = bossTurretWorld(b, tu);
+        renderer.draw(M.bossTurret, m4.trs(wx, BOSS_TURRET_Y, wz, tu.aim, 1, 1, 1), { tint: bodyTint });
+      }
+      const ct = now / 1000;
+      const coreTint = b.vulnerable
+        ? [1.2 + 0.8 * Math.sin(ct * 9), 0.3, 0.55]                       // exposed: hot strobe
+        : [0.22 + 0.08 * Math.sin(ct * 2), 0.45, 0.9 + 0.1 * Math.sin(ct * 2)]; // shielded: cold pulse
+      renderer.draw(M.bossCore, m4.trs(b.x, 5.0, b.z, ct * 1.5, 1, 1, 1), { tint: coreTint, unlit: true });
+    }
+
+    // expanding shockwave rings
+    for (const r of game.rings) {
+      const fade = Math.max(0.25, 1 - r.r / 190);
+      renderer.draw(M.ring, m4.trs(r.x, 0.5, r.z, 0, r.r, 1, r.r),
+        { tint: [1 * fade + 0.3, 0.55 * fade, 0.2 * fade], unlit: true });
+      renderer.draw(M.ring, m4.trs(r.x, 1.6, r.z, 0, r.r * 0.985, 1, r.r * 0.985),
+        { tint: [0.8 * fade, 0.4 * fade, 0.15 * fade], unlit: true });
+    }
     for (const e of game.enemies) {
       let tint = e.hitFlash > 0 ? [1 + e.hitFlash * 2, 1 + e.hitFlash * 2, 1 + e.hitFlash * 2] : null;
       // cloaked phantoms fade toward the void, with a faint shimmer
