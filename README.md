@@ -59,7 +59,21 @@ touch alike — pick whatever is closest to hand.
 | `H` | Host an online co-op game |
 | `J` | Join a co-op game by room code |
 
-Touch devices: left half of the screen steers and drives, right half fires.
+### Touch controls
+
+On phones and tablets the game switches to a full touch scheme:
+
+- **Floating joystick** — touch anywhere on the left half and a stick spawns
+  under your thumb. Push where you want to go: forward arcs drive and steer,
+  sideways pivots in place, straight back reverses. Overshoot the stick's rim
+  and it drags along with your thumb, so direction changes are instant.
+- **Hold to fire** — anywhere on the right half, or the big FIRE button.
+  A touch-friendly hint of aim assist snaps shots onto targets that are
+  almost lined up (it applies to all players equally, so co-op stays fair).
+- **On-screen buttons** — NADE (grenade, shows your count), BOOST (shows the
+  gauge around its rim), CAM and pause in the top corner.
+- Launching a run goes fullscreen in landscape where the browser allows it,
+  and the chase camera becomes the default (toggle back with CAM).
 
 ## Online co-op
 

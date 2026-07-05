@@ -1,0 +1,13 @@
+{
+  "name": "PHANTOM ARENA — Retro Tank Shooter",
+  "short_name": "PHANTOM ARENA",
+  "description": "Spectre-style retro tank shooter for web and 100% compatibles.",
+  "start_url": ".",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#02060a",
+  "theme_color": "#02060a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

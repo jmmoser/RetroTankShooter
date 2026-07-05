@@ -25,8 +25,14 @@ class HUD {
     if (this.messages.length > 3) this.messages.shift();
   }
 
-  damage(amount01) { this.flash = Math.min(1, this.flash + amount01); }
-  pickup() { this.pickupFlash = 0.5; }
+  damage(amount01) {
+    this.flash = Math.min(1, this.flash + amount01);
+    if (typeof Input !== 'undefined') Input.vibrate(45);
+  }
+  pickup() {
+    this.pickupFlash = 0.5;
+    if (typeof Input !== 'undefined') Input.vibrate(12);
+  }
 
   scorePop(text) {
     this.pops.push({ text, t: 0 });
@@ -70,7 +76,96 @@ class HUD {
     this._objective(ctx, W, H, s, game);
     this._combo(ctx, W, H, s, game);
     this._scorePops(ctx, W, H, s, dt);
+    this._touchControls(ctx, game);
     this._renderMessages(ctx, W, H, s, dt);
+  }
+
+  /* On-screen touch controls: floating stick + fire/nade/boost/cam/pause.
+   * Input owns the layout and live state (CSS px); this just draws it in the
+   * phosphor style so the controls read as part of the cockpit. */
+  _touchControls(ctx, game) {
+    if (typeof Input === 'undefined') return;
+    const ui = Input.touchUI();
+    if (!ui.mode || !ui.enabled) return;
+    const d = this.dpr || 1;
+    const p = game.player;
+    const font = (px, bold) => `${bold ? 'bold ' : ''}${Math.round(px * d)}px "Courier New", monospace`;
+
+    ctx.save();
+    ctx.lineWidth = Math.max(1, 1.5 * d);
+
+    // ---- movement stick (or its idle ghost)
+    const st = ui.stick;
+    if (st.id !== null) {
+      const bx = st.baseX * d, by = st.baseY * d, R = ui.stickMax * d;
+      ctx.strokeStyle = 'rgba(79,214,187,0.55)';
+      ctx.beginPath(); ctx.arc(bx, by, R, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(79,214,187,0.2)';
+      ctx.beginPath(); ctx.arc(bx, by, R * 0.45, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = 'rgba(79,214,187,0.75)';
+      ctx.shadowColor = '#4fd6bb';
+      ctx.shadowBlur = 12 * d;
+      ctx.beginPath(); ctx.arc(bx + st.dx * d, by + st.dy * d, 26 * d, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.globalAlpha = 0.28;
+      ctx.strokeStyle = '#4fd6bb';
+      ctx.setLineDash([6 * d, 6 * d]);
+      ctx.beginPath(); ctx.arc(ui.restX * d, ui.restY * d, 44 * d, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#4fd6bb';
+      ctx.textAlign = 'center';
+      ctx.font = font(11, true);
+      ctx.fillText('MOVE', ui.restX * d, ui.restY * d);
+      ctx.globalAlpha = 1;
+    }
+
+    // ---- buttons
+    const COLORS = {
+      fire:  '#ff6a5a',
+      nade:  '#8cff6e',
+      boost: '#6fc7e8',
+      cam:   '#4fd6bb',
+      pause: '#4fd6bb',
+    };
+    for (const b of ui.buttons) {
+      const bx = b.x * d, by = b.y * d, r = b.r * d;
+      const col = COLORS[b.key] || '#4fd6bb';
+      const held = b.id !== null;
+      ctx.globalAlpha = held ? 0.95 : 0.55;
+      ctx.strokeStyle = col;
+      ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.stroke();
+      if (held) {
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = col;
+        ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 0.95;
+      }
+      // boost shows its gauge as a sweeping arc around the rim
+      if (b.key === 'boost' && p && p.maxBoost) {
+        const frac = Math.max(0, Math.min(1, p.boost / p.maxBoost));
+        ctx.globalAlpha = 0.9;
+        ctx.lineWidth = Math.max(1, 3 * d);
+        ctx.beginPath();
+        ctx.arc(bx, by, r - 4 * d, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+        ctx.stroke();
+        ctx.lineWidth = Math.max(1, 1.5 * d);
+      }
+      ctx.fillStyle = col;
+      ctx.textAlign = 'center';
+      if (b.key === 'pause') {
+        // two bars beat a font glyph at this size
+        const bw = 3.5 * d, bh = 12 * d;
+        ctx.fillRect(bx - 4.5 * d, by - bh / 2, bw, bh);
+        ctx.fillRect(bx + 1 * d, by - bh / 2, bw, bh);
+      } else {
+        const label = b.key === 'nade' && p ? `NADE ${p.nades || 0}` : b.label;
+        ctx.font = font(b.key === 'fire' ? 13 : 10, true);
+        ctx.fillText(label, bx, by);
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
   }
 
   /* Below the radar: the WARLORD health bar on boss sectors, or the sector
