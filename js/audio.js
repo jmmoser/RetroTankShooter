@@ -121,6 +121,36 @@ const AudioSys = (() => {
     },
     select()     { tone('square', 880, 880, 0.05, 0.2); },
     deploy()     { tone('square', 220, 880, 0.35, 0.3); noise(0.3, 0.15, 600, 3000); },
+    alarm() {
+      tone('square', 470, 470, 0.16, 0.28);
+      tone('square', 350, 350, 0.16, 0.28, 0.20);
+      tone('square', 470, 470, 0.16, 0.28, 0.40);
+    },
+    warp()       { tone('triangle', 180, 1500, 0.3, 0.25); noise(0.25, 0.18, 700, 5000); },
+    combo() {
+      tone('square', 660, 990, 0.08, 0.24);
+      tone('square', 990, 1480, 0.1, 0.24, 0.07);
+    },
+    comboBreak() { tone('sawtooth', 520, 110, 0.28, 0.28); },
+    deflect()    { tone('triangle', 2400, 900, 0.08, 0.2); noise(0.05, 0.1, 7000, 2500); },
+    charge() {
+      tone('sawtooth', 55, 210, 0.9, 0.38);
+      noise(0.7, 0.18, 300, 1600);
+    },
+    shock() {
+      noise(0.55, 0.4, 500, 60);
+      tone('sawtooth', 140, 32, 0.55, 0.32);
+    },
+    coreExposed() {
+      tone('square', 523, 523, 0.12, 0.28);
+      tone('square', 622, 622, 0.12, 0.28, 0.12);
+      tone('square', 784, 784, 0.22, 0.28, 0.24);
+    },
+    bossDown() {
+      const notes = [392, 523, 659, 784, 1047];
+      notes.forEach((f, i) => tone('square', f, f, 0.16, 0.28, i * 0.11));
+      noise(1.2, 0.5, 1000, 40, 0.1);
+    },
   };
 
   // -- engine hum ----------------------------------------------------------

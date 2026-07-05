@@ -236,6 +236,90 @@ const Geometry = (() => {
     return b.build();
   }
 
+  /* Objective beacon: a thin vertical pillar of light over the last flags.
+   * Drawn unlit + nofog with a pulsing tint so it reads across the arena. */
+  function beacon() {
+    const b = new MeshBuilder();
+    b.box(0, 36, 0, 0.7, 72, 0.7, [1, 1, 1]);
+    return b.build();
+  }
+
+  /* ---- WARLORD boss: an oversized faceted hovercruiser ------------------
+   * Same pentagon-hull language as tankSolid, scaled up and meaner. The hull,
+   * turrets and core are separate meshes so turrets vanish as they die and
+   * the core can pulse. Turret mount positions must match BOSS_TURRET_OFFSETS
+   * in game.js. */
+  function bossBody() {
+    const b = new MeshBuilder();
+    const hull = [0.85, 0.16, 0.28];   // deep warlord crimson
+    const dark = [0.30, 0.05, 0.10];
+    const mid  = [0.55, 0.10, 0.18];
+    const trim = [1.0, 0.45, 0.25];
+
+    const yb = 0.5, yt = 2.6;
+    const bot = [
+      [0, yb, -8.2], [-5.8, yb, -1.6], [-4.6, yb, 6.2], [4.6, yb, 6.2], [5.8, yb, -1.6],
+    ];
+    const top = [
+      [0, yt, -5.6], [-4.0, yt, -0.9], [-3.2, yt, 5.4], [3.2, yt, 5.4], [4.0, yt, -0.9],
+    ];
+    b.tri(top[0], top[1], top[2], hull);
+    b.tri(top[0], top[2], top[3], hull);
+    b.tri(top[0], top[3], top[4], hull);
+    b.tri(bot[0], bot[4], bot[3], dark);
+    b.tri(bot[0], bot[3], bot[2], dark);
+    b.tri(bot[0], bot[2], bot[1], dark);
+    for (let i = 0; i < 5; i++) {
+      const j = (i + 1) % 5;
+      b.quad(bot[i], bot[j], top[j], top[i], mid);
+    }
+
+    // raised command deck the core sits on
+    b.box(0, 3.3, 1.2, 4.2, 1.4, 4.6, dark);
+    // turret mount pads (positions mirror BOSS_TURRET_OFFSETS in game.js)
+    for (const [dx, dz] of [[-4.2, -2.6], [4.2, -2.6], [-3.4, 4.4], [3.4, 4.4]]) {
+      b.box(dx, 2.9, dz, 2.0, 0.6, 2.0, mid);
+    }
+    // glowing prow blade
+    b.tri([0, yt + 0.1, -5.6], [-1.2, yb + 0.2, -8.0], [1.2, yb + 0.2, -8.0], trim);
+    b.tri([0, yt + 0.1, -5.6], [1.2, yb + 0.2, -8.0], [-1.2, yb + 0.2, -8.0], trim);
+    return b.build();
+  }
+
+  /* One destroyable boss turret; drawn per-turret with its own aim angle. */
+  function bossTurret() {
+    const b = new MeshBuilder();
+    const shell = [1.0, 0.5, 0.2];
+    b.box(0, 0.4, 0.2, 1.9, 1.2, 2.2, shell);
+    b.box(0, 0.5, -1.9, 0.42, 0.42, 2.4, C.barrel);
+    b.pyramid(0, 1.0, 0.4, 1.2, 1.2, 0.7, [0.6, 0.2, 0.1]);
+    return b.build();
+  }
+
+  /* The boss core: an octahedron drawn white, tinted at draw time
+   * (cold blue while shielded, hot pulsing red once exposed). */
+  function bossCore() {
+    const b = new MeshBuilder();
+    b.octahedron(0, 0, 0, 1.9, [1, 1, 1]);
+    return b.build();
+  }
+
+  /* Unit-radius shockwave ring (GL_LINES): three concentric loops for weight.
+   * Scaled to the wave radius at draw time. */
+  function ring() {
+    const verts = [];
+    const seg = 72;
+    const c = [1, 1, 1];
+    for (const r of [0.965, 1.0, 1.035]) {
+      for (let i = 0; i < seg; i++) {
+        const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+        verts.push(Math.cos(a0) * r, 0, Math.sin(a0) * r, 0, 1, 0, c[0], c[1], c[2]);
+        verts.push(Math.cos(a1) * r, 0, Math.sin(a1) * r, 0, 1, 0, c[0], c[1], c[2]);
+      }
+    }
+    return new Float32Array(verts);
+  }
+
   function wallSegment() {
     const b = new MeshBuilder();
     b.box(0, 1.0, 0, 1, 2.0, 1, C.wall);
@@ -374,5 +458,5 @@ const Geometry = (() => {
     return new Float32Array(verts);
   }
 
-  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, wallSegment, ground, gridLines, skyDome, mountains, stars, eclipse };
+  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, wallSegment, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring };
 })();
