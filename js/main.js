@@ -755,12 +755,15 @@
         break;
 
       case 'playing':
-        if (Input.consume('KeyC')) { chaseCam = !chaseCam; chaseCamUserSet = true; }
-        if (Net.role === 'solo' && (Input.consume('KeyP') || Input.consume('Escape'))) pauseGame();
+        if (Input.consume('cam')) { chaseCam = !chaseCam; chaseCamUserSet = true; }
+        if (Input.consume('pause') || Input.consume('Escape')) {
+          if (Net.role === 'solo') pauseGame();
+          else hud.message('PAUSE UNAVAILABLE IN CO-OP', '#ffd24a', 1.6);
+        }
         break;
 
       case 'paused':
-        if (Input.consume('KeyP') || Input.consume('Escape')) { resumeGame(); break; }
+        if (Input.consume('pause') || Input.consume('Escape')) { resumeGame(); break; }
         if (Input.consume('KeyQ')) btAbort.click();
         menuKeys('pause');
         break;
@@ -857,7 +860,9 @@
     lastT = now;
     dt = Math.min(dt, 0.05);
 
-    Input.setPlayfieldActive(uiMode === 'playing');
+    // gate matches the HUD's draw condition exactly: no invisible-but-live
+    // controls during the death sequence or transitions
+    Input.setPlayfieldActive(uiMode === 'playing' && game.mode === 'playing');
     handleScreens();
 
     if (uiMode === 'playing') {

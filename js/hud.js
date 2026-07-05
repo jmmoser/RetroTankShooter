@@ -89,6 +89,7 @@ class HUD {
     if (!ui.mode || !ui.enabled) return;
     const d = this.dpr || 1;
     const p = game.player;
+    const font = (px, bold) => `${bold ? 'bold ' : ''}${Math.round(px * d)}px "Courier New", monospace`;
 
     ctx.save();
     ctx.lineWidth = Math.max(1, 1.5 * d);
@@ -114,7 +115,7 @@ class HUD {
       ctx.setLineDash([]);
       ctx.fillStyle = '#4fd6bb';
       ctx.textAlign = 'center';
-      ctx.font = `bold ${Math.round(11 * d)}px "Courier New", monospace`;
+      ctx.font = font(11, true);
       ctx.fillText('MOVE', ui.restX * d, ui.restY * d);
       ctx.globalAlpha = 1;
     }
@@ -159,7 +160,7 @@ class HUD {
         ctx.fillRect(bx + 1 * d, by - bh / 2, bw, bh);
       } else {
         const label = b.key === 'nade' && p ? `NADE ${p.nades || 0}` : b.label;
-        ctx.font = `bold ${Math.round((b.key === 'fire' ? 13 : 10) * d)}px "Courier New", monospace`;
+        ctx.font = font(b.key === 'fire' ? 13 : 10, true);
         ctx.fillText(label, bx, by);
       }
       ctx.globalAlpha = 1;

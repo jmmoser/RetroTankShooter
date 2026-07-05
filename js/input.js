@@ -25,6 +25,7 @@ const Input = (() => {
     Space: 'fire',
     KeyX: 'nade', ControlLeft: 'nade',
     ShiftLeft: 'boost', ShiftRight: 'boost',
+    KeyC: 'cam', KeyP: 'pause',
   };
 
   function typingInField(e) {
@@ -54,19 +55,16 @@ const Input = (() => {
     if (action) { keys[action] = false; e.preventDefault(); }
   });
 
-  // Touch taps make browsers synthesize compatibility mouse events; ignore
-  // mouse input for a beat after any touch so taps never double-fire.
-  let lastTouchT = -1e9;
-  window.addEventListener('mousedown', (e) => {
-    if (performance.now() - lastTouchT < 1200) return;
-    AudioSys.resume();
-    if (e.button === 0) { fireHeld = true; pressed['fire'] = true; }
-    if (e.button === 2) { nadeHeld = true; pressed['nade'] = true; }
-  });
-  window.addEventListener('mouseup', (e) => {
-    if (e.button === 0) fireHeld = false;
-    if (e.button === 2) nadeHeld = false;
-  });
+  // Mouse buttons ride the Pointer Events stream (pointerType 'mouse'), so
+  // the compatibility mouse events browsers synthesize after taps are simply
+  // never listened to — no double-fire, no timing heuristics. Tracking the
+  // buttons bitmask (rather than pointerdown/up alone) keeps chorded input
+  // correct: pressing right while left is held arrives as a pointermove.
+  function mouseButtons(e) {
+    const b = e.buttons | 0;
+    fireHeld = !!(b & 1);
+    nadeHeld = !!(b & 2);
+  }
   window.addEventListener('contextmenu', (e) => e.preventDefault());
 
   window.addEventListener('blur', () => {
@@ -119,14 +117,18 @@ const Input = (() => {
     const w = window.innerWidth, h = window.innerHeight;
     const u = Math.max(0.75, Math.min(1.25, Math.min(w, h) / 400));
     const right = w - safe.r, bottom = h - safe.b;
+    // resizes (rotation, browser chrome collapse) must not drop a held button
+    const heldByKey = {};
+    for (const b of touch.buttons) if (b.id !== null) heldByKey[b.key] = b.id;
     touch.buttons.length = 0;
     touch.buttons.push(
-      { key: 'fire',  label: 'FIRE',  x: right - 84 * u,  y: bottom - 100 * u, r: 48 * u, id: null },
-      { key: 'nade',  label: 'NADE',  x: right - 180 * u, y: bottom - 54 * u,  r: 32 * u, id: null },
-      { key: 'boost', label: 'BOOST', x: right - 60 * u,  y: bottom - 210 * u, r: 32 * u, id: null },
-      { key: 'cam',   label: 'CAM',   x: right - 100 * u, y: safe.t + 32 * u,  r: 24 * u, id: null },
-      { key: 'pause', label: 'II',    x: right - 40 * u,  y: safe.t + 32 * u,  r: 24 * u, id: null },
+      { key: 'fire',  label: 'FIRE',  x: right - 84 * u,  y: bottom - 100 * u, r: 48 * u },
+      { key: 'nade',  label: 'NADE',  x: right - 180 * u, y: bottom - 54 * u,  r: 32 * u },
+      { key: 'boost', label: 'BOOST', x: right - 60 * u,  y: bottom - 210 * u, r: 32 * u },
+      { key: 'cam',   label: 'CAM',   x: right - 100 * u, y: safe.t + 32 * u,  r: 24 * u },
+      { key: 'pause', label: 'II',    x: right - 40 * u,  y: safe.t + 32 * u,  r: 24 * u },
     );
+    for (const b of touch.buttons) b.id = b.key in heldByKey ? heldByKey[b.key] : null;
     ui.restX = safe.l + 110 * u;
     ui.restY = bottom - 120 * u;
   }
@@ -149,25 +151,32 @@ const Input = (() => {
     if (touch.mode && navigator.vibrate) { try { navigator.vibrate(ms); } catch (e) {} }
   }
 
-  function enableTouchMode() {
-    touch.mode = true;
-    ui.mode = true;
-    document.body.classList.add('touch-ui');
+  // Last input wins: a touch turns the touch UI on, a mouse press on a
+  // fine-pointer machine turns it back off — so one stray tap on a
+  // touchscreen laptop can't hijack a keyboard/mouse session for good.
+  const COARSE_PRIMARY = touch.mode;
+  function setTouchMode(on) {
+    if (touch.mode === on) return;
+    touch.mode = on;
+    ui.mode = on;
+    document.body.classList.toggle('touch-ui', on);
+    if (!on) releaseAllTouch();
   }
-  if (touch.mode) enableTouchMode();
+  if (touch.mode) document.body.classList.add('touch-ui');
+
+  function resetStick() {
+    const s = touch.stick;
+    s.id = null; s.dx = 0; s.dy = 0; s.mag = 0; s.rel = 0;
+  }
 
   function releasePointer(id) {
-    if (touch.stick.id === id) {
-      const s = touch.stick;
-      s.id = null; s.dx = 0; s.dy = 0; s.mag = 0; s.rel = 0;
-    }
+    if (touch.stick.id === id) resetStick();
     touch.fireIds.delete(id);
     for (const b of touch.buttons) if (b.id === id) b.id = null;
   }
 
   function releaseAllTouch() {
-    const s = touch.stick;
-    s.id = null; s.dx = 0; s.dy = 0; s.mag = 0; s.rel = 0;
+    resetStick();
     touch.fireIds.clear();
     for (const b of touch.buttons) b.id = null;
   }
@@ -194,47 +203,53 @@ const Input = (() => {
   }
 
   function onPointerDown(e) {
-    if (e.pointerType === 'mouse') return;
-    lastTouchT = performance.now();
-    enableTouchMode();
     AudioSys.resume();
+    if (e.pointerType === 'mouse') {
+      if (!COARSE_PRIMARY) setTouchMode(false);
+      mouseButtons(e);
+      return;
+    }
+    setTouchMode(true);
     if (!touch.enabled) return;                                  // menus: DOM handles it
     if (e.target && e.target.closest && e.target.closest('.screen')) return;
     e.preventDefault();
     const x = e.clientX, y = e.clientY;
 
     const btn = buttonAt(x, y);
-    if (btn && btn.id === null) {
+    if (btn) {
+      if (btn.id !== null) return;   // already held by another finger
       btn.id = e.pointerId;
       vibrate(10);
-      if (btn.key === 'fire') { touch.fireIds.add(e.pointerId); pressed['fire'] = true; }
-      else if (btn.key === 'nade') pressed['nade'] = true;
-      else if (btn.key === 'cam') pressed['KeyC'] = true;
-      else if (btn.key === 'pause') pressed['KeyP'] = true;
+      if (btn.key === 'fire') touch.fireIds.add(e.pointerId);
+      else if (btn.key === 'cam') pressed['cam'] = true;
+      else if (btn.key === 'pause') pressed['pause'] = true;
       return;
     }
 
-    if (x < window.innerWidth * 0.55 && touch.stick.id === null) {
-      const s = touch.stick;
-      s.id = e.pointerId;
-      s.baseX = Math.max(safe.l + 24, Math.min(window.innerWidth * 0.55, x));
-      s.baseY = Math.max(safe.t + 70, Math.min(window.innerHeight - safe.b - 24, y));
-      moveStick(x, y);
+    if (x < window.innerWidth * 0.55) {
+      // spawn the stick exactly under the thumb — never pre-deflected. A
+      // second left-half touch while the stick is owned is a palm brush or
+      // regrip, not a command: ignore it rather than let it fall to fire.
+      if (touch.stick.id === null) {
+        const s = touch.stick;
+        s.id = e.pointerId;
+        s.baseX = x;
+        s.baseY = y;
+        s.dx = 0; s.dy = 0; s.mag = 0; s.rel = 0;
+      }
     } else {
       // anywhere else on the right half is hold-to-fire
       touch.fireIds.add(e.pointerId);
-      pressed['fire'] = true;
     }
   }
 
   function onPointerMove(e) {
-    if (e.pointerType === 'mouse') return;
+    if (e.pointerType === 'mouse') { mouseButtons(e); return; }
     if (touch.stick.id === e.pointerId) moveStick(e.clientX, e.clientY);
   }
 
   function onPointerUp(e) {
-    if (e.pointerType === 'mouse') return;
-    lastTouchT = performance.now();
+    if (e.pointerType === 'mouse') { mouseButtons(e); return; }
     releasePointer(e.pointerId);
   }
 
