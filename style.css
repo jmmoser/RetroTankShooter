@@ -6,6 +6,11 @@
   --teal-dark: #143f37;
   --ink: #0a1410;
   --paper: #d8d8d0;
+  /* copied into custom properties so js/input.js can read the notch insets */
+  --sa-t: env(safe-area-inset-top, 0px);
+  --sa-r: env(safe-area-inset-right, 0px);
+  --sa-b: env(safe-area-inset-bottom, 0px);
+  --sa-l: env(safe-area-inset-left, 0px);
 }
 
 html, body {
@@ -14,9 +19,14 @@ html, body {
   background: #02060a;
   font-family: "Courier New", Courier, monospace;
   -webkit-user-select: none; user-select: none;
+  /* kill browser gestures over the playfield: no pull-to-refresh, no
+     double-tap zoom, no long-press callout */
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-touch-callout: none;
 }
 
-#game-wrap { position: fixed; inset: 0; }
+#game-wrap { position: fixed; inset: 0; touch-action: none; }
 
 #gl, #hud {
   position: absolute; inset: 0;
@@ -54,8 +64,18 @@ html, body {
   z-index: 10;
   color: var(--teal-bright);
   text-align: center;
+  /* taps on menus must still click, but never zoom */
+  touch-action: manipulation;
+  padding: var(--sa-t) var(--sa-r) var(--sa-b) var(--sa-l);
 }
 .hidden { display: none !important; }
+
+/* touch devices: hide keyboard hints, show thumb hints (input.js sets the class) */
+.help-touch { display: none; }
+body.touch-ui .help-touch { display: inline; }
+body.touch-ui .help-kb { display: none; }
+body.touch-ui .mkey { display: none; }
+body.touch-ui .mbtn { padding: 10px 20px; }
 
 .blink { animation: blink 1.1s steps(2, start) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
@@ -382,3 +402,24 @@ html, body {
   padding: 4px 10px;
 }
 .lobby-code:hover { text-shadow: 0 0 16px rgba(232, 199, 90, 0.9); }
+
+/* ---------- short landscape phones: compact the menus to fit, no scrolling ---------- */
+@media (max-height: 500px) {
+  .screen { gap: 10px; }
+  .disk-label { padding: 12px 22px 10px; }
+  .disk-title { font-size: clamp(24px, 8vh, 40px); }
+  .disk-sub { font-size: clamp(13px, 4vh, 18px); }
+  .disk-row { margin-top: 10px; }
+  .disk-badge { width: 38px; height: 38px; }
+  .badge-square { border-left-width: 19px; border-top-width: 10px; border-bottom-width: 10px; }
+  .menu { gap: 8px; width: min(300px, 82vw); }
+  .mbtn { min-height: 40px; padding: 8px 20px; font-size: 13px; }
+  .panel { padding: 14px 18px 12px; gap: 10px; }
+  .panel-head { font-size: 17px; letter-spacing: 5px; }
+  .loadout { padding: 8px 10px; width: 152px; }
+  .lo-name { margin-bottom: 4px; }
+  .title-help { font-size: 11px; line-height: 1.6; }
+  .clear-stats { font-size: 12px; line-height: 1.7; }
+  .join-input { font-size: 22px; padding: 8px 12px; }
+  .lobby-roster { min-height: 24px; }
+}

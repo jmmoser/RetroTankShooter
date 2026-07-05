@@ -60,6 +60,7 @@
   let loadoutIndex = 1;   // solo loadout
   let lobbyLoadout = 1;   // co-op loadout
   let chaseCam = false;
+  let chaseCamUserSet = false;   // stop the touch default from fighting the C toggle
   let highScore = 0;
   try { highScore = parseInt(localStorage.getItem('pa_high') || '0', 10) || 0; } catch (e) {}
 
@@ -168,7 +169,28 @@
     showScreen('setup');
   }
 
+  // On touch devices, launching a run is the user gesture we spend on going
+  // fullscreen + landscape, and third person is the friendlier default camera.
+  // Everything here is best-effort: browsers that refuse just play windowed.
+  function mobileImmersive() {
+    if (!Input.touchUI().mode) return;
+    if (!chaseCamUserSet) chaseCam = true;
+    try {
+      const el = document.documentElement;
+      if (!document.fullscreenElement && el.requestFullscreen) {
+        const r = el.requestFullscreen({ navigationUI: 'hide' });
+        if (r && r.catch) r.catch(() => {});
+      }
+    } catch (e) {}
+    try {
+      if (screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock('landscape').catch(() => {});
+      }
+    } catch (e) {}
+  }
+
   function startRun() {
+    mobileImmersive();
     game.newRun(loadoutIndex);
     uiMode = 'playing';
     showScreen(null);
@@ -298,6 +320,7 @@
   function submitJoin() {
     const code = joinInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (code.length < 4) { joinError.textContent = 'ENTER A 4-CHARACTER CODE'; return; }
+    mobileImmersive();   // last user gesture before the host launches us into play
     joinError.textContent = 'CONNECTING…';
     joinInput.blur();
     lobbyLoadout = 1;
@@ -337,6 +360,7 @@
 
   // ---- multiplayer: run start (host & client) --------------------------------
   function startHostRun() {
+    mobileImmersive();
     const info = Net.hostStartGame();
     game.newRun(info.defs, info.localId);   // host owns the arena generation
     uiMode = 'playing';
@@ -731,7 +755,7 @@
         break;
 
       case 'playing':
-        if (Input.consume('KeyC')) chaseCam = !chaseCam;
+        if (Input.consume('KeyC')) { chaseCam = !chaseCam; chaseCamUserSet = true; }
         if (Net.role === 'solo' && (Input.consume('KeyP') || Input.consume('Escape'))) pauseGame();
         break;
 
@@ -833,6 +857,7 @@
     lastT = now;
     dt = Math.min(dt, 0.05);
 
+    Input.setPlayfieldActive(uiMode === 'playing');
     handleScreens();
 
     if (uiMode === 'playing') {

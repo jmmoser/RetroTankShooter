@@ -579,10 +579,11 @@ class Game {
       if (p.ammo > 0) {
         p.ammo--;
         p.fireCd = delay;
-        const bx = p.x + fwdX(p.angle) * 3.2;
-        const bz = p.z + fwdZ(p.angle) * 3.2;
+        const shotAngle = this._aimAssist(p);
+        const bx = p.x + fwdX(shotAngle) * 3.2;
+        const bz = p.z + fwdZ(shotAngle) * 3.2;
         this.projectiles.push({
-          x: bx, z: bz, y: 1.6, angle: p.angle,
+          x: bx, z: bz, y: 1.6, angle: shotAngle,
           speed: 72, from: 'player', owner: p.id, dmg: 25, life: 4,
         });
         this._burst(bx, 1.6, bz, 4, [1, 0.9, 0.5], 5); // muzzle flash
@@ -624,6 +625,36 @@ class Game {
       }
       if (p.shields > p.maxShields * 0.35) p.lowWarned = false;
     }
+  }
+
+  /* Target magnetism: snap a shot onto the closest-to-crosshair target
+   * within a narrow cone in front of the hull. Touch aiming is inherently a
+   * few degrees sloppy; the cone is tight enough that keyboard and gamepad
+   * players just feel accurate rather than assisted. Applies uniformly so
+   * every input scheme stays on equal footing in co-op. */
+  _aimAssist(p) {
+    const CONE = 0.15, RANGE = 150;
+    let best = p.angle, bestErr = CONE;
+    const consider = (x, z) => {
+      if (dist2(p.x, p.z, x, z) > RANGE * RANGE) return;
+      const bearing = angleTo(x - p.x, z - p.z);
+      const err = Math.abs(wrapAngle(bearing - p.angle));
+      if (err < bestErr && this._losClear(p.x, p.z, x, z)) { bestErr = err; best = bearing; }
+    };
+    for (const e of this.enemies) {
+      if (e.cloak > 0.6) continue;   // can't lock what the radar can't see
+      consider(e.x, e.z);
+    }
+    const b = this.boss;
+    if (b && !b.dead) {
+      for (const tu of b.turrets) {
+        if (tu.hp <= 0) continue;
+        const [wx, wz] = bossTurretWorld(b, tu);
+        consider(wx, wz);
+      }
+      if (b.vulnerable) consider(b.x, b.z);
+    }
+    return best;
   }
 
   /* Clamp a tank inside the arena and outside obstacles. Returns true if a
