@@ -114,8 +114,8 @@ On phones and tablets the game switches to a full touch scheme:
 
 - **Floating joystick** — touch anywhere on the left half and a stick spawns
   under your thumb. Push where you want to go: forward arcs drive and steer,
-  sideways pivots in place, straight back reverses. Overshoot the stick's rim
-  and it drags along with your thumb, so direction changes are instant.
+  sideways pivots in place, straight back reverses. The base stays anchored
+  where you touched down; overshooting the rim just clamps at full deflection.
 - **Hold to fire** — anywhere on the right half, or the big FIRE button.
   A touch-friendly hint of aim assist snaps shots onto targets that are
   almost lined up (it applies to all players equally, so co-op stays fair).
