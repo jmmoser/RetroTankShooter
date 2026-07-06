@@ -488,7 +488,10 @@ class Renderer {
   /* opts: unlit, tint, nofog (skybox geometry must not dissolve into fog),
    * points (GL_POINTS mesh with size in aNormal.x, like the particle path),
    * additive (glow geometry: blend ONE,ONE with no depth writes),
-   * soft (round points fade at the rim instead of hard-clipping) */
+   * soft (round points fade at the rim instead of hard-clipping),
+   * nodepth (backdrop geometry: no depth test or writes — at sky distances
+   * the 16-bit FBO depth buffer can't separate the layers and they z-fight,
+   * so the backdrop relies on painter's order instead) */
   draw(mesh, model, opts) {
     const gl = this.gl;
     gl.uniformMatrix4fv(this.uniforms.uModel, false, model || this.identityModel);
@@ -510,10 +513,19 @@ class Renderer {
       gl.blendFunc(gl.ONE, gl.ONE);
       gl.depthMask(false);
     }
+    const nodepth = opts && opts.nodepth;
+    if (nodepth) {
+      gl.disable(gl.DEPTH_TEST);
+      gl.depthMask(false);
+    }
     this._bindVertexFormat(mesh.vbo);
     gl.drawArrays(mesh.mode, 0, mesh.count);
     if (additive) {
       gl.disable(gl.BLEND);
+      gl.depthMask(true);
+    }
+    if (nodepth) {
+      gl.enable(gl.DEPTH_TEST);
       gl.depthMask(true);
     }
     if (tint) gl.uniform3f(this.uniforms.uTint, 1, 1, 1);
