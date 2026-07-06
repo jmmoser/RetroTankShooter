@@ -840,17 +840,20 @@
   // The backdrop follows the camera (x/z only) so it never parallaxes closer:
   // ember horizon, black ridgelines, dead stars, and an eclipsed sun. The glow
   // breathes slowly and occasionally flares like distant sheet lightning.
+  // Drawn back-to-front with the depth buffer out of the loop (nodepth): at
+  // these distances 16-bit depth can't tell the layers apart and the eclipse
+  // z-fights the dome, smearing dark patches across the corona.
   function drawSky() {
     const t = performance.now() / 1000;
     const n = Math.sin(t * 11.3) * Math.sin(t * 4.7) * Math.sin(t * 1.9);
     const flare = n > 0.9 ? (n - 0.9) * 5 : 0;
     const g = 0.85 + 0.15 * Math.sin(t * 0.43) + flare;
     const model = m4.translation(cam.x, 0, cam.z);
-    renderer.draw(M.sky, model, { unlit: true, nofog: true, tint: [g, g * 0.85, g * 0.85] });
-    renderer.draw(M.stars, model, { unlit: true, nofog: true, points: true });
+    renderer.draw(M.sky, model, { unlit: true, nofog: true, nodepth: true, tint: [g, g * 0.85, g * 0.85] });
+    renderer.draw(M.stars, model, { unlit: true, nofog: true, nodepth: true, points: true });
     const rim = 0.8 + 0.2 * Math.sin(t * 0.9) + flare;
-    renderer.draw(M.eclipse, model, { unlit: true, nofog: true, tint: [rim, rim, rim] });
-    renderer.draw(M.mountains, model, { unlit: true, nofog: true, tint: [g, g, g] });
+    renderer.draw(M.eclipse, model, { unlit: true, nofog: true, nodepth: true, tint: [rim, rim, rim] });
+    renderer.draw(M.mountains, model, { unlit: true, nofog: true, nodepth: true, tint: [g, g, g] });
   }
 
   function drawArena(src) {
