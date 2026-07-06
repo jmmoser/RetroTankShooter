@@ -236,6 +236,15 @@ const Geometry = (() => {
     return b.build();
   }
 
+  /* Proximity mine: a squat faceted puck with a detonator tip. Drawn white
+   * and tinted at draw time — dim while arming, blinking hot once live. */
+  function mine() {
+    const b = new MeshBuilder();
+    b.box(0, 0.2, 0, 1.5, 0.4, 1.5, [0.55, 0.6, 0.62]);
+    b.pyramid(0, 0.4, 0, 0.95, 0.95, 0.55, [1, 1, 1]);
+    return b.build();
+  }
+
   /* Objective beacon: a thin vertical pillar of light over the last flags.
    * Drawn unlit + nofog with a pulsing tint so it reads across the arena. */
   function beacon() {
@@ -458,5 +467,5 @@ const Geometry = (() => {
     return new Float32Array(verts);
   }
 
-  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, wallSegment, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring };
+  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring };
 })();

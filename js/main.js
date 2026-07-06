@@ -41,6 +41,7 @@
     shard: renderer.createMesh(Geometry.shard()),
     depot: renderer.createMesh(Geometry.depot()),
     powerup: renderer.createMesh(Geometry.powerup()),
+    mine: renderer.createMesh(Geometry.mine()),
     beacon: renderer.createMesh(Geometry.beacon()),
     bossBody: renderer.createMesh(Geometry.bossBody()),
     bossTurret: renderer.createMesh(Geometry.bossTurret()),
@@ -54,13 +55,39 @@
   };
   const TANK_MESH = { drone: M.tankDrone, hunter: M.tankHunter, sniper: M.tankSniper, phantom: M.tankPhantom };
 
+  // deuteranopia-safe hull palette, baked as a second mesh set and swapped
+  // live by the COLORBLIND HULLS setting
+  const CB_HULLS = {
+    drone: [1.0, 0.55, 0.10],
+    hunter: [1.0, 0.93, 0.25],
+    sniper: [0.30, 0.55, 1.0],
+    phantom: [0.93, 0.97, 1.0],
+  };
+  const TANK_MESH_CB = {};
+  for (const k in CB_HULLS) TANK_MESH_CB[k] = renderer.createMesh(Geometry.tankSolid(CB_HULLS[k]));
+  function tankMeshFor(type) {
+    const set = Settings.get('colorblind') ? TANK_MESH_CB : TANK_MESH;
+    return set[type] || TANK_MESH.drone;
+  }
+
+  // ---- live settings ---------------------------------------------------------
+  function applySettings() {
+    AudioSys.setVolume(Settings.get('volume') / 10);
+    document.getElementById('crt').style.display = Settings.get('crt') ? '' : 'none';
+  }
+  Settings.onChange = () => { applySettings(); renderSettingVals(); };
+  applySettings();
+
   // ---- ui state -------------------------------------------------------------
   // title | setup | lobby | join | playing | levelclear | gameover | paused
+  // | settings | records | versusover
   let uiMode = 'title';
   let loadoutIndex = 1;   // solo loadout
   let lobbyLoadout = 1;   // co-op loadout
+  let startSector = 1;    // checkpoint start (setup screen)
   let chaseCam = false;
   let chaseCamUserSet = false;   // stop the touch default from fighting the C toggle
+  let runRecorded = true; // guards Progress.recordRun against double counting
   let highScore = 0;
   try { highScore = parseInt(localStorage.getItem('pa_high') || '0', 10) || 0; } catch (e) {}
 
@@ -72,6 +99,9 @@
     clear: document.getElementById('screen-clear'),
     over: document.getElementById('screen-over'),
     pause: document.getElementById('screen-pause'),
+    settings: document.getElementById('screen-settings'),
+    records: document.getElementById('screen-records'),
+    vsover: document.getElementById('screen-vsover'),
   };
 
   function showScreen(name) {
@@ -114,7 +144,7 @@
       const b = e.target.closest('.mbtn');
       if (b && !b.classList.contains('hidden')) setFocus(b, true);
     });
-    return { move, activate, reset, clear: () => setFocus(null, true) };
+    return { move, activate, reset, clear: () => setFocus(null, true), focusedId: () => (focused ? focused.id : null) };
   }
 
   const menus = {
@@ -125,6 +155,9 @@
     clear: makeMenu(screens.clear, 'bt-continue'),
     over: makeMenu(screens.over, 'bt-retry'),
     pause: makeMenu(screens.pause, 'bt-resume'),
+    settings: makeMenu(screens.settings, 'st-volume'),
+    records: makeMenu(screens.records, 'bt-records-back'),
+    vsover: makeMenu(screens.vsover, 'bt-vs-again'),
   };
 
   function menuKeys(name) {
@@ -142,18 +175,33 @@
   }
 
   function updateTitleHigh() {
-    document.getElementById('title-high').textContent =
-      highScore > 0 ? 'HIGH SCORE ' + String(highScore).padStart(7, '0') : '';
+    const daily = Progress.dailyBest();
+    let txt = highScore > 0 ? 'HIGH SCORE ' + String(highScore).padStart(7, '0') : '';
+    if (daily) txt += (txt ? ' · ' : '') + 'DAILY BEST ' + String(daily.score).padStart(7, '0');
+    document.getElementById('title-high').textContent = txt;
   }
   updateTitleHigh();
 
   // ---- solo loadout select --------------------------------------------------
+  function loadoutLocked(i) { return i === 3 && !Progress.marauderUnlocked(); }
+
   function selectLoadout(i) {
+    if (loadoutLocked(i)) { AudioSys.play('comboBreak'); return; }
     loadoutIndex = i;
     document.querySelectorAll('.loadout').forEach((el) => {
       el.classList.toggle('selected', parseInt(el.dataset.i, 10) === i);
     });
     AudioSys.play('select');
+  }
+
+  /* Arrow-key cycling that hops over a locked MARAUDER. */
+  function cycleLoadout(dir) {
+    let i = loadoutIndex;
+    for (let k = 0; k < LOADOUTS.length; k++) {
+      i = (i + dir + LOADOUTS.length) % LOADOUTS.length;
+      if (!loadoutLocked(i)) break;
+    }
+    selectLoadout(i);
   }
 
   document.querySelectorAll('.loadout').forEach((el) => {
@@ -164,8 +212,27 @@
     el.addEventListener('dblclick', () => startRun());
   });
 
+  // ---- checkpoint starts ------------------------------------------------------
+  const btCheckpoint = document.getElementById('bt-checkpoint');
+  function refreshCheckpointRow() {
+    const cps = Progress.checkpoints();
+    if (cps.indexOf(startSector) < 0) startSector = 1;
+    btCheckpoint.classList.toggle('hidden', cps.length < 2);
+    btCheckpoint.textContent = 'START SECTOR ' + startSector +
+      (cps.length > 1 ? ' ▸' : '');
+  }
+  btCheckpoint.addEventListener('click', () => {
+    AudioSys.resume(); AudioSys.play('select');
+    const cps = Progress.checkpoints();
+    startSector = cps[(cps.indexOf(startSector) + 1) % cps.length];
+    refreshCheckpointRow();
+  });
+
   function goSetup() {
     uiMode = 'setup';
+    document.getElementById('loadout-marauder').classList.toggle('locked', loadoutLocked(3));
+    if (loadoutLocked(3) && loadoutIndex === 3) selectLoadout(1);
+    refreshCheckpointRow();
     showScreen('setup');
   }
 
@@ -191,11 +258,39 @@
 
   function startRun() {
     mobileImmersive();
-    game.newRun(loadoutIndex);
+    runRecorded = false;
+    game.newRun(loadoutIndex, null, { startLevel: startSector });
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message('SECTOR 1 — SECURE ALL FLAGS', '#4fd6bb', 3);
+    hud.message('SECTOR ' + game.level + ' — SECURE ALL FLAGS',
+      game.bossLevel ? '#ff4a3c' : '#4fd6bb', 3);
+  }
+
+  // Daily ops: one seeded arena per UTC day, standard-issue VANGUARD for a
+  // level playing field, result shareable from the game-over screen.
+  function startDaily() {
+    mobileImmersive();
+    runRecorded = false;
+    game.newRun(1, null, { dailySeed: Progress.todayKey() });
+    uiMode = 'playing';
+    showScreen(null);
+    AudioSys.play('deploy');
+    hud.message('DAILY OPS ' + Progress.todayKey() + ' — SECURE ALL FLAGS', '#ffd24a', 3);
+  }
+
+  /* Fold the finished (or abandoned) run into the career record, once.
+   * Returns true if this run just unlocked the MARAUDER. */
+  function recordRunEnd() {
+    if (runRecorded) return false;
+    runRecorded = true;
+    if (Net.role === 'client') {
+      Progress.recordRun(null, game.level);   // clients don't run the sim
+      return false;
+    }
+    const before = Progress.marauderUnlocked();
+    Progress.recordRun(game.runStats, game.level);
+    return !before && Progress.marauderUnlocked();
   }
 
   function recordHighScore() {
@@ -219,15 +314,44 @@
 
   function gameOver() {
     uiMode = 'gameover';
+    const unlocked = recordRunEnd();
     const isHigh = recordHighScore();
-    document.getElementById('over-stats').innerHTML =
+    let html =
       `FINAL SCORE <span class="gold">${game.score}</span><br>` +
       `SECTOR REACHED ${game.level}<br>` +
       (isHigh ? '<span class="gold">&#9733; NEW HIGH SCORE &#9733;</span>'
               : `HIGH SCORE ${highScore}`);
+    if (game.dailySeed) {
+      const wasBest = Progress.recordDaily(game.score, game.level);
+      const best = Progress.dailyBest();
+      html += '<br>' + (wasBest
+        ? '<span class="gold">&#9733; BEST DAILY RUN TODAY &#9733;</span>'
+        : `TODAY'S BEST ${best ? best.score : 0}`);
+      updateTitleHigh();
+    }
+    if (unlocked) html += '<br><span class="gold">MARAUDER CHASSIS UNLOCKED</span>';
+    document.getElementById('over-stats').innerHTML = html;
+    document.getElementById('bt-share').classList.toggle('hidden', !game.dailySeed);
+    shareBtn.textContent = 'COPY RESULT';
     configureOverButtons();
     showScreen('over');
   }
+
+  // Wordle-style share card for the daily run.
+  const shareBtn = document.getElementById('bt-share');
+  shareBtn.addEventListener('click', () => {
+    AudioSys.resume();
+    const lines = [
+      'PHANTOM ARENA — DAILY OPS ' + (game.dailySeed || Progress.todayKey()),
+      'SCORE ' + game.score + ' · SECTOR ' + game.level,
+    ];
+    if (/^https?:$/.test(location.protocol)) lines.push(location.origin + location.pathname);
+    const done = () => { shareBtn.textContent = 'COPIED — SEND IT'; AudioSys.play('select'); };
+    const fail = () => { shareBtn.textContent = 'COPY FAILED'; };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(lines.join('\n')).then(done, fail);
+    } else fail();
+  });
 
   // ---- multiplayer: lobby ----------------------------------------------------
   const lobbyCodeEl = document.getElementById('lobby-code');
@@ -266,6 +390,7 @@
   }
 
   function selectLobbyLoadout(i) {
+    if (loadoutLocked(i)) { AudioSys.play('comboBreak'); return; }
     lobbyLoadout = i;
     document.querySelectorAll('#lobby-loadouts .ll').forEach((el) => {
       el.classList.toggle('selected', parseInt(el.dataset.i, 10) === i);
@@ -278,6 +403,40 @@
     el.addEventListener('click', () => { AudioSys.resume(); selectLobbyLoadout(parseInt(el.dataset.i, 10)); });
   });
 
+  function cycleLobbyLoadout(dir) {
+    let i = lobbyLoadout;
+    for (let k = 0; k < LOADOUTS.length; k++) {
+      i = (i + dir + LOADOUTS.length) % LOADOUTS.length;
+      if (!loadoutLocked(i)) break;
+    }
+    selectLobbyLoadout(i);
+  }
+
+  function refreshLobbyLocks() {
+    document.querySelectorAll('#lobby-loadouts .ll').forEach((el) => {
+      el.classList.toggle('locked', loadoutLocked(parseInt(el.dataset.i, 10)));
+    });
+  }
+
+  // ---- lobby game mode (host picks, everyone sees) ---------------------------
+  function updateModeRow() {
+    const mode = Net.state.mode || 'coop';
+    document.querySelectorAll('#lobby-mode .ll').forEach((el) => {
+      el.classList.toggle('selected', el.dataset.mode === mode);
+    });
+    document.getElementById('lobby-head').textContent =
+      mode === 'versus' ? 'VERSUS LOBBY' : 'CO-OP LOBBY';
+  }
+  document.querySelectorAll('#lobby-mode .ll').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (Net.role !== 'host') return;   // clients just see the host's pick
+      AudioSys.resume(); AudioSys.play('select');
+      Net.hostSetMode(el.dataset.mode);
+      updateModeRow();
+      renderRoster(Net.state.roster);
+    });
+  });
+
   function renderRoster(roster) {
     lobbyRosterEl.innerHTML = roster.map((r, i) => {
       const lo = LOADOUTS[r.loadoutIndex] || LOADOUTS[1];
@@ -286,26 +445,35 @@
         `${r.name}${you ? ' <span class="roster-you">(YOU)</span>' : ''}` +
         `<span class="roster-lo">${lo.name}</span></div>`;
     }).join('');
+    const versus = Net.state.mode === 'versus';
     if (Net.role === 'host') {
-      lobbyHintEl.textContent = roster.length > 1
-        ? 'ENTER TO LAUNCH — ' + roster.length + ' TANKS READY'
-        : 'WAITING FOR PLAYERS — ENTER TO LAUNCH SOLO';
+      if (versus) {
+        lobbyHintEl.textContent = roster.length > 1
+          ? 'ENTER TO LAUNCH — FIRST TO 10 KILLS'
+          : 'VERSUS NEEDS AT LEAST 2 TANKS';
+      } else {
+        lobbyHintEl.textContent = roster.length > 1
+          ? 'ENTER TO LAUNCH — ' + roster.length + ' TANKS READY'
+          : 'WAITING FOR PLAYERS — ENTER TO LAUNCH SOLO';
+      }
     } else {
       lobbyHintEl.textContent = 'WAITING FOR HOST TO LAUNCH…';
     }
+    updateModeRow();
   }
 
   function enterLobbyAsHost() {
     AudioSys.resume();
     lobbyLoadout = 1;
-    selectLobbyLoadout(1);
     lobbyCodeEl.textContent = 'CREATING ROOM…';
     setRoomCode('');
     lobbyLaunchBtn.classList.remove('hidden');
-    renderRoster([]);
     uiMode = 'lobby';
     showScreen('lobby');
     Net.hostCreate('PLAYER 1', lobbyLoadout);
+    selectLobbyLoadout(1);
+    refreshLobbyLocks();
+    renderRoster(Net.state.roster);
   }
 
   function enterJoin() {
@@ -333,6 +501,7 @@
     document.querySelectorAll('#lobby-loadouts .ll').forEach((el) => {
       el.classList.toggle('selected', parseInt(el.dataset.i, 10) === 1);
     });
+    refreshLobbyLocks();
     renderRoster([]);
     Net.clientJoin(code, 'PLAYER', lobbyLoadout);
   }
@@ -350,6 +519,7 @@
   });
 
   function leaveToTitle() {
+    recordRunEnd();
     Net.leave();
     setRoomCode('');
     game.mode = 'idle';
@@ -360,36 +530,74 @@
 
   // ---- multiplayer: run start (host & client) --------------------------------
   function startHostRun() {
+    const versus = Net.state.mode === 'versus';
+    if (versus && Net.state.roster.length < 2) {
+      lobbyHintEl.textContent = 'VERSUS NEEDS AT LEAST 2 TANKS';
+      return;
+    }
     mobileImmersive();
     const info = Net.hostStartGame();
-    game.newRun(info.defs, info.localId);   // host owns the arena generation
+    runRecorded = versus;                   // versus matches stay out of career stats
+    game.newRun(info.defs, info.localId, { versus });   // host owns the arena generation
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message('SECTOR 1 — SECURE ALL FLAGS', '#4fd6bb', 3);
+    hud.message(versus ? 'VERSUS — FIRST TO 10 KILLS' : 'SECTOR 1 — SECURE ALL FLAGS',
+      versus ? '#ffd24a' : '#4fd6bb', 3);
     Net.broadcastLevel(game);               // ship the arena to clients
     netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = [];
   }
 
-  function startClientRun(defs, localId) {
+  function startClientRun(defs, localId, mode) {
     // Build players locally but DON'T generate an arena — the host owns it and
     // streams it via 'lv' + 's' messages.
+    const versus = mode === 'versus';
     game.players = defs.map((d, i) => game._makePlayer(d, i));
     game.localId = localId;
     game.player = game.players.find((p) => p.id === localId) || game.players[0];
     game.level = 1; game.score = 0;
     game.obstacles = []; game.flags = []; game.enemies = [];
     game.projectiles = []; game.powerups = []; game.particles = [];
-    game.debris = []; game.depots = [];
+    game.debris = []; game.depots = []; game.mines = [];
     game.boss = null; game.rings = []; game.pendingSpawns = [];
     game.bossLevel = false; game.alert = 0;
     game.combo = 0; game.comboT = 0; game.mult = 1;
+    game.versus = versus; game.killCounts = {}; game.killTarget = 10;
+    game.winnerId = null; game.dailySeed = null;
+    game.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1 };
     game.mode = 'playing';
     game._prevSh = null; game._prevAlive = null;  // reset damage-feedback tracking
+    runRecorded = versus;
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message('CO-OP DEPLOYED — SECURE ALL FLAGS', '#4fd6bb', 3);
+    hud.message(versus ? 'VERSUS — FIRST TO 10 KILLS' : 'CO-OP DEPLOYED — SECURE ALL FLAGS',
+      versus ? '#ffd24a' : '#4fd6bb', 3);
+  }
+
+  // ---- versus: match over ------------------------------------------------------
+  function fillVsStandings(rows, localWon) {
+    const head = document.getElementById('vs-head');
+    head.textContent = localWon ? 'VICTORY' : 'DEFEAT';
+    head.classList.toggle('red', !localWon);
+    document.getElementById('vs-standings').innerHTML = rows.map((r) =>
+      `<div class="roster-row"><span class="roster-dot c${r.ci}"></span>` +
+      `${r.name}<span class="roster-lo">${r.kills} KILLS</span></div>`).join('');
+    document.getElementById('bt-vs-again').classList.toggle('hidden', Net.role !== 'host');
+    document.getElementById('vs-wait').classList.toggle('hidden', Net.role !== 'client');
+  }
+
+  function doVersusOver() {
+    uiMode = 'versusover';
+    const rows = game.players
+      .map((p) => ({ id: p.id, name: p.name, kills: game.killCounts[p.id] || 0, ci: p.colorIdx || 0 }))
+      .sort((a, b) => b.kills - a.kills);
+    fillVsStandings(rows, game.winnerId === game.localId);
+    showScreen('vsover');
+    if (Net.role === 'host') {
+      Net.broadcastState(game);
+      Net.broadcastScreen({ s: 'vswin', winnerId: game.winnerId, standings: rows });
+    }
   }
 
   function showClearStats() {
@@ -489,12 +697,14 @@
     const p = game.players && game.players.find((pp) => pp.id === id);
     if (p && p.input) { p.input.turn = 0; p.input.drive = 0; p.input.fire = false; }
   };
-  Net.cb.onStart = (defs, localId) => startClientRun(defs, localId);
+  Net.cb.onStart = (defs, localId, mode) => startClientRun(defs, localId, mode);
   Net.cb.onLevel = (msg) => {
     Net.applyLevel(game, msg);
     uiMode = 'playing';
     showScreen(null);
-    if (game.bossLevel) {
+    if (game.versus) {
+      hud.message('VERSUS — FIRST TO ' + game.killTarget + ' KILLS', '#ffd24a', 3);
+    } else if (game.bossLevel) {
       hud.message('SECTOR ' + game.level + ' — WARLORD DETECTED', '#ff4a3c', 3.5);
       AudioSys.play('alarm');
     } else {
@@ -510,12 +720,19 @@
       showScreen('clear');
     } else if (msg.s === 'over') {
       game.score = msg.score; game.level = msg.level;
+      recordRunEnd();
       recordHighScore();
       document.getElementById('over-stats').innerHTML =
         `FINAL SCORE <span class="gold">${game.score}</span><br>SECTOR REACHED ${game.level}`;
+      document.getElementById('bt-share').classList.add('hidden');
       uiMode = 'gameover';
       configureOverButtons();
       showScreen('over');
+    } else if (msg.s === 'vswin') {
+      game.winnerId = msg.winnerId;
+      uiMode = 'versusover';
+      fillVsStandings(msg.standings || [], msg.winnerId === Net.state.id);
+      showScreen('vsover');
     }
   };
 
@@ -551,7 +768,7 @@
     const speed01 = p.maxSpeed ? Math.min(1, Math.abs(p.speed || 0) / p.maxSpeed) : 0;
     const rollTarget = (uiMode === 'playing' && p.alive) ? ax.turn * 0.045 * (0.3 + 0.7 * speed01) : 0;
     cam.roll += (rollTarget - cam.roll) * Math.min(1, dt * 8);
-    const shake = game.shake;
+    const shake = game.shake * (Settings.get('shake') / 10);
     const sx = (Math.random() - 0.5) * shake * 0.6;
     const sy = (Math.random() - 0.5) * shake * 0.5;
     if (chaseCam || !p.alive) {
@@ -678,8 +895,23 @@
       if (ck > 0.01 && e.hitFlash <= 0) {
         const v = Math.max(0.02, 1 - ck * (0.92 + 0.08 * Math.sin(now / 120)));
         tint = [v, v, v];
+      } else if (e.elite && !tint) {
+        // elites strobe white-hot so they read across the arena
+        const pu = 1 + 0.25 * (0.5 + 0.5 * Math.sin(now / 150));
+        tint = [pu, pu, pu];
       }
-      renderer.draw(TANK_MESH[e.type] || M.tankDrone, m4.trs(e.x, 0, e.z, e.angle, 1, 1, 1), { tint });
+      const sc = e.elite ? 1.18 : 1;
+      renderer.draw(tankMeshFor(e.type), m4.trs(e.x, 0, e.z, e.angle, sc, sc, sc), { tint });
+    }
+
+    // proximity mines: dim while arming, blinking hot once live
+    for (const m of game.mines) {
+      const armed = (m.arm || 0) <= 0;
+      const blink = armed && Math.sin(now / 110) > 0;
+      const tint = armed
+        ? (blink ? [1.7, 0.55, 0.85] : [0.85, 0.28, 0.45])
+        : [0.5, 0.55, 0.6];
+      renderer.draw(M.mine, m4.trs(m.x, 0, m.z, 0, 1, 1, 1), { tint, unlit: armed });
     }
 
     // all co-op tanks; own tank only shown in chase cam (it's the camera in 1st person)
@@ -713,6 +945,75 @@
     renderer.drawParticles(game.particles);
   }
 
+  // ---- settings screen -----------------------------------------------------
+  const SETTING_DEFS = [
+    { key: 'volume', max: 10 },
+    { key: 'shake', max: 10 },
+    { key: 'crt', bool: true },
+    { key: 'aimAssist', bool: true },
+    { key: 'colorblind', bool: true },
+  ];
+
+  function renderSettingVals() {
+    for (const d of SETTING_DEFS) {
+      const el = document.getElementById('stv-' + d.key);
+      if (!el) continue;
+      const v = Settings.get(d.key);
+      el.textContent = d.bool ? (v ? 'ON' : 'OFF') : v + '/' + d.max;
+    }
+  }
+  renderSettingVals();
+
+  function adjustSetting(key, dir, wrap) {
+    const d = SETTING_DEFS.find((x) => x.key === key);
+    if (!d) return;
+    if (d.bool) {
+      Settings.set(key, !Settings.get(key));
+    } else {
+      let v = Settings.get(key) + dir;
+      if (wrap && v > d.max) v = 0;
+      Settings.set(key, Math.max(0, Math.min(d.max, v)));
+    }
+    AudioSys.play('select');
+    if (key === 'volume') AudioSys.play('fire');   // audible volume preview
+  }
+
+  for (const d of SETTING_DEFS) {
+    const row = document.getElementById('st-' + d.key);
+    row.addEventListener('click', () => { AudioSys.resume(); adjustSetting(d.key, 1, true); });
+  }
+
+  function adjustFocusedSetting(dir) {
+    const id = menus.settings.focusedId();
+    if (!id || id.indexOf('st-') !== 0) return;
+    adjustSetting(id.slice(3), dir, false);
+  }
+
+  // ---- service record screen -------------------------------------------------
+  function fillRecords() {
+    const st = Progress.get();
+    const daily = Progress.dailyBest();
+    const cps = Progress.checkpoints();
+    const rows = [
+      ['MISSIONS FLOWN', st.games],
+      ['HIGH SCORE', highScore],
+      ['BEST SECTOR', st.bestSector],
+      ['TANKS DESTROYED', st.kills],
+      ['FLAGS SECURED', st.flags],
+      ['WARLORDS DOWN', st.warlords],
+      ['BEST COMBO', '×' + st.bestCombo],
+      ['DAILY BEST TODAY', daily ? daily.score : '—'],
+    ];
+    const unlocks = [
+      ['MARAUDER CHASSIS', Progress.marauderUnlocked() ? 'UNLOCKED' : 'DESTROY A WARLORD', Progress.marauderUnlocked()],
+      ['CHECKPOINT STARTS', cps.length > 1 ? 'SECTOR ' + cps[cps.length - 1] : 'REACH SECTOR 6', cps.length > 1],
+    ];
+    document.getElementById('records-list').innerHTML =
+      rows.map(([k, v]) => `<div class="rec-row">${k}<span class="rec-val">${v}</span></div>`).join('') +
+      unlocks.map(([k, v, done]) =>
+        `<div class="rec-row rec-unlock">${k}<span class="rec-val${done ? ' done' : ''}">${v}</span></div>`).join('');
+  }
+
   // ---- input / screen flow ------------------------------------------------------
   function handleScreens() {
     if (Input.consume('KeyM')) {
@@ -724,6 +1025,7 @@
       case 'title':
         if (Input.consume('KeyH')) { enterLobbyAsHost(); break; }
         if (Input.consume('KeyJ')) { enterJoin(); break; }
+        if (Input.consume('KeyD')) { startDaily(); break; }
         menuKeys('title');
         break;
 
@@ -731,8 +1033,9 @@
         if (Input.consume('Digit1')) selectLoadout(0);
         if (Input.consume('Digit2')) selectLoadout(1);
         if (Input.consume('Digit3')) selectLoadout(2);
-        if (Input.consume('ArrowLeft') || Input.consume('KeyA')) selectLoadout((loadoutIndex + 2) % 3);
-        if (Input.consume('ArrowRight') || Input.consume('KeyD')) selectLoadout((loadoutIndex + 1) % 3);
+        if (Input.consume('Digit4')) selectLoadout(3);
+        if (Input.consume('ArrowLeft') || Input.consume('KeyA')) cycleLoadout(-1);
+        if (Input.consume('ArrowRight') || Input.consume('KeyD')) cycleLoadout(1);
         menuKeys('setup');
         if (Input.consume('Escape')) { uiMode = 'title'; showScreen('title'); }
         break;
@@ -741,9 +1044,27 @@
         if (Input.consume('Digit1')) selectLobbyLoadout(0);
         if (Input.consume('Digit2')) selectLobbyLoadout(1);
         if (Input.consume('Digit3')) selectLobbyLoadout(2);
-        if (Input.consume('ArrowLeft') || Input.consume('KeyA')) selectLobbyLoadout((lobbyLoadout + 2) % 3);
-        if (Input.consume('ArrowRight') || Input.consume('KeyD')) selectLobbyLoadout((lobbyLoadout + 1) % 3);
+        if (Input.consume('Digit4')) selectLobbyLoadout(3);
+        if (Input.consume('ArrowLeft') || Input.consume('KeyA')) cycleLobbyLoadout(-1);
+        if (Input.consume('ArrowRight') || Input.consume('KeyD')) cycleLobbyLoadout(1);
         menuKeys('lobby');
+        if (Input.consume('Escape')) leaveToTitle();
+        break;
+
+      case 'settings':
+        if (Input.consume('ArrowLeft') || Input.consume('KeyA')) adjustFocusedSetting(-1);
+        if (Input.consume('ArrowRight') || Input.consume('KeyD')) adjustFocusedSetting(1);
+        menuKeys('settings');
+        if (Input.consume('Escape')) { uiMode = 'title'; showScreen('title'); }
+        break;
+
+      case 'records':
+        menuKeys('records');
+        if (Input.consume('Escape')) { uiMode = 'title'; showScreen('title'); }
+        break;
+
+      case 'versusover':
+        menuKeys('vsover');
         if (Input.consume('Escape')) leaveToTitle();
         break;
 
@@ -781,8 +1102,13 @@
 
   // ---- menu button wiring ------------------------------------------------------
   bind('bt-deploy', goSetup);
+  bind('bt-daily', startDaily);
   bind('bt-host', enterLobbyAsHost);
   bind('bt-join', enterJoin);
+  bind('bt-settings', () => { uiMode = 'settings'; renderSettingVals(); showScreen('settings'); });
+  bind('bt-records', () => { uiMode = 'records'; fillRecords(); showScreen('records'); });
+  bind('bt-settings-back', () => { uiMode = 'title'; showScreen('title'); });
+  bind('bt-records-back', () => { uiMode = 'title'; showScreen('title'); });
   bind('bt-setup-back', () => { uiMode = 'title'; showScreen('title'); });
   bind('bt-launch', startRun);
   bind('bt-join-back', leaveToTitle);
@@ -790,11 +1116,17 @@
   bind('bt-lobby-leave', leaveToTitle);
   bind('bt-lobby-launch', () => { if (Net.role === 'host') startHostRun(); });
   bind('bt-continue', advanceLevel);
-  bind('bt-retry', startRun);
+  bind('bt-retry', () => { if (game.dailySeed) startDaily(); else startRun(); });
   bind('bt-again', () => { if (Net.role === 'host') startHostRun(); });
+  bind('bt-vs-again', () => { if (Net.role === 'host') startHostRun(); });
+  bind('bt-vs-leave', leaveToTitle);
   bind('bt-loadout', goSetup);
   bind('bt-title', leaveToTitle);
   bind('bt-resume', resumeGame);
+
+  // surface controller hotplug so players know the pad took
+  window.addEventListener('gamepadconnected', () => hud.message('GAMEPAD CONNECTED', '#4fd6bb', 2));
+  window.addEventListener('gamepaddisconnected', () => hud.message('GAMEPAD DISCONNECTED', '#ffd24a', 2));
 
   menus.title.reset();   // title is visible on boot without a showScreen() call
 
@@ -816,6 +1148,7 @@
     if (lp && lp.input) {
       lp.input.turn = ax.turn; lp.input.drive = ax.drive;
       lp.input.fire = ax.fire; lp.input.nade = ax.nade; lp.input.boost = ax.boost;
+      lp.input.mine = ax.mine;
     }
   }
 
@@ -860,6 +1193,7 @@
     lastT = now;
     dt = Math.min(dt, 0.05);
 
+    Input.pollGamepad();
     // gate matches the HUD's draw condition exactly: no invisible-but-live
     // controls during the death sequence or transitions
     Input.setPlayfieldActive(uiMode === 'playing' && game.mode === 'playing');
@@ -876,6 +1210,7 @@
           game.update(dt);
           if (Net.role === 'host') hostNetTick(dt);
           if (game.mode === 'levelclear') enterLevelClear();
+          else if (game.mode === 'versusover') doVersusOver();
         } else if (game.mode === 'dying') {
           game.updateDying(dt);
           if (Net.role === 'host') Net.broadcastState(game);
@@ -903,6 +1238,11 @@
 
   window.addEventListener('resize', () => { renderer.resize(); hud.resize(); });
   requestAnimationFrame(frame);
+
+  // Offline PWA: cache-first service worker (no-op on file://)
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 
   // exposed for automated testing / tinkering
   window.__PA = { game, hud, net: Net, getMode: () => uiMode };

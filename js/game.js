@@ -7,6 +7,13 @@
  * On top of that: a sector ALERT level that escalates as flags fall
  * (reinforcements warp in, survivors get faster), a kill-chain COMBO
  * multiplier broken by taking damage, and a WARLORD boss every 5 sectors.
+ *
+ * Two more layers:
+ *  - ELITE variants (sector 3+) — hardened, faster, worth more.
+ *  - Proximity MINES — a droppable second secondary that rewards boost-kiting.
+ * Plus two run modes beyond the campaign: seeded DAILY OPS arenas (the UTC
+ * date drives arena generation, so everyone fights the same layout) and a
+ * VERSUS deathmatch where the co-op squad turns on itself.
  */
 
 const ARENA_HALF = 230;          // arena is a square, +/- ARENA_HALF
@@ -26,9 +33,11 @@ function bossTurretWorld(b, tu) {
 }
 
 const LOADOUTS = [
-  { name: 'SCOUT',      speed: 5, armor: 2, ammo: 3, nades: 4 },
-  { name: 'VANGUARD',   speed: 3, armor: 3, ammo: 4, nades: 3 },
-  { name: 'JUGGERNAUT', speed: 2, armor: 5, ammo: 3, nades: 2 },
+  { name: 'SCOUT',      speed: 5, armor: 2, ammo: 3, nades: 4, mines: 1 },
+  { name: 'VANGUARD',   speed: 3, armor: 3, ammo: 4, nades: 3, mines: 1 },
+  { name: 'JUGGERNAUT', speed: 2, armor: 5, ammo: 3, nades: 2, mines: 2 },
+  // earned, not given: unlocked by destroying a WARLORD (Progress.marauderUnlocked)
+  { name: 'MARAUDER',   speed: 4, armor: 4, ammo: 2, nades: 4, mines: 3 },
 ];
 
 const ENEMY_TYPES = {
@@ -51,6 +60,7 @@ const POWERUP_TYPES = {
   ammo:      { tint: [0.95, 0.8, 0.25], label: '+AMMO' },
   shield:    { tint: [0.3, 0.95, 0.6],  label: '+SHIELDS' },
   nade:      { tint: [0.55, 1.0, 0.35], label: '+GRENADES' },
+  mine:      { tint: [1.0, 0.35, 0.6],  label: '+MINES' },
   overdrive: { tint: [0.3, 0.7, 1.0],   label: 'OVERDRIVE' },
   rapid:     { tint: [1.0, 0.45, 0.2],  label: 'RAPID FIRE' },
 };
@@ -67,7 +77,28 @@ function dist2(ax, az, bx, bz) {
   const dx = ax - bx, dz = az - bz;
   return dx * dx + dz * dz;
 }
-function rand(a, b) { return a + Math.random() * (b - a); }
+/* All in-sim randomness flows through RNG so a daily run can swap in a
+ * seeded generator during arena generation (and back out for combat). */
+let RNG = Math.random;
+function rand(a, b) { return a + RNG() * (b - a); }
+
+/* Deterministic PRNG + string hash for the seeded daily arenas. */
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashStr(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return h >>> 0;
+}
 
 // Tints used to tell co-op tanks apart (multiply over the player hull color).
 const PLAYER_TINTS = [
@@ -109,6 +140,14 @@ class Game {
     this.boss = null;      // WARLORD state on boss sectors
     this.bossLevel = false;
     this.rings = [];       // expanding shockwaves: { x, z, r, speed, dmg, hit }
+    this.mines = [];       // proximity mines: { x, z, owner, arm, life }
+    this.dailySeed = null; // 'YYYY-MM-DD' on daily runs — seeds arena generation
+    this.versus = false;   // deathmatch: players hunt each other, no enemies
+    this.killTarget = 10;  // versus win condition
+    this.killCounts = {};  // versus: playerId -> kills
+    this.winnerId = null;
+    this.puTimer = 0;      // versus: contested powerup respawn timer
+    this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1 };
   }
 
   /* Queue a sound: plays locally and is mirrored to clients by the host. */
@@ -139,6 +178,11 @@ class Game {
       maxNades: 6,
       nades: lo.nades,
       nadeCd: 0,
+      maxMines: 4,
+      mines: lo.mines || 0,
+      mineCd: 0,
+      initNades: lo.nades,
+      initMines: lo.mines || 0,
       fireCd: 0,
       fireDelay: 0.38,
       fx: { overdrive: 0, rapid: 0 },
@@ -155,12 +199,21 @@ class Game {
     return p;
   }
 
-  /* defs: [{ id, name, loadoutIndex }]; localId names the local tank. */
-  newRun(defs, localId) {
+  /* defs: [{ id, name, loadoutIndex }]; localId names the local tank.
+   * opts: { startLevel, dailySeed, versus, killTarget } */
+  newRun(defs, localId, opts) {
+    opts = opts || {};
     if (!Array.isArray(defs)) defs = [{ id: 'solo', loadoutIndex: defs }]; // solo back-compat
-    this.level = 1;
+    this.level = opts.startLevel || 1;
+    this.dailySeed = opts.dailySeed || null;
+    this.versus = !!opts.versus;
+    this.killTarget = opts.killTarget || 10;
+    this.killCounts = {};
+    this.winnerId = null;
     this.score = 0;
+    this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1 };
     this.players = defs.map((d, i) => this._makePlayer(d, i));
+    for (const p of this.players) this.killCounts[p.id] = 0;
     this.localId = localId != null ? localId : this.players[0].id;
     this.player = this.players.find((p) => p.id === this.localId) || this.players[0];
     this.startLevel();
@@ -191,6 +244,7 @@ class Game {
     this.particles = [];
     this.debris = [];
     this.depots = [];
+    this.mines = [];
     this.shake = 0;
     this.killsThisLevel = 0;
     this.combo = 0; this.comboT = 0; this.mult = 1;
@@ -198,21 +252,39 @@ class Game {
     this.pendingSpawns = [];
     this.rings = [];
     this.boss = null;
-    this.bossLevel = L >= BOSS_EVERY && L % BOSS_EVERY === 0;
+    this.bossLevel = !this.versus && L >= BOSS_EVERY && L % BOSS_EVERY === 0;
+
+    // daily runs: the date + sector seeds generation, so every player in the
+    // world fights the same layout. Combat randomness reverts to Math.random
+    // at the end of this function.
+    if (this.dailySeed) RNG = mulberry32(hashStr(this.dailySeed + '#' + L));
 
     const n = this.players.length;
+    const spawns = this._spawnPoints();
     this.players.forEach((p, i) => {
-      p.x = (i - (n - 1) / 2) * 8;
-      p.z = ARENA_HALF - 22;
-      p.angle = 0; p.speed = 0;
+      if (this.versus) {
+        const s = spawns[i % spawns.length];
+        p.x = s[0]; p.z = s[1];
+        p.angle = angleTo(-p.x, -p.z);   // face the arena center
+      } else {
+        p.x = (i - (n - 1) / 2) * 8;
+        p.z = ARENA_HALF - 22;
+        p.angle = 0;
+      }
+      p.speed = 0;
       p.fx.overdrive = 0; p.fx.rapid = 0;
       p.boost = p.maxBoost;
       p.alive = true; p.respawnT = 0; p.lowWarned = false;
-      p.input.fire = false; p.input.nade = false;
+      p.input.fire = false; p.input.nade = false; p.input.mine = false;
       p.depotAcc = 0; p.onDepot = false;
     });
 
-    if (this.bossLevel) {
+    if (this.versus) {
+      // deathmatch arena: cover and contested resupply, no AI
+      this._genObstacles(34);
+      this._genDepots();
+      this.puTimer = 6;
+    } else if (this.bossLevel) {
       // boss arena: no flags, more open ground, a small escort — the WARLORD
       // itself is the objective.
       this._genObstacles(30);
@@ -234,9 +306,18 @@ class Game {
     // a couple of starter pickups scattered on the field
     for (let i = 0; i < 2; i++) {
       const pos = this._findSpot(4, 40);
-      if (pos) this._spawnPowerup(pos[0], pos[1], Math.random() < 0.5 ? 'ammo' : 'shield');
+      if (pos) this._spawnPowerup(pos[0], pos[1], RNG() < 0.5 ? 'ammo' : 'shield');
     }
+    RNG = Math.random;   // seeded window ends with generation
     this.mode = 'playing';
+  }
+
+  /* Where tanks deploy: the home corridor in the campaign, spread corners in
+   * versus. Also used to keep obstacle generation clear of deploy zones. */
+  _spawnPoints() {
+    if (!this.versus) return [[0, ARENA_HALF - 22]];
+    const d = ARENA_HALF - 26;
+    return [[-d, -d], [d, d], [-d, d], [d, -d]];
   }
 
   flagsLeft() {
@@ -297,9 +378,13 @@ class Game {
       for (let tries = 0; tries < 40; tries++) {
         const x = rand(-ARENA_HALF + 10, ARENA_HALF - 10);
         const z = rand(-ARENA_HALF + 10, ARENA_HALF - 10);
-        // keep player spawn corridor clear
-        if (Math.hypot(x - 0, z - (ARENA_HALF - 22)) < 18) continue;
-        const pyramid = Math.random() < 0.4;
+        // keep deploy zones clear
+        let nearSpawn = false;
+        for (const sp of this._spawnPoints()) {
+          if (Math.hypot(x - sp[0], z - sp[1]) < 18) { nearSpawn = true; break; }
+        }
+        if (nearSpawn) continue;
+        const pyramid = RNG() < 0.4;
         const w = pyramid ? rand(5, 9) : rand(4, 11);
         const d = pyramid ? w : rand(4, 11);
         const h = pyramid ? rand(5, 11) : rand(3, 9);
@@ -307,7 +392,7 @@ class Game {
         this.obstacles.push({
           x, z, w, d, h,
           type: pyramid ? 'pyramid' : 'block',
-          color: palette[(Math.random() * palette.length) | 0],
+          color: palette[(RNG() * palette.length) | 0],
         });
         break;
       }
@@ -333,21 +418,26 @@ class Game {
     const L = this.level;
     const spec = ENEMY_TYPES[type];
     const diff = 1 + (L - 1) * 0.085;
+    // elites: hardened variants that show up from sector 3 — tougher, faster,
+    // meaner and worth half again the score. They strobe white-hot in the
+    // arena and wear a ring on the radar.
+    const elite = !this.bossLevel && L >= 3 && RNG() < Math.min(0.06 + L * 0.02, 0.3);
     this.enemies.push({
       type,
+      elite,
       x, z,
       angle: rand(0, Math.PI * 2),
-      hp: spec.hp,
-      maxHp: spec.hp,
-      speed: spec.speed * diff,
+      hp: spec.hp * (elite ? 1.6 : 1),
+      maxHp: spec.hp * (elite ? 1.6 : 1),
+      speed: spec.speed * diff * (elite ? 1.15 : 1),
       turn: spec.turn * diff,
       fireRange: spec.fireRange,
       fireCd: rand(1, spec.fireCd),
-      fireDelay: spec.fireCd / diff,
+      fireDelay: spec.fireCd / diff / (elite ? 1.2 : 1),
       aggro: spec.aggro,
-      score: spec.score,
+      score: elite ? Math.round(spec.score * 1.5) : spec.score,
       shotSpeed: spec.shotSpeed,
-      dmg: spec.dmg,
+      dmg: spec.dmg * (elite ? 1.25 : 1),
       lead: spec.lead || 0,
       cloak: spec.cloaks ? 1 : 0,
       decloakT: 0,
@@ -391,10 +481,13 @@ class Game {
     }
 
     for (const p of this.players) this._updatePlayer(p, dt);
-    this._updateEnemies(dt);
-    this._updateBoss(dt);
-    this._updateRings(dt);
-    this._updateSpawns(dt);
+    if (!this.versus) {
+      this._updateEnemies(dt);
+      this._updateBoss(dt);
+      this._updateRings(dt);
+      this._updateSpawns(dt);
+    }
+    this._updateMines(dt);
     this._updateProjectiles(dt);
     this._updatePickups(dt);
     this._updateDepots(dt);
@@ -403,6 +496,11 @@ class Game {
 
     for (const f of this.flags) f.spin += dt * 2.2;
 
+    if (this.versus) {
+      this._updateVersus(dt);
+      return;
+    }
+
     const objectiveDone = this.bossLevel
       ? (this.boss && this.boss.dead && this.boss.deathT <= 0)
       : this.flagsLeft() === 0;
@@ -410,6 +508,31 @@ class Game {
       this._levelClear();
     } else if (!this._anyAlive()) {
       this._beginDeath();
+    }
+  }
+
+  // ---- versus deathmatch ------------------------------------------------------
+  // The co-op plumbing already handles multiple tanks; versus just points the
+  // guns inward. Fallen tanks always respawn, first to killTarget wins.
+
+  _updateVersus(dt) {
+    // keep a few contested powerups cycling onto the field
+    this.puTimer -= dt;
+    if (this.puTimer <= 0) {
+      this.puTimer = rand(7, 12);
+      if (this.powerups.length < 6) {
+        const keys = Object.keys(POWERUP_TYPES);
+        const pos = this._findSpot(4, 30);
+        if (pos) this._spawnPowerup(pos[0], pos[1], keys[(RNG() * keys.length) | 0]);
+      }
+    }
+    for (const p of this.players) {
+      if ((this.killCounts[p.id] || 0) >= this.killTarget) {
+        this.winnerId = p.id;
+        this.mode = 'versusover';
+        this._sfx('levelClear');
+        break;
+      }
     }
   }
 
@@ -433,7 +556,7 @@ class Game {
       for (let i = 0; i < wave; i++) {
         if (this.enemies.length + this.pendingSpawns.length >= 18) break;
         const live = this.flags.filter((f) => !f.taken);
-        const f = live[(Math.random() * live.length) | 0];
+        const f = live[(RNG() * live.length) | 0];
         const pos = this._findSpotNear(f.x, f.z, 12, 30, 4, 45);
         if (!pos) continue;
         this.pendingSpawns.push({ x: pos[0], z: pos[1], type: this._reinforcementType(), t: 1.8, tick: 0 });
@@ -447,7 +570,7 @@ class Game {
   }
 
   _reinforcementType() {
-    const L = this.level, r = Math.random();
+    const L = this.level, r = RNG();
     if (L >= 5 && r < 0.18) return 'phantom';
     if (L >= 4 && r < 0.40) return 'sniper';
     if (L >= 2 && r < 0.75) return 'hunter';
@@ -485,6 +608,8 @@ class Game {
       this.hud.message('COMBO ×' + mult, '#ffd24a', 1.4);
     }
     this.mult = mult;
+    this.runStats.kills++;
+    this.runStats.bestMult = Math.max(this.runStats.bestMult, mult);
     const pts = baseScore * mult;
     this.score += pts;
     if (ownerId === this.localId) {
@@ -504,6 +629,23 @@ class Game {
   }
 
   _respawn(p) {
+    if (this.versus) {
+      // deathmatch: always come back, fresh loadout, away from the fight
+      const pos = this._findSpotNear(0, 0, 80, ARENA_HALF - 30, 4, 55) || [0, 0];
+      p.x = pos[0]; p.z = pos[1];
+      p.angle = angleTo(-p.x, -p.z);
+      p.speed = 0;
+      p.alive = true;
+      p.shields = p.maxShields;
+      p.ammo = p.maxAmmo;
+      p.nades = p.initNades;
+      p.mines = p.initMines;
+      p.boost = p.maxBoost;
+      p.lowWarned = false;
+      this._burst(p.x, 1.5, p.z, 24, [0.4, 0.8, 1.0], 10);
+      this._sfx('deploy');
+      return;
+    }
     // only revive if a teammate is still fighting (otherwise the run is over)
     if (!this.players.some((o) => o !== p && o.alive)) { p.respawnT = 0; return; }
     p.x = 0; p.z = ARENA_HALF - 22; p.angle = 0; p.speed = 0;
@@ -529,6 +671,7 @@ class Game {
     p.fx.rapid = Math.max(0, p.fx.rapid - dt);
     p.bounceCd = Math.max(0, p.bounceCd - dt);
     p.nadeCd = Math.max(0, p.nadeCd - dt);
+    p.mineCd = Math.max(0, p.mineCd - dt);
 
     const input = p.input;
     const isLocal = p.id === this.localId;
@@ -592,7 +735,7 @@ class Game {
       } else {
         p.fireCd = 0.3;
         this._sfx('select'); // dry-fire click
-        if (isLocal && Math.random() < 0.3) this.hud.message('OUT OF AMMO', '#ff4a3c', 1.2);
+        if (isLocal && RNG() < 0.3) this.hud.message('OUT OF AMMO', '#ff4a3c', 1.2);
       }
     }
 
@@ -617,6 +760,25 @@ class Game {
       }
     }
 
+    // proximity mine dropped off the tail — arms after a beat, then trips on
+    // anything hostile that rolls over it. Rewards boost-and-run play.
+    if (input.mine && p.mineCd <= 0) {
+      if (p.mines > 0) {
+        p.mines--;
+        p.mineCd = 0.7;
+        this.mines.push({
+          x: p.x - fwdX(p.angle) * 3.8,
+          z: p.z - fwdZ(p.angle) * 3.8,
+          owner: p.id, arm: 0.8, life: 60,
+        });
+        this._sfx('mine');
+      } else {
+        p.mineCd = 0.4;
+        this._sfx('select');
+        if (isLocal) this.hud.message('NO MINES', '#ff4a3c', 1.2);
+      }
+    }
+
     if (isLocal) {
       if (p.shields <= p.maxShields * 0.25 && !p.lowWarned) {
         p.lowWarned = true;
@@ -633,6 +795,8 @@ class Game {
    * players just feel accurate rather than assisted. Applies uniformly so
    * every input scheme stays on equal footing in co-op. */
   _aimAssist(p) {
+    // togglable in settings; the host's sim applies it for everyone in co-op
+    if (typeof Settings !== 'undefined' && !Settings.get('aimAssist')) return p.angle;
     const CONE = 0.15, RANGE = 150;
     let best = p.angle, bestErr = CONE;
     const consider = (x, z) => {
@@ -641,6 +805,11 @@ class Game {
       const err = Math.abs(wrapAngle(bearing - p.angle));
       if (err < bestErr && this._losClear(p.x, p.z, x, z)) { bestErr = err; best = bearing; }
     };
+    if (this.versus) {
+      for (const pl of this.players) {
+        if (pl.alive && pl.id !== p.id) consider(pl.x, pl.z);
+      }
+    }
     for (const e of this.enemies) {
       if (e.cloak > 0.6) continue;   // can't lock what the radar can't see
       consider(e.x, e.z);
@@ -729,8 +898,8 @@ class Game {
         if (e.wanderT <= 0 || Math.hypot(e.wanderX - e.x, e.wanderZ - e.z) < 6) {
           // wander toward a random surviving flag area (guards the objective)
           const live = this.flags.filter(f => !f.taken);
-          if (live.length && Math.random() < 0.6) {
-            const f = live[(Math.random() * live.length) | 0];
+          if (live.length && RNG() < 0.6) {
+            const f = live[(RNG() * live.length) | 0];
             e.wanderX = f.x + rand(-12, 12);
             e.wanderZ = f.z + rand(-12, 12);
           } else {
@@ -844,7 +1013,18 @@ class Game {
       }
 
       if (!dead && pr.from === 'player') {
-        for (let j = this.enemies.length - 1; j >= 0; j--) {
+        // versus: your cannon rounds hit the other tanks
+        if (this.versus) {
+          for (const pl of this.players) {
+            if (!pl.alive || pl.id === pr.owner) continue;
+            if (dist2(pr.x, pr.z, pl.x, pl.z) < 2.4 * 2.4) {
+              dead = true;
+              this._damagePlayer(pl, pr.dmg, pr.owner);
+              break;
+            }
+          }
+        }
+        if (!dead) for (let j = this.enemies.length - 1; j >= 0; j--) {
           const e = this.enemies[j];
           if (dist2(pr.x, pr.z, e.x, e.z) < 2.4 * 2.4) {
             dead = true;
@@ -896,6 +1076,16 @@ class Game {
     this._burst(pr.x, 2.2, pr.z, 18, [1, 0.95, 0.7], 10);
     this._sfx('nadeBoom');
     this.shake = Math.min(this.shake + 0.5, 1.2);
+    if (this.versus) {
+      for (const pl of this.players) {
+        if (!pl.alive || pl.id === pr.owner) continue;
+        const d = Math.hypot(pr.x - pl.x, pr.z - pl.z);
+        if (d < R) {
+          const dmg = pr.dmg * (d < 3 ? 1 : 1 - (d - 3) / (R - 3) * 0.75);
+          this._damagePlayer(pl, dmg, pr.owner);
+        }
+      }
+    }
     for (let j = this.enemies.length - 1; j >= 0; j--) {
       const e = this.enemies[j];
       const d = Math.hypot(pr.x - e.x, pr.z - e.z);
@@ -913,6 +1103,70 @@ class Game {
       }
       if (b.vulnerable && Math.hypot(pr.x - b.x, pr.z - b.z) < R + b.radius * 0.5) {
         this._hurtBossCore(pr.dmg * 0.8, pr.owner);
+      }
+    }
+  }
+
+  // ---- proximity mines --------------------------------------------------------
+
+  _updateMines(dt) {
+    for (let i = this.mines.length - 1; i >= 0; i--) {
+      const m = this.mines[i];
+      m.arm = Math.max(0, m.arm - dt);
+      m.life -= dt;
+      if (m.life <= 0) { this.mines.splice(i, 1); continue; }
+      if (m.arm > 0) continue;
+      let trip = false;
+      if (this.versus) {
+        for (const pl of this.players) {
+          if (!pl.alive || pl.id === m.owner) continue;
+          if (dist2(m.x, m.z, pl.x, pl.z) < 4.2 * 4.2) { trip = true; break; }
+        }
+      } else {
+        for (const e of this.enemies) {
+          if (dist2(m.x, m.z, e.x, e.z) < 4.2 * 4.2) { trip = true; break; }
+        }
+        const b = this.boss;
+        if (!trip && b && !b.dead) {
+          const r = b.radius + 2.5;
+          if (dist2(m.x, m.z, b.x, b.z) < r * r) trip = true;
+        }
+      }
+      if (trip) {
+        this.mines.splice(i, 1);
+        this._mineBoom(m);
+      }
+    }
+  }
+
+  _mineBoom(m) {
+    const R = 9, DMG = 70;
+    this._burst(m.x, 1.0, m.z, 34, [1, 0.45, 0.6], 15);
+    this._burst(m.x, 2.0, m.z, 14, [1, 0.9, 0.7], 9);
+    this._sfx('nadeBoom');
+    this.shake = Math.min(this.shake + 0.4, 1.2);
+    const falloff = (d) => DMG * (d < 3 ? 1 : 1 - (d - 3) / (R - 3) * 0.75);
+    if (this.versus) {
+      for (const pl of this.players) {
+        if (!pl.alive || pl.id === m.owner) continue;
+        const d = Math.hypot(m.x - pl.x, m.z - pl.z);
+        if (d < R) this._damagePlayer(pl, falloff(d), m.owner);
+      }
+    }
+    for (let j = this.enemies.length - 1; j >= 0; j--) {
+      const e = this.enemies[j];
+      const d = Math.hypot(m.x - e.x, m.z - e.z);
+      if (d < R) this._hurtEnemy(j, falloff(d), m.owner);
+    }
+    const b = this.boss;
+    if (b && !b.dead) {
+      for (const tu of b.turrets) {
+        if (tu.hp <= 0) continue;
+        const [wx, wz] = bossTurretWorld(b, tu);
+        if (Math.hypot(m.x - wx, m.z - wz) < R) this._hurtBossTurret(tu, DMG * 0.8, m.owner);
+      }
+      if (b.vulnerable && Math.hypot(m.x - b.x, m.z - b.z) < R + b.radius * 0.5) {
+        this._hurtBossCore(DMG * 0.8, m.owner);
       }
     }
   }
@@ -938,13 +1192,13 @@ class Game {
     this._sfx('explosion');
     this.shake = Math.min(this.shake + 0.4, 1);
     // chance to drop a pickup
-    if (Math.random() < 0.35) {
+    if (RNG() < 0.35) {
       const keys = Object.keys(POWERUP_TYPES);
-      this._spawnPowerup(e.x, e.z, keys[(Math.random() * keys.length) | 0]);
+      this._spawnPowerup(e.x, e.z, keys[(RNG() * keys.length) | 0]);
     }
   }
 
-  _damagePlayer(p, dmg) {
+  _damagePlayer(p, dmg, attackerId) {
     const isLocal = p.id === this.localId;
     p.shields -= dmg;
     this._breakCombo();   // any hit on the squad snaps the kill chain
@@ -957,12 +1211,21 @@ class Game {
     if (p.shields <= 0) {
       p.shields = 0;
       p.alive = false;
-      p.respawnT = 4;
+      p.respawnT = this.versus ? 3 : 4;
       this._burst(p.x, 1.5, p.z, 60, [1, 0.5, 0.1], 18);
       this._burst(p.x, 2.5, p.z, 30, [1, 0.9, 0.6], 12);
       this._spawnShards(p.x, p.z, DEBRIS_COLORS.player);
       this._sfx('bigExplosion');
       if (isLocal) this.shake = 2;
+      // versus: credit the killer
+      if (this.versus && attackerId && attackerId !== p.id) {
+        this.killCounts[attackerId] = (this.killCounts[attackerId] || 0) + 1;
+        const killer = this.players.find((k) => k.id === attackerId);
+        this.hud.message((killer ? killer.name : 'ENEMY') + ' DESTROYED ' + p.name, '#ffd24a', 2);
+        if (attackerId === this.localId) {
+          this.hud.scorePop('KILL ' + this.killCounts[attackerId] + '/' + this.killTarget);
+        }
+      }
     }
   }
 
@@ -975,6 +1238,7 @@ class Game {
         if (f.taken) continue;
         if (dist2(p.x, p.z, f.x, f.z) < 3.4 * 3.4) {
           f.taken = true;
+          this.runStats.flags++;
           const pts = 100 * this.level * this.mult;
           this.score += pts;
           this._burst(f.x, 2.5, f.z, 18, [0.3, 1, 0.5], 8);
@@ -1043,6 +1307,7 @@ class Game {
       case 'ammo':   p.ammo = Math.min(p.maxAmmo, p.ammo + 18); break;
       case 'shield': p.shields = Math.min(p.maxShields, p.shields + 35); break;
       case 'nade':   p.nades = Math.min(p.maxNades, p.nades + 2); break;
+      case 'mine':   p.mines = Math.min(p.maxMines, p.mines + 2); break;
       case 'overdrive': p.fx.overdrive = 10; break;
       case 'rapid':     p.fx.rapid = 10; break;
     }
@@ -1098,7 +1363,7 @@ class Game {
     if (b.dead) {
       // death throes: keep sparking until the sector-clear check fires
       b.deathT -= dt;
-      if (Math.random() < 0.3) {
+      if (RNG() < 0.3) {
         this._burst(b.x + rand(-5, 5), rand(1, 4), b.z + rand(-5, 5), 10, [1, 0.5, 0.15], 10);
       }
       return;
@@ -1273,6 +1538,7 @@ class Game {
     b.coreHp = 0;
     b.dead = true;
     b.deathT = 2.2;
+    this.runStats.warlords++;
     this.rings = [];
     this.killsThisLevel++;
     this._awardKill(b.score, ownerId);
