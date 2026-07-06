@@ -669,8 +669,16 @@ class Game {
       return;
     }
 
-    p.fx.overdrive = Math.max(0, p.fx.overdrive - dt);
-    p.fx.rapid = Math.max(0, p.fx.rapid - dt);
+    for (const fx of ['overdrive', 'rapid']) {
+      if (p.fx[fx] <= 0) continue;
+      p.fx[fx] = Math.max(0, p.fx[fx] - dt);
+      if (p.fx[fx] === 0) {
+        this._sfx('powerdown');
+        if (p.id === this.localId) {
+          this.hud.message(POWERUP_TYPES[fx].label + ' EXPIRED', '#4fd6bb', 1.4);
+        }
+      }
+    }
     p.bounceCd = Math.max(0, p.bounceCd - dt);
     p.nadeCd = Math.max(0, p.nadeCd - dt);
     p.mineCd = Math.max(0, p.mineCd - dt);

@@ -6,9 +6,9 @@
  * keyboard uses, so every screen works from the couch.
  *
  * Touch is a first-class scheme, not a fallback:
- *  - A floating joystick spawns wherever the left thumb lands and leashes
- *    (the base drags along) when the thumb overshoots, so steering is always
- *    relative to the thumb — never to a fixed screen spot.
+ *  - A floating joystick spawns wherever the left thumb lands and stays
+ *    anchored there; overshoot past the rim just clamps, so the base never
+ *    drifts across the screen mid-maneuver.
  *  - The stick is view-relative: push where you want to go. Forward arcs
  *    drive+steer, sideways pivots in place, straight back reverses.
  *  - The right side of the screen is hold-to-fire; on-screen buttons cover
@@ -85,7 +85,7 @@ const Input = (() => {
 
   // ---- touch state ----------------------------------------------------------
 
-  const STICK_MAX = 64;   // stick travel / leash radius, CSS px
+  const STICK_MAX = 64;   // stick travel radius, CSS px
   const STICK_DEAD = 0.14;
 
   const touch = {
@@ -196,12 +196,10 @@ const Input = (() => {
     let dx = x - s.baseX, dy = y - s.baseY;
     let d = Math.hypot(dx, dy);
     if (d > STICK_MAX) {
-      // leash: the base follows the thumb, so reversing direction is instant
-      const k = (d - STICK_MAX) / d;
-      s.baseX += dx * k;
-      s.baseY += dy * k;
-      dx -= dx * k;
-      dy -= dy * k;
+      // clamp at the rim — the base stays where the thumb landed
+      const k = STICK_MAX / d;
+      dx *= k;
+      dy *= k;
       d = STICK_MAX;
     }
     s.dx = dx;

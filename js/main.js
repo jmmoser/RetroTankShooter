@@ -317,6 +317,7 @@
     uiMode = 'gameover';
     const unlocked = recordRunEnd();
     const isHigh = recordHighScore();
+    let earned = unlocked || isHigh;
     let html =
       `FINAL SCORE <span class="gold">${game.score}</span><br>` +
       `SECTOR REACHED ${game.level}<br>` +
@@ -325,12 +326,15 @@
     if (game.dailySeed) {
       const wasBest = Progress.recordDaily(game.score, game.level);
       const best = Progress.dailyBest();
+      earned = earned || wasBest;
       html += '<br>' + (wasBest
         ? '<span class="gold">&#9733; BEST DAILY RUN TODAY &#9733;</span>'
         : `TODAY'S BEST ${best ? best.score : 0}`);
       updateTitleHigh();
     }
     if (unlocked) html += '<br><span class="gold">MARAUDER CHASSIS UNLOCKED</span>';
+    // let the gameOver sting finish before celebrating the gold-text lines
+    if (earned) setTimeout(() => AudioSys.play('unlock'), 1100);
     document.getElementById('over-stats').innerHTML = html;
     document.getElementById('bt-share').classList.toggle('hidden', !game.dailySeed);
     shareBtn.textContent = 'COPY RESULT';
@@ -616,6 +620,7 @@
     uiMode = 'playing';
     showScreen(null);
     hud.message('SECTOR ' + game.level, game.bossLevel ? '#ff4a3c' : '#4fd6bb', 2.5);
+    if (!game.bossLevel) AudioSys.play('sectorStart'); // boss sectors get the alarm instead
     if (Net.role === 'host') { Net.broadcastLevel(game); netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = []; }
   }
 
@@ -646,12 +651,14 @@
     resetAbort();
     showScreen('pause');
     AudioSys.setEngine(0);
+    AudioSys.play('pause');
   }
 
   function resumeGame() {
     resetAbort();
     uiMode = 'playing';
     showScreen(null);
+    AudioSys.play('select');
   }
 
   // Auto-pause a solo run when the tab is hidden — no cheap deaths while
@@ -710,6 +717,7 @@
       AudioSys.play('alarm');
     } else {
       hud.message('SECTOR ' + game.level, '#4fd6bb', 2.5);
+      AudioSys.play('sectorStart');
     }
   };
   Net.cb.onState = (msg) => { if (Net.role === 'client') Net.applyState(game, msg); };

@@ -107,6 +107,10 @@ const AudioSys = (() => {
       tone('triangle', 440, 880, 0.1, 0.3);
       tone('triangle', 660, 1320, 0.12, 0.3, 0.09);
     },
+    powerdown() {
+      tone('triangle', 880, 440, 0.1, 0.26);
+      tone('triangle', 1320, 660, 0.12, 0.26, 0.09);
+    },
     levelClear() {
       const notes = [523, 659, 784, 1047];
       notes.forEach((f, i) => tone('square', f, f, 0.14, 0.28, i * 0.12));
@@ -131,6 +135,17 @@ const AudioSys = (() => {
       tone('triangle', 1900, 500, 0.5, 0.12, 0.06);
     },
     select()     { tone('square', 880, 880, 0.05, 0.2); },
+    pause()      { tone('square', 660, 660, 0.06, 0.2); tone('square', 440, 440, 0.09, 0.2, 0.07); },
+    sectorStart() {
+      tone('square', 392, 392, 0.1, 0.24);
+      tone('square', 523, 523, 0.1, 0.24, 0.1);
+      tone('square', 659, 659, 0.16, 0.24, 0.2);
+    },
+    unlock() {
+      const notes = [523, 659, 784, 1047, 1319];
+      notes.forEach((f, i) => tone('square', f, f, 0.12, 0.26, i * 0.09));
+      tone('triangle', 1319, 2637, 0.3, 0.18, 0.45);
+    },
     deploy()     { tone('square', 220, 880, 0.35, 0.3); noise(0.3, 0.15, 600, 3000); },
     alarm() {
       tone('square', 470, 470, 0.16, 0.28);
