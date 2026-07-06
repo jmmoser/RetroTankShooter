@@ -290,6 +290,7 @@ const Net = (() => {
     game.projectiles = [];
     game.powerups = [];
     game.particles = [];
+    game.flashes = [];
     game.debris = [];
     game.mines = [];
     game.boss = null;

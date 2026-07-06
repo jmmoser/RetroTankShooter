@@ -121,6 +121,7 @@ class Game {
     this.projectiles = [];
     this.powerups = [];
     this.particles = [];
+    this.flashes = [];     // short-lived point lights from bursts (cosmetic)
     this.debris = [];      // tumbling polygon shards from destroyed tanks
     this.depots = [];      // resupply pads: { x, z, type: 'ammo'|'shield' }
     this.players = [];     // all tanks in the run (co-op); player[0..n]
@@ -242,6 +243,7 @@ class Game {
     this.projectiles = [];
     this.powerups = [];
     this.particles = [];
+    this.flashes = [];
     this.debris = [];
     this.depots = [];
     this.mines = [];
@@ -1583,6 +1585,9 @@ class Game {
 
   _burst(x, y, z, n, color, power) {
     this.frameBursts.push({ x, y, z, n, c: color, p: power });
+    // a matching light flash so explosions momentarily light up the arena
+    this.flashes.push({ x, y: y + 1.2, z, c: color, p: power, life: 0.28, max: 0.28 });
+    if (this.flashes.length > 32) this.flashes.splice(0, this.flashes.length - 32);
     for (let i = 0; i < n; i++) {
       const a = rand(0, Math.PI * 2);
       const v = rand(power * 0.25, power);
@@ -1641,6 +1646,11 @@ class Game {
   }
 
   _updateParticles(dt) {
+    for (let i = this.flashes.length - 1; i >= 0; i--) {
+      const f = this.flashes[i];
+      f.life -= dt;
+      if (f.life <= 0) this.flashes.splice(i, 1);
+    }
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const pt = this.particles[i];
       pt.life -= dt;

@@ -76,7 +76,9 @@ Two things are earned:
 
 ### Settings
 
-The **SETTINGS** screen has SFX volume, screen-shake intensity, the CRT
+The **SETTINGS** screen has SFX volume, screen-shake intensity, the **GLOW
+FX** post-processing pipeline (bloom, dynamic explosion lighting and FXAA —
+turn it off on weak GPUs), the CRT
 scanline overlay, aim assist, and a **colorblind hull palette**
 (deuteranopia-safe enemy colors; the radar also gives every enemy type its
 own blip shape regardless).
@@ -198,7 +200,9 @@ js/settings.js  persistent settings + career progress (localStorage)
 js/audio.js     synthesized SFX & engine hum (Web Audio)
 js/input.js     keyboard / mouse / touch / gamepad
 js/geometry.js  procedural low-poly meshes
-js/renderer.js  minimal WebGL flat-shaded renderer + mat4 helpers
+js/renderer.js  WebGL renderer + mat4 helpers: flat-shaded forward pass,
+                dynamic point lights, additive glow draws, and the bloom /
+                FXAA / vignette post-processing chain
 js/hud.js       radar, shields/ammo bars, scoreboard, messages (Canvas 2D)
 js/game.js      arena generation, players, enemy AI, projectiles, pickups,
                 seeded daily arenas, versus rules

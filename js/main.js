@@ -74,6 +74,7 @@
   function applySettings() {
     AudioSys.setVolume(Settings.get('volume') / 10);
     document.getElementById('crt').style.display = Settings.get('crt') ? '' : 'none';
+    renderer.setGlow(Settings.get('glow'));
   }
   Settings.onChange = () => { applySettings(); renderSettingVals(); };
   applySettings();
@@ -558,7 +559,7 @@
     game.level = 1; game.score = 0;
     game.obstacles = []; game.flags = []; game.enemies = [];
     game.projectiles = []; game.powerups = []; game.particles = [];
-    game.debris = []; game.depots = []; game.mines = [];
+    game.flashes = []; game.debris = []; game.depots = []; game.mines = [];
     game.boss = null; game.rings = []; game.pendingSpawns = [];
     game.bossLevel = false; game.alert = 0;
     game.combo = 0; game.comboT = 0; game.mult = 1;
@@ -787,6 +788,46 @@
     }
   }
 
+  // ---- dynamic lights ---------------------------------------------------------
+  // Everything hot in the arena throws real light onto the ground and walls:
+  // explosion flashes, shot tracers, pickups and the WARLORD core. The
+  // renderer caps how many it takes, so sort by how much each one matters
+  // (big + close beats small + far) before handing the list over.
+  function shotColor(pr) {
+    if (pr.kind === 'nade') return Geometry.C.shotNade;
+    return pr.from === 'player' ? Geometry.C.shotPlayer : Geometry.C.shotEnemy;
+  }
+
+  function collectLights(src) {
+    const lights = [];
+    for (const f of (src.flashes || [])) {
+      const k = f.life / f.max;
+      const s = k * (0.9 + f.p * 0.13);
+      lights.push({ x: f.x, y: f.y, z: f.z, radius: 7 + f.p * 1.5,
+        r: f.c[0] * s, g: f.c[1] * s, b: f.c[2] * s });
+    }
+    for (const pr of src.projectiles) {
+      const c = shotColor(pr);
+      lights.push({ x: pr.x, y: pr.y || 1.5, z: pr.z, radius: 11,
+        r: c[0] * 0.85, g: c[1] * 0.85, b: c[2] * 0.85 });
+    }
+    for (const u of src.powerups) {
+      const t = POWERUP_TYPES[u.type].tint;
+      lights.push({ x: u.x, y: 2.2, z: u.z, radius: 9,
+        r: t[0] * 0.55, g: t[1] * 0.55, b: t[2] * 0.55 });
+    }
+    const b = src.boss;
+    if (b && !b.dead) {
+      lights.push(b.vulnerable
+        ? { x: b.x, y: 5, z: b.z, radius: 28, r: 1.3, g: 0.3, b: 0.5 }
+        : { x: b.x, y: 5, z: b.z, radius: 24, r: 0.25, g: 0.5, b: 1.0 });
+    }
+    lights.sort((a, c) =>
+      (Math.hypot(a.x - cam.x, a.z - cam.z) / a.radius) -
+      (Math.hypot(c.x - cam.x, c.z - cam.z) / c.radius));
+    return lights;
+  }
+
   // ---- scene rendering --------------------------------------------------------
   // The backdrop follows the camera (x/z only) so it never parallaxes closer:
   // ember horizon, black ridgelines, dead stars, and an eclipsed sun. The glow
@@ -840,6 +881,7 @@
   }
 
   function drawGame() {
+    renderer.setLights(collectLights(game));   // before any lit geometry draws
     drawArena(game);
 
     const now = performance.now();
@@ -851,7 +893,7 @@
       for (const f of game.flags) {
         if (f.taken) continue;
         renderer.draw(M.beacon, m4.trs(f.x, 0, f.z, 0, 1, 1, 1),
-          { tint: [0.25 * pulse, 1.0 * pulse, 0.5 * pulse], unlit: true, nofog: true });
+          { tint: [0.25 * pulse, 1.0 * pulse, 0.5 * pulse], unlit: true, nofog: true, additive: true });
       }
     }
 
@@ -878,15 +920,18 @@
         ? [1.2 + 0.8 * Math.sin(ct * 9), 0.3, 0.55]                       // exposed: hot strobe
         : [0.22 + 0.08 * Math.sin(ct * 2), 0.45, 0.9 + 0.1 * Math.sin(ct * 2)]; // shielded: cold pulse
       renderer.draw(M.bossCore, m4.trs(b.x, 5.0, b.z, ct * 1.5, 1, 1, 1), { tint: coreTint, unlit: true });
+      // additive energy halo wrapped around the core
+      renderer.draw(M.bossCore, m4.trs(b.x, 5.0, b.z, -ct * 0.9, 1.45, 1.45, 1.45),
+        { tint: [coreTint[0] * 0.30, coreTint[1] * 0.30, coreTint[2] * 0.30], unlit: true, additive: true });
     }
 
     // expanding shockwave rings
     for (const r of game.rings) {
       const fade = Math.max(0.25, 1 - r.r / 190);
       renderer.draw(M.ring, m4.trs(r.x, 0.5, r.z, 0, r.r, 1, r.r),
-        { tint: [1 * fade + 0.3, 0.55 * fade, 0.2 * fade], unlit: true });
+        { tint: [1 * fade + 0.3, 0.55 * fade, 0.2 * fade], unlit: true, additive: true });
       renderer.draw(M.ring, m4.trs(r.x, 1.6, r.z, 0, r.r * 0.985, 1, r.r * 0.985),
-        { tint: [0.8 * fade, 0.4 * fade, 0.15 * fade], unlit: true });
+        { tint: [0.8 * fade, 0.4 * fade, 0.15 * fade], unlit: true, additive: true });
     }
     for (const e of game.enemies) {
       let tint = e.hitFlash > 0 ? [1 + e.hitFlash * 2, 1 + e.hitFlash * 2, 1 + e.hitFlash * 2] : null;
@@ -926,6 +971,16 @@
     for (const pr of game.projectiles) {
       const mesh = pr.kind === 'nade' ? M.shotNade : (pr.from === 'player' ? M.shotPlayer : M.shotEnemy);
       renderer.draw(mesh, m4.trs(pr.x, pr.y, pr.z, pr.angle, 1, 1, 1), { unlit: true });
+      // additive halo + a fading tracer tail strung out behind the shot
+      renderer.draw(mesh, m4.trs(pr.x, pr.y, pr.z, pr.angle, 1.8, 1.8, 1.8),
+        { unlit: true, additive: true, tint: [0.30, 0.30, 0.30] });
+      const bx = fwdX(pr.angle), bz = fwdZ(pr.angle);
+      for (let k = 1; k <= 3; k++) {
+        const g = 0.42 / k, s = 1 - k * 0.2;
+        renderer.draw(mesh,
+          m4.trs(pr.x - bx * k * 1.1, pr.y, pr.z - bz * k * 1.1, pr.angle, s, s, s),
+          { unlit: true, additive: true, tint: [g, g, g] });
+      }
     }
 
     // tumbling polygon shards from destroyed tanks
@@ -940,6 +995,8 @@
       const spec = POWERUP_TYPES[u.type];
       const y = 1.6 + Math.sin(u.bob) * 0.35;
       renderer.draw(M.powerup, m4.trs(u.x, y, u.z, u.spin, 1, 1, 1), { tint: spec.tint, unlit: true });
+      renderer.draw(M.powerup, m4.trs(u.x, y, u.z, -u.spin * 0.7, 1.35, 1.35, 1.35),
+        { tint: [spec.tint[0] * 0.25, spec.tint[1] * 0.25, spec.tint[2] * 0.25], unlit: true, additive: true });
     }
 
     renderer.drawParticles(game.particles);
@@ -949,6 +1006,7 @@
   const SETTING_DEFS = [
     { key: 'volume', max: 10 },
     { key: 'shake', max: 10 },
+    { key: 'glow', bool: true },
     { key: 'crt', bool: true },
     { key: 'aimAssist', bool: true },
     { key: 'colorblind', bool: true },
@@ -1224,11 +1282,13 @@
     renderer.beginFrame(cam);
 
     if (inMenu()) {
+      renderer.setLights([]);   // no stale battle lights under the menus
       drawArena(demoGame);
       for (const f of demoGame.flags) f.spin += dt * 2.2;
     } else {
       drawGame();
     }
+    renderer.endFrame();
 
     const showHud = (uiMode === 'playing' && game.mode === 'playing');
     hud.render(showHud ? game : null, dt);
