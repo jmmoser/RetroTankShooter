@@ -243,6 +243,40 @@ body.touch-ui .mbtn { padding: 10px 20px; }
 }
 .lo-stat .pips { color: var(--teal-bright); }
 
+/* locked chassis: dim until the unlock feat is done */
+.loadout.locked { opacity: 0.45; cursor: not-allowed; }
+.loadout.locked:hover { border-color: rgba(79, 214, 187, 0.35); }
+.lo-lock {
+  margin-top: 8px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: #e8c75a;
+}
+.loadout:not(.locked) .lo-lock { display: none; }
+
+/* ---------- settings rows ---------- */
+.mbtn.setting { justify-content: space-between; padding: 10px 18px; }
+.st-val {
+  color: #e8c75a;
+  letter-spacing: 2px;
+  font-size: 13px;
+  text-shadow: 0 0 8px rgba(232, 199, 90, 0.5);
+}
+
+/* ---------- service record ---------- */
+.records-list {
+  display: flex; flex-direction: column; gap: 7px;
+  width: min(340px, 80vw);
+}
+.rec-row {
+  display: flex; justify-content: space-between;
+  font-size: 13px; letter-spacing: 2px;
+  color: var(--teal-bright);
+}
+.rec-row .rec-val { color: #e8c75a; }
+.rec-row.rec-unlock { color: rgba(79, 214, 187, 0.7); font-size: 11px; }
+.rec-row.rec-unlock .rec-val.done { color: #3cff78; }
+
 .clear-stats {
   font-size: 14px;
   letter-spacing: 2px;
@@ -298,6 +332,8 @@ body.touch-ui .mbtn { padding: 10px 20px; }
   box-shadow: 0 0 12px rgba(79, 214, 187, 0.3);
 }
 .ll .lo-key { margin: 0 4px 0 0; }
+.ll.locked { opacity: 0.4; cursor: not-allowed; }
+.ll.locked:hover { border-color: rgba(79, 214, 187, 0.35); }
 
 .join-input {
   width: min(260px, 70vw);

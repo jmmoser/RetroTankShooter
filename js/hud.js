@@ -1,4 +1,16 @@
 /* 2D canvas HUD: radar, shield/ammo readouts, messages, crosshair, damage flash. */
+
+// css colors matching the lobby roster dots (PLAYER_TINTS by colorIdx)
+const PLAYER_HEX = ['#4fd6bb', '#b07bd6', '#e8c75a', '#6fc7e8'];
+
+/* Radar blip color per enemy type. Everyone gets distinct SHAPES; the
+ * colorblind setting additionally splits the hues (deuteranopia-safe). */
+function enemyBlipColor(type) {
+  const cb = typeof Settings !== 'undefined' && Settings.get('colorblind');
+  if (!cb) return '#ff4a3c';
+  return { drone: '#ff8c1a', hunter: '#ffe84a', sniper: '#4a90ff', phantom: '#e8f4ff' }[type] || '#ff8c1a';
+}
+
 class HUD {
   constructor(canvas) {
     this.canvas = canvas;
@@ -124,6 +136,7 @@ class HUD {
     const COLORS = {
       fire:  '#ff6a5a',
       nade:  '#8cff6e',
+      mine:  '#ff7ab0',
       boost: '#6fc7e8',
       cam:   '#4fd6bb',
       pause: '#4fd6bb',
@@ -159,7 +172,8 @@ class HUD {
         ctx.fillRect(bx - 4.5 * d, by - bh / 2, bw, bh);
         ctx.fillRect(bx + 1 * d, by - bh / 2, bw, bh);
       } else {
-        const label = b.key === 'nade' && p ? `NADE ${p.nades || 0}` : b.label;
+        const label = b.key === 'nade' && p ? `NADE ${p.nades || 0}`
+          : b.key === 'mine' && p ? `MINE ${p.mines || 0}` : b.label;
         ctx.font = font(b.key === 'fire' ? 13 : 10, true);
         ctx.fillText(label, bx, by);
       }
@@ -175,6 +189,27 @@ class HUD {
     const font = (px, bold) => `${bold ? 'bold ' : ''}${Math.round(px * s)}px "Courier New", monospace`;
     const topY = (74 * 2 + 18) * s;   // just under the radar dish
     ctx.textAlign = 'center';
+
+    // versus: live scoreboard under the radar
+    if (game.versus) {
+      const rows = game.players
+        .map((p) => ({ name: p.name || '?', kills: (game.killCounts || {})[p.id] || 0, ci: p.colorIdx || 0 }))
+        .sort((a, bb) => bb.kills - a.kills);
+      ctx.font = font(11, true);
+      ctx.fillStyle = '#ffd24a';
+      ctx.fillText('FIRST TO ' + (game.killTarget || 10), W / 2, topY + 14 * s);
+      ctx.font = font(12, true);
+      rows.forEach((r, i) => {
+        const y = topY + (30 + i * 16) * s;
+        ctx.fillStyle = PLAYER_HEX[r.ci] || PLAYER_HEX[0];
+        ctx.textAlign = 'right';
+        ctx.fillText(r.name, W / 2 + 40 * s, y);
+        ctx.textAlign = 'left';
+        ctx.fillText(String(r.kills), W / 2 + 52 * s, y);
+      });
+      ctx.textAlign = 'center';
+      return;
+    }
 
     if (b && !b.dead) {
       const bw = 320 * s, bh = 11 * s;
@@ -394,13 +429,54 @@ class HUD {
       ctx.strokeRect(bx - 3 * s, by - 3 * s, 6 * s, 6 * s);
     }
 
-    ctx.fillStyle = '#ff4a3c';
+    // own squad's mines: tiny hot dots
+    ctx.fillStyle = '#ff7ab0';
+    for (const m of (game.mines || [])) {
+      const [bx, by] = toRadar(m.x, m.z);
+      ctx.fillRect(bx - 1.2 * s, by - 1.2 * s, 2.4 * s, 2.4 * s);
+    }
+
+    // other tanks (teammates in co-op, prey in versus) in their hull color
+    for (const pl of game.players || []) {
+      if (pl === p || !pl.alive) continue;
+      let [bx, by] = toRadar(pl.x, pl.z);
+      const dx = bx - cx, dy = by - cy;
+      const dd = Math.hypot(dx, dy);
+      if (dd > R - 5 * s) { bx = cx + (dx / dd) * (R - 5 * s); by = cy + (dy / dd) * (R - 5 * s); }
+      ctx.fillStyle = PLAYER_HEX[pl.colorIdx] || PLAYER_HEX[0];
+      ctx.beginPath();
+      ctx.moveTo(bx, by - 3.4 * s);
+      ctx.lineTo(bx - 2.8 * s, by + 2.8 * s);
+      ctx.lineTo(bx + 2.8 * s, by + 2.8 * s);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // hostiles: one shape per type so silhouettes carry the info, not just hue
     for (const e of game.enemies) {
       if (e.cloak > 0.6) continue; // cloaked phantoms hide from radar too
       const [bx, by] = toRadar(e.x, e.z);
+      const r = 3.2 * s;
+      ctx.fillStyle = enemyBlipColor(e.type);
       ctx.beginPath();
-      ctx.arc(bx, by, 3.2 * s, 0, Math.PI * 2);
-      ctx.fill();
+      if (e.type === 'hunter') {
+        ctx.moveTo(bx, by - r); ctx.lineTo(bx - r, by + r); ctx.lineTo(bx + r, by + r);
+        ctx.closePath(); ctx.fill();
+      } else if (e.type === 'sniper') {
+        ctx.fillRect(bx - r * 0.9, by - r * 0.9, r * 1.8, r * 1.8);
+      } else if (e.type === 'phantom') {
+        ctx.moveTo(bx, by - r); ctx.lineTo(bx + r, by); ctx.lineTo(bx, by + r); ctx.lineTo(bx - r, by);
+        ctx.closePath(); ctx.fill();
+      } else {
+        ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
+      }
+      if (e.elite) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = Math.max(1, s);
+        ctx.beginPath();
+        ctx.arc(bx, by, r + 2.2 * s, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     // player wedge at center
@@ -483,6 +559,26 @@ class HUD {
       }
     }
 
+    // mine triangles beside the grenades
+    if (p.maxMines) {
+      const my = ay - 34 * s;
+      const mx = bx + 78 * s + 6 * 18 * s + 22 * s;
+      ctx.font = font(13, true);
+      ctx.fillStyle = 'rgba(255,122,176,0.9)';
+      ctx.fillText('MINES', mx, my - 2 * s);
+      for (let i = 0; i < p.maxMines; i++) {
+        const cx2 = mx + 78 * s + i * 16 * s, cy2 = my - 2 * s;
+        const r = 5 * s;
+        ctx.beginPath();
+        ctx.moveTo(cx2, cy2 - r);
+        ctx.lineTo(cx2 + r, cy2 + r);
+        ctx.lineTo(cx2 - r, cy2 + r);
+        ctx.closePath();
+        if (i < (p.mines || 0)) { ctx.fillStyle = '#ff7ab0'; ctx.fill(); }
+        else { ctx.strokeStyle = 'rgba(255,122,176,0.3)'; ctx.lineWidth = Math.max(1, s); ctx.stroke(); }
+      }
+    }
+
     // ---- bottom-right: score / level / flags
     ctx.textAlign = 'right';
     ctx.font = font(16, true);
@@ -490,7 +586,11 @@ class HUD {
     ctx.fillText('SCORE ' + String(game.score).padStart(7, '0'), W - pad, H - pad - 64 * s);
     ctx.font = font(14, false);
     ctx.fillText('SECTOR ' + game.level, W - pad, H - pad - 38 * s);
-    if (game.bossLevel) {
+    if (game.versus) {
+      const k = (game.killCounts || {})[p.id] || 0;
+      ctx.fillStyle = '#ffd24a';
+      ctx.fillText('KILLS ' + k + '/' + (game.killTarget || 10), W - pad, H - pad - 12 * s);
+    } else if (game.bossLevel) {
       const bossUp = game.boss && !game.boss.dead;
       ctx.fillStyle = bossUp ? '#ff4a3c' : '#e8c75a';
       ctx.fillText(bossUp ? 'TARGET WARLORD' : 'TARGET DOWN', W - pad, H - pad - 12 * s);

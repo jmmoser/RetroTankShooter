@@ -4,8 +4,13 @@ const AudioSys = (() => {
   let master = null;
   let engineOsc = null, engineGain = null, engineFilter = null;
   let muted = false;
+  // 0..1 volume from the settings screen; 0.7 default maps to the old 0.5 gain
+  let vol = 0.7;
+  try { if (typeof Settings !== 'undefined') vol = Settings.get('volume') / 10; } catch (e) {}
 
   try { muted = localStorage.getItem('pa_muted') === '1'; } catch (e) {}
+
+  function gainValue() { return muted ? 0 : vol * 0.72; }
 
   function ensure() {
     if (ctx) return true;
@@ -13,7 +18,7 @@ const AudioSys = (() => {
     if (!AC) return false;
     ctx = new AC();
     master = ctx.createGain();
-    master.gain.value = muted ? 0 : 0.5;
+    master.gain.value = gainValue();
     master.connect(ctx.destination);
     return true;
   }
@@ -23,10 +28,15 @@ const AudioSys = (() => {
     if (ctx.state === 'suspended') ctx.resume();
   }
 
+  function setVolume(v01) {
+    vol = Math.max(0, Math.min(1, v01));
+    if (master) master.gain.value = gainValue();
+  }
+
   function setMuted(m) {
     muted = m;
     try { localStorage.setItem('pa_muted', m ? '1' : '0'); } catch (e) {}
-    if (master) master.gain.value = m ? 0 : 0.5;
+    if (master) master.gain.value = gainValue();
   }
   function toggleMuted() { setMuted(!muted); return muted; }
   function isMuted() { return muted; }
@@ -108,6 +118,7 @@ const AudioSys = (() => {
     lowShield()  { tone('square', 880, 880, 0.06, 0.22); tone('square', 880, 880, 0.06, 0.22, 0.12); },
     bounce()     { tone('square', 90, 45, 0.14, 0.4); noise(0.1, 0.25, 900, 200); },
     nade()       { tone('triangle', 140, 60, 0.22, 0.4); noise(0.12, 0.2, 1200, 300); },
+    mine()       { tone('square', 320, 900, 0.1, 0.22); tone('square', 1100, 1100, 0.05, 0.16, 0.12); },
     nadeBoom()   {
       noise(0.8, 0.65, 1000, 50);
       tone('sawtooth', 95, 22, 0.7, 0.45);
@@ -192,5 +203,5 @@ const AudioSys = (() => {
     if (sfx[name]) sfx[name]();
   }
 
-  return { resume, play, setEngine, stopEngine, toggleMuted, isMuted };
+  return { resume, play, setEngine, stopEngine, toggleMuted, isMuted, setVolume };
 })();

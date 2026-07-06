@@ -21,6 +21,7 @@ const Net = (() => {
     roster: [],          // [{ id, name, loadoutIndex }] — host is authoritative
     inputs: {},          // host: peerId -> latest input {t,d,f}
     started: false,
+    mode: 'coop',        // 'coop' | 'versus' — host picks in the lobby
   };
 
   // Callbacks wired up by main.js.
@@ -93,7 +94,7 @@ const Net = (() => {
       state.roster = state.roster.filter((r) => r.id !== id);
       if (state.roster.length !== before) {
         if (cb.onRoster) cb.onRoster(state.roster);
-        broadcast({ t: 'roster', roster: state.roster });
+        broadcast({ t: 'roster', roster: state.roster, mode: state.mode });
       }
     }
     if (cb.onPeerLeft) cb.onPeerLeft(id);
@@ -111,10 +112,10 @@ const Net = (() => {
         });
       }
       if (cb.onRoster) cb.onRoster(state.roster);
-      broadcast({ t: 'roster', roster: state.roster });
+      broadcast({ t: 'roster', roster: state.roster, mode: state.mode });
     } else if (msg.t === 'loadout' && !state.started) {
       const r = state.roster.find((x) => x.id === conn.peer);
-      if (r) { r.loadoutIndex = msg.loadoutIndex | 0; if (cb.onRoster) cb.onRoster(state.roster); broadcast({ t: 'roster', roster: state.roster }); }
+      if (r) { r.loadoutIndex = msg.loadoutIndex | 0; if (cb.onRoster) cb.onRoster(state.roster); broadcast({ t: 'roster', roster: state.roster, mode: state.mode }); }
     } else if (msg.t === 'input') {
       state.inputs[conn.peer] = msg.in;
     }
@@ -124,14 +125,22 @@ const Net = (() => {
     if (state.role !== 'host' || !state.roster[0]) return;
     state.roster[0].loadoutIndex = idx | 0;
     if (cb.onRoster) cb.onRoster(state.roster);
-    broadcast({ t: 'roster', roster: state.roster });
+    broadcast({ t: 'roster', roster: state.roster, mode: state.mode });
+  }
+
+  /* Host flips the lobby between co-op and versus; clients just see it. */
+  function hostSetMode(mode) {
+    if (state.role !== 'host') return;
+    state.mode = mode === 'versus' ? 'versus' : 'coop';
+    if (cb.onRoster) cb.onRoster(state.roster);
+    broadcast({ t: 'roster', roster: state.roster, mode: state.mode });
   }
 
   function hostStartGame() {
     state.started = true;
     const defs = state.roster.map((r) => ({ id: r.id, name: r.name, loadoutIndex: r.loadoutIndex }));
-    broadcast({ t: 'start', defs: defs });
-    return { defs: defs, localId: 'host' };
+    broadcast({ t: 'start', defs: defs, mode: state.mode });
+    return { defs: defs, localId: 'host', mode: state.mode };
   }
 
   // Push the latest received client inputs into the live game's player objects.
@@ -142,6 +151,7 @@ const Net = (() => {
       if (inp) {
         p.input.turn = inp.t; p.input.drive = inp.d;
         p.input.fire = !!inp.f; p.input.nade = !!inp.g; p.input.boost = !!inp.b;
+        p.input.mine = !!inp.m;
       }
     }
   }
@@ -154,6 +164,8 @@ const Net = (() => {
       obstacles: game.obstacles,
       flags: game.flags.map((f) => ({ x: f.x, z: f.z, taken: f.taken, spin: f.spin })),
       depots: game.depots,
+      vs: game.versus ? 1 : 0,
+      kt: game.killTarget,
     });
   }
 
@@ -170,11 +182,15 @@ const Net = (() => {
         al: p.alive ? 1 : 0, sp: p.speed, mp: p.maxSpeed,
         ov: p.fx.overdrive, rp: p.fx.rapid, ci: p.colorIdx,
         bo: Math.round(p.boost || 0), bs: p.boosting ? 1 : 0, nd: p.nades || 0,
+        mn: p.mines || 0,
       })),
       en: game.enemies.map((e) => ({
         k: ENEMY_ORDER.indexOf(e.type), x: e.x, z: e.z, a: e.angle, h: e.hitFlash,
         c: e.cloak ? Math.round(e.cloak * 100) / 100 : 0,
+        el: e.elite ? 1 : 0,
       })),
+      mi: game.mines.map((m) => ({ x: m.x, z: m.z, a: m.arm <= 0 ? 1 : 0 })),
+      vk: game.versus ? game.killCounts : undefined,
       pr: game.projectiles.map((pr) => ({
         x: pr.x, y: pr.y, z: pr.z, a: pr.angle,
         e: pr.from === 'enemy' ? 1 : 0, k: pr.kind === 'nade' ? 1 : 0,
@@ -238,9 +254,9 @@ const Net = (() => {
   function clientHandle(msg) {
     if (!msg) return;
     switch (msg.t) {
-      case 'roster': state.roster = msg.roster; if (cb.onRoster) cb.onRoster(msg.roster); break;
+      case 'roster': state.roster = msg.roster; state.mode = msg.mode || 'coop'; if (cb.onRoster) cb.onRoster(msg.roster); break;
       case 'full':   if (cb.onError) cb.onError('Game is full or already in progress.'); break;
-      case 'start':  state.started = true; if (cb.onStart) cb.onStart(msg.defs, state.id); break;
+      case 'start':  state.started = true; state.mode = msg.mode || 'coop'; if (cb.onStart) cb.onStart(msg.defs, state.id, state.mode); break;
       case 'lv':     if (cb.onLevel) cb.onLevel(msg); break;
       case 's':      if (cb.onState) cb.onState(msg); break;
       case 'sc':     if (cb.onScreen) cb.onScreen(msg); break;
@@ -254,6 +270,7 @@ const Net = (() => {
         c.send({ t: 'input', in: {
           t: input.turn, d: input.drive,
           f: input.fire ? 1 : 0, g: input.nade ? 1 : 0, b: input.boost ? 1 : 0,
+          m: input.mine ? 1 : 0,
         } });
       } catch (e) {}
     }
@@ -274,9 +291,13 @@ const Net = (() => {
     game.powerups = [];
     game.particles = [];
     game.debris = [];
+    game.mines = [];
     game.boss = null;
     game.rings = [];
-    game.bossLevel = msg.level >= BOSS_EVERY && msg.level % BOSS_EVERY === 0;
+    game.versus = !!msg.vs;
+    game.killTarget = msg.kt || 10;
+    game.killCounts = {};
+    game.bossLevel = !game.versus && msg.level >= BOSS_EVERY && msg.level % BOSS_EVERY === 0;
     game.alert = 0;
     game.combo = 0; game.comboT = 0; game.mult = 1;
     game.mode = 'playing';
@@ -303,6 +324,7 @@ const Net = (() => {
       p.colorIdx = d.ci;
       p.boost = d.bo; p.maxBoost = 100; p.boosting = !!d.bs;
       p.nades = d.nd; p.maxNades = 6;
+      p.mines = d.mn || 0; p.maxMines = 4;
       return p;
     });
     game.player = game.players.find((p) => p.id === game.localId) || game.players[0];
@@ -321,7 +343,9 @@ const Net = (() => {
       game._prevAlive = lp.alive;
     }
 
-    game.enemies = msg.en.map((d) => ({ type: ENEMY_ORDER[d.k] || 'drone', x: d.x, z: d.z, angle: d.a, hitFlash: d.h, cloak: d.c || 0 }));
+    game.enemies = msg.en.map((d) => ({ type: ENEMY_ORDER[d.k] || 'drone', x: d.x, z: d.z, angle: d.a, hitFlash: d.h, cloak: d.c || 0, elite: !!d.el }));
+    game.mines = (msg.mi || []).map((d) => ({ x: d.x, z: d.z, arm: d.a ? 0 : 1, life: 60, owner: null }));
+    if (msg.vk) game.killCounts = msg.vk;
     game.projectiles = msg.pr.map((d) => ({ x: d.x, y: d.y, z: d.z, angle: d.a, from: d.e ? 'enemy' : 'player', kind: d.k ? 'nade' : undefined }));
     game.powerups = msg.pu.map((d) => ({ type: d.k, x: d.x, z: d.z, spin: d.s, bob: d.b }));
     for (let i = 0; i < game.flags.length && i < msg.fg.length; i++) game.flags[i].taken = !!msg.fg[i];
@@ -370,12 +394,13 @@ const Net = (() => {
     state.role = 'solo'; state.peer = null; state.hostConn = null;
     state.conns = []; state.roster = []; state.inputs = {};
     state.started = false; state.id = null; state.code = null;
+    state.mode = 'coop';
   }
 
   return {
     state: state, cb: cb,
     libReady: libReady,
-    hostCreate: hostCreate, hostStartGame: hostStartGame, hostSetLocalLoadout: hostSetLocalLoadout, applyInputs: applyInputs,
+    hostCreate: hostCreate, hostStartGame: hostStartGame, hostSetLocalLoadout: hostSetLocalLoadout, hostSetMode: hostSetMode, applyInputs: applyInputs,
     broadcastLevel: broadcastLevel, broadcastState: broadcastState, broadcastScreen: broadcastScreen,
     clientJoin: clientJoin, clientSetLoadout: clientSetLoadout, sendInput: sendInput,
     applyLevel: applyLevel, applyState: applyState,
