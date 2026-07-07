@@ -54,6 +54,11 @@ they arm after a beat and detonate on anything hostile that rolls over them —
 the perfect parting gift when you boost out of a furball, and they work on
 the WARLORD too.
 
+While you fight, the HUD races your own past self: pass your record and the
+score turns gold with a **RECORD PACE** tag (dailies chase today's best,
+campaign runs chase the all-time high). Fall just short and the game-over
+screen tells you exactly how far — *"ONLY 340 FROM YOUR RECORD"*.
+
 ### Daily Ops
 
 **DAILY OPS** on the title screen deals one seeded arena per UTC day — the
@@ -62,11 +67,25 @@ VANGUARD. Your best result for the day is kept, and the game-over screen has
 a **COPY RESULT** button that puts a shareable score card on your clipboard.
 No accounts, no server: the date itself is the seed.
 
-### Career, unlocks & checkpoints
+Finishing a daily keeps your **streak** alive: consecutive days stack up on
+the title screen and the share card, and the DAILY OPS button reminds you
+when today's run would keep the chain going.
 
-The **SERVICE RECORD** screen tracks your career: missions, kills, flags,
-warlords downed, best combo and best sector — all in your browser.
-Two things are earned:
+### Rank, medals, career & checkpoints
+
+Every run — campaign, daily, even a doomed one — pays **XP** into a
+12-step career ladder, RECRUIT through PHANTOM LEGEND. The game-over screen
+shows the XP bar filling and exactly how much is left to the next
+promotion.
+
+Twelve **medals** mark one-time feats: a ×5 combo, a sector cleared without
+taking a hit, three mine kills in one mission, a 3-day daily streak, and
+more. They pop mid-run with a toast and a jingle, and hang on the medal
+wall in the service record.
+
+The **SERVICE RECORD** screen tracks the rest of your career: missions,
+kills, flags, warlords downed, best combo and best sector — all in your
+browser. Two things are earned:
 
 - **MARAUDER chassis** — a fourth loadout (fast, armored, light on ammo,
   heavy on mines) unlocked by destroying your first WARLORD.
@@ -196,7 +215,8 @@ tank rebounds off it.
 index.html      shell + menu screens
 style.css       retro CRT styling
 sw.js           offline cache (installable PWA; single-player works offline)
-js/settings.js  persistent settings + career progress (localStorage)
+js/settings.js  persistent settings + career progress, XP/ranks, medals,
+                daily streak (localStorage)
 js/audio.js     synthesized SFX & engine hum (Web Audio)
 js/input.js     keyboard / mouse / touch / gamepad
 js/geometry.js  procedural low-poly meshes

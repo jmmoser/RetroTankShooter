@@ -177,11 +177,43 @@
 
   function updateTitleHigh() {
     const daily = Progress.dailyBest();
-    let txt = highScore > 0 ? 'HIGH SCORE ' + String(highScore).padStart(7, '0') : '';
-    if (daily) txt += (txt ? ' · ' : '') + 'DAILY BEST ' + String(daily.score).padStart(7, '0');
+    const streak = Progress.dailyStreak();
+    const sep = ' · ';
+    let txt = 'RANK ' + Progress.rank().name;
+    if (highScore > 0) txt += sep + 'HIGH SCORE ' + String(highScore).padStart(7, '0');
+    if (daily) txt += sep + 'DAILY BEST ' + String(daily.score).padStart(7, '0');
+    if (streak > 0) txt += sep + 'STREAK ' + streak + ' DAY' + (streak > 1 ? 'S' : '');
     document.getElementById('title-high').textContent = txt;
+    // the daily button doubles as the streak checkbox: tick it off every day
+    document.getElementById('bt-daily').innerHTML =
+      'DAILY OPS' + (daily ? ' ✓' : streak > 0 ? ' — KEEP THE STREAK' : '') +
+      '<span class="mkey">D</span>';
   }
   updateTitleHigh();
+
+  // ---- record chase ----------------------------------------------------------
+  // The score you're chasing this run: today's best on a daily, the all-time
+  // high otherwise. The HUD turns the score gold past it and the moment it
+  // falls gets a one-time fanfare — beating your record should feel like an
+  // event you witness, not a line you read after dying.
+  let recordRef = 0, recordBeaten = false;
+
+  function armRecordChase() {
+    recordBeaten = false;
+    const daily = game.dailySeed ? Progress.dailyBest() : null;
+    recordRef = game.versus ? 0 : (game.dailySeed ? (daily ? daily.score : 0) : highScore);
+    hud.recordScore = recordRef;
+    if (typeof Medals !== 'undefined') Medals.drainRecent(); // stale earns from an aborted run
+  }
+
+  function checkRecordChase() {
+    if (recordBeaten || recordRef <= 0 || game.versus) return;
+    if (game.score > recordRef) {
+      recordBeaten = true;
+      hud.message(game.dailySeed ? '★ DAILY BEST BEATEN ★' : '★ RECORD BROKEN ★', '#ffd24a', 2.4);
+      AudioSys.play('unlock');
+    }
+  }
 
   // ---- solo loadout select --------------------------------------------------
   function loadoutLocked(i) { return i === 3 && !Progress.marauderUnlocked(); }
@@ -261,6 +293,7 @@
     mobileImmersive();
     runRecorded = false;
     game.newRun(loadoutIndex, null, { startLevel: startSector });
+    armRecordChase();
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
@@ -274,24 +307,44 @@
     mobileImmersive();
     runRecorded = false;
     game.newRun(1, null, { dailySeed: Progress.todayKey() });
+    armRecordChase();
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
     hud.message('DAILY OPS ' + Progress.todayKey() + ' — SECURE ALL FLAGS', '#ffd24a', 3);
   }
 
+  /* Career-stat medals: checked whenever the record advances. Awards are
+   * idempotent, so re-checking is free. */
+  function checkCareerMedals() {
+    if (typeof Medals === 'undefined') return;
+    const st = Progress.get();
+    if (st.kills >= 1) Medals.award('firstblood');
+    if (st.kills >= 500) Medals.award('centurion');
+    if (st.flags >= 100) Medals.award('flagday');
+    if (st.games >= 25) Medals.award('veteran');
+    if (st.warlords >= 1) Medals.award('giantkiller');
+    if (Progress.dailyStreak() >= 3) Medals.award('streak3');
+  }
+
   /* Fold the finished (or abandoned) run into the career record, once.
-   * Returns true if this run just unlocked the MARAUDER. */
+   * Returns what the run just earned: { marauder, rankUp, xpGained }. */
   function recordRunEnd() {
-    if (runRecorded) return false;
+    if (runRecorded) return { marauder: false, rankUp: null, xpGained: 0 };
     runRecorded = true;
-    if (Net.role === 'client') {
-      Progress.recordRun(null, game.level);   // clients don't run the sim
-      return false;
-    }
+    const rankBefore = Progress.rank().name;
     const before = Progress.marauderUnlocked();
-    Progress.recordRun(game.runStats, game.level);
-    return !before && Progress.marauderUnlocked();
+    // clients don't run the sim, so no per-run stats — but the synced score
+    // still pays out XP: everyone's career moves every run
+    const xpGained = Progress.recordRun(Net.role === 'client' ? null : game.runStats,
+      game.level, game.score);
+    checkCareerMedals();
+    const rankAfter = Progress.rank().name;
+    return {
+      marauder: !before && Progress.marauderUnlocked(),
+      rankUp: rankAfter !== rankBefore ? rankAfter : null,
+      xpGained,
+    };
   }
 
   function recordHighScore() {
@@ -313,26 +366,70 @@
     document.getElementById('bt-again').classList.toggle('hidden', Net.role !== 'host');
   }
 
+  /* The shared tail of the game-over panel: promotion banner, medals earned
+   * this run, and the XP bar with the distance to the next rank spelled out —
+   * every death ends on a reason to relaunch. */
+  function buildOverExtras(res) {
+    let html = '', earned = false;
+    if (res.rankUp) {
+      html += `<br><span class="gold">&#9733; PROMOTED — ${res.rankUp} &#9733;</span>`;
+      earned = true;
+    }
+    if (typeof Medals !== 'undefined') {
+      for (const id of Medals.drainRecent()) {
+        const def = MEDALS.find((m) => m.id === id);
+        if (!def) continue;
+        html += `<br><span class="gold">MEDAL EARNED — ${def.name}</span>`;
+        earned = true;
+      }
+    }
+    const r = Progress.rank();
+    const span = r.nextAt ? r.nextAt - r.base : 1;
+    const into = r.nextAt ? Math.min(span, r.xp - r.base) : 1;
+    const pct = Math.round((into / span) * 100);
+    html += `<div class="xp-row"><span>RANK — ${r.name}</span>` +
+      `<span class="gold">+${res.xpGained} XP</span></div>` +
+      `<div class="xp-bar"><div class="xp-fill" style="width:${pct}%"></div></div>` +
+      `<div class="xp-next">${r.nextAt
+        ? (r.nextAt - r.xp) + ' XP TO ' + r.nextName
+        : 'MAX RANK — PHANTOM LEGEND'}</div>`;
+    return { html, earned };
+  }
+
   function gameOver() {
     uiMode = 'gameover';
-    const unlocked = recordRunEnd();
+    const res = recordRunEnd();
     const isHigh = recordHighScore();
-    let earned = unlocked || isHigh;
+    let earned = res.marauder || isHigh;
     let html =
       `FINAL SCORE <span class="gold">${game.score}</span><br>` +
       `SECTOR REACHED ${game.level}<br>` +
       (isHigh ? '<span class="gold">&#9733; NEW HIGH SCORE &#9733;</span>'
               : `HIGH SCORE ${highScore}`);
+    // near-miss: name the gap while the itch to close it is strongest
+    if (!isHigh && !game.dailySeed && highScore > 0 && game.score >= highScore * 0.8) {
+      html += `<br><span class="gold">ONLY ${highScore - game.score} FROM YOUR RECORD</span>`;
+    }
     if (game.dailySeed) {
       const wasBest = Progress.recordDaily(game.score, game.level);
       const best = Progress.dailyBest();
+      const streak = Progress.recordDailyPlayed();
       earned = earned || wasBest;
       html += '<br>' + (wasBest
         ? '<span class="gold">&#9733; BEST DAILY RUN TODAY &#9733;</span>'
         : `TODAY'S BEST ${best ? best.score : 0}`);
+      if (!wasBest && best && best.score > 0 && game.score >= best.score * 0.8) {
+        html += `<br><span class="gold">ONLY ${best.score - game.score} FROM TODAY'S BEST</span>`;
+      }
+      html += `<br>DAILY STREAK ${streak.streak} DAY${streak.streak > 1 ? 'S' : ''}` +
+        (streak.streak >= 2 ? ' <span class="gold">— ALIVE</span>' : '');
+      checkCareerMedals();   // the streak may have just hit a medal threshold
       updateTitleHigh();
     }
-    if (unlocked) html += '<br><span class="gold">MARAUDER CHASSIS UNLOCKED</span>';
+    if (res.marauder) html += '<br><span class="gold">MARAUDER CHASSIS UNLOCKED</span>';
+    const extras = buildOverExtras(res);
+    earned = earned || extras.earned;
+    html += extras.html;
     // let the gameOver sting finish before celebrating the gold-text lines
     if (earned) setTimeout(() => AudioSys.play('unlock'), 1100);
     document.getElementById('over-stats').innerHTML = html;
@@ -350,6 +447,8 @@
       'PHANTOM ARENA — DAILY OPS ' + (game.dailySeed || Progress.todayKey()),
       'SCORE ' + game.score + ' · SECTOR ' + game.level,
     ];
+    const streak = Progress.dailyStreak();
+    if (streak > 1) lines.push('STREAK ' + streak + ' DAYS');
     if (/^https?:$/.test(location.protocol)) lines.push(location.origin + location.pathname);
     const done = () => { shareBtn.textContent = 'COPIED — SEND IT'; AudioSys.play('select'); };
     const fail = () => { shareBtn.textContent = 'COPY FAILED'; };
@@ -544,6 +643,7 @@
     const info = Net.hostStartGame();
     runRecorded = versus;                   // versus matches stay out of career stats
     game.newRun(info.defs, info.localId, { versus });   // host owns the arena generation
+    armRecordChase();
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
@@ -569,10 +669,11 @@
     game.combo = 0; game.comboT = 0; game.mult = 1;
     game.versus = versus; game.killCounts = {}; game.killTarget = 10;
     game.winnerId = null; game.dailySeed = null;
-    game.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1 };
+    game.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0 };
     game.mode = 'playing';
     game._prevSh = null; game._prevAlive = null;  // reset damage-feedback tracking
     runRecorded = versus;
+    armRecordChase();
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
@@ -606,10 +707,14 @@
   }
 
   function showClearStats() {
+    // tease what's next: a WARLORD sector ahead is a reason to press ENTER
+    const next = game.level + 1;
+    const bossNext = next % BOSS_EVERY === 0;
     document.getElementById('clear-stats').innerHTML =
       `SECTOR ${game.level} SECURE<br>` +
       `BONUS <span class="gold">+${game.levelBonus}</span><br>` +
-      `SCORE ${game.score}`;
+      `SCORE ${game.score}` +
+      (bossNext ? `<br><span class="red">WARLORD SIGNATURE IN SECTOR ${next}</span>` : '');
     document.getElementById('bt-continue').classList.toggle('hidden', Net.role === 'client');
     document.getElementById('clear-wait').classList.toggle('hidden', Net.role !== 'client');
   }
@@ -729,10 +834,17 @@
       showScreen('clear');
     } else if (msg.s === 'over') {
       game.score = msg.score; game.level = msg.level;
-      recordRunEnd();
-      recordHighScore();
-      document.getElementById('over-stats').innerHTML =
-        `FINAL SCORE <span class="gold">${game.score}</span><br>SECTOR REACHED ${game.level}`;
+      const res = recordRunEnd();
+      const isHigh = recordHighScore();
+      let html = `FINAL SCORE <span class="gold">${game.score}</span><br>` +
+        `SECTOR REACHED ${game.level}` +
+        (isHigh ? '<br><span class="gold">&#9733; NEW HIGH SCORE &#9733;</span>' : '');
+      const extras = buildOverExtras(res);
+      html += extras.html;
+      if (isHigh || extras.earned || res.marauder) {
+        setTimeout(() => AudioSys.play('unlock'), 1100);
+      }
+      document.getElementById('over-stats').innerHTML = html;
       document.getElementById('bt-share').classList.add('hidden');
       uiMode = 'gameover';
       configureOverButtons();
@@ -1063,7 +1175,11 @@
     const st = Progress.get();
     const daily = Progress.dailyBest();
     const cps = Progress.checkpoints();
+    const r = Progress.rank();
+    const streak = Progress.dailyStreak();
     const rows = [
+      ['RANK', r.name],
+      ['CAREER XP', r.xp + (r.nextAt ? ' / ' + r.nextAt : '')],
       ['MISSIONS FLOWN', st.games],
       ['HIGH SCORE', highScore],
       ['BEST SECTOR', st.bestSector],
@@ -1072,15 +1188,24 @@
       ['WARLORDS DOWN', st.warlords],
       ['BEST COMBO', '×' + st.bestCombo],
       ['DAILY BEST TODAY', daily ? daily.score : '—'],
+      ['DAILY STREAK', streak > 0 ? streak + ' DAY' + (streak > 1 ? 'S' : '') : '—'],
     ];
     const unlocks = [
       ['MARAUDER CHASSIS', Progress.marauderUnlocked() ? 'UNLOCKED' : 'DESTROY A WARLORD', Progress.marauderUnlocked()],
       ['CHECKPOINT STARTS', cps.length > 1 ? 'SECTOR ' + cps[cps.length - 1] : 'REACH SECTOR 6', cps.length > 1],
     ];
+    const medalWall =
+      `<div class="medal-head">MEDALS ${Medals.count()}/${MEDALS.length}</div>` +
+      '<div class="medal-grid">' +
+      MEDALS.map((m) =>
+        `<div class="medal${Medals.has(m.id) ? ' earned' : ''}">` +
+        `<div class="m-name">${m.name}</div><div class="m-how">${m.how}</div></div>`).join('') +
+      '</div>';
     document.getElementById('records-list').innerHTML =
       rows.map(([k, v]) => `<div class="rec-row">${k}<span class="rec-val">${v}</span></div>`).join('') +
       unlocks.map(([k, v, done]) =>
-        `<div class="rec-row rec-unlock">${k}<span class="rec-val${done ? ' done' : ''}">${v}</span></div>`).join('');
+        `<div class="rec-row rec-unlock">${k}<span class="rec-val${done ? ' done' : ''}">${v}</span></div>`).join('') +
+      medalWall;
   }
 
   // ---- input / screen flow ------------------------------------------------------
@@ -1287,6 +1412,8 @@
         }
       }
     }
+
+    if (uiMode === 'playing' && game.mode === 'playing') checkRecordChase();
 
     updateEngine();
     updateCamera(dt);
