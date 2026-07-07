@@ -11,7 +11,7 @@
  */
 
 const Settings = (() => {
-  const DEFAULTS = { volume: 7, shake: 10, glow: true, crt: true, aimAssist: true, colorblind: false };
+  const DEFAULTS = { volume: 7, music: 6, shake: 10, glow: true, crt: true, aimAssist: true, colorblind: false };
   const s = Object.assign({}, DEFAULTS);
   try {
     const raw = JSON.parse(localStorage.getItem('pa_settings') || '{}');

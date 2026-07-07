@@ -7,7 +7,11 @@ the dark. Bouncy walls, turbo boost, lobbed grenades, resupply depots,
 cloaked phantoms and tanks that shatter into tumbling polygon shards.
 
 Built with **plain WebGL, Canvas 2D and Web Audio** — no build step, no
-assets, no CDNs. Single-player makes no network requests at all. Optional
+assets, no CDNs. Even the **synthwave soundtrack is synthesized live** by a
+tiny sequencer: a brooding loop under the menus, a driving groove in combat
+that opens up as the sector alert and your combo climb, and a harder mix
+while a WARLORD is on the field. Single-player makes no network requests at
+all. Optional
 **online co-op** uses one small bundled library (PeerJS, in `js/vendor/`)
 for peer-to-peer connections; nothing else needs to be hosted.
 
@@ -27,6 +31,13 @@ game is **installable as a PWA and fully playable offline** (co-op excepted).
 
 Secure **all flags** in the sector to advance. Enemy tanks guard the flags
 and will hunt you on sight. Your hull is gone when shields hit zero.
+
+Sector terrain comes in four flavors so no two runs blur together: the
+classic **scatter** of slabs, long broken **wall corridors** that channel
+firefights down lanes, a central **bastion** with a gate on each side, and
+**cover rings** thrown around the flag sites so every objective is a small
+breach-and-clear. Daily Ops layouts stay identical for everyone — the
+generators all run off the day's seed.
 
 Every flag you take raises the sector **alert level**: survivors get faster
 and more trigger-happy, and crossing a threshold warps **reinforcements** in
@@ -95,9 +106,9 @@ browser. Two things are earned:
 
 ### Settings
 
-The **SETTINGS** screen has SFX volume, screen-shake intensity, the **GLOW
-FX** post-processing pipeline (bloom, dynamic explosion lighting and FXAA —
-turn it off on weak GPUs), the CRT
+The **SETTINGS** screen has SFX and music volume, screen-shake intensity,
+the **GLOW FX** post-processing pipeline (bloom, dynamic explosion lighting
+and FXAA — turn it off on weak GPUs), the CRT
 scanline overlay, aim assist, and a **colorblind hull palette**
 (deuteranopia-safe enemy colors; the radar also gives every enemy type its
 own blip shape regardless).
@@ -169,7 +180,12 @@ rematch.
 
 **How it works.** It's **host-authoritative peer-to-peer over WebRTC**
 ([PeerJS](https://peerjs.com/)). The host's browser runs the authoritative
-simulation and streams snapshots to the others, who send their input back up.
+simulation and streams 30 Hz snapshots to the others, who send their input
+back up. Joiners **interpolate between snapshots** — remote tanks, shots and
+the WARLORD are rendered ~100 ms in the past and blended between the two
+snapshots that bracket the render time, so everything glides at full display
+framerate instead of stepping at the snapshot rate; your own tank rides the
+freshest snapshot, dead-reckoned forward to hide the quantization.
 Signaling uses PeerJS's free public broker, so the game stays a pile of static
 files — perfect for GitHub Pages. Best for 2–4 players on reasonable
 connections; the host has zero latency, and joiners feel a little network lag
@@ -189,9 +205,18 @@ Before deploying, allocate your tank's power — a classic trade-off:
 
 ### Enemies
 
-- **Drone** (red) — patroller, guards flags
-- **Hunter** (amber, sector 2+) — fast, relentless pursuit, leads your movement
-- **Sniper** (violet, sector 4+) — holds range, hits hard from far away
+Each hostile fights its own way, and all of them steer around cover and
+scatter from a grenade in the air instead of sitting under it:
+
+- **Drone** (red) — patroller, guards flags; shot-up drones break off and
+  fall back on the nearest packmate, so wounded stragglers regroup into
+  clusters instead of trickling in
+- **Hunter** (amber, sector 2+) — weaves between wide flanking arcs and
+  straight lunges; it can only line up a shot during the lunge, so the
+  rhythm is readable — and punishable
+- **Sniper** (violet, sector 4+) — holds range, hits hard from far away,
+  and **relocates after every shot**: return fire arrives where the sniper
+  was, not where it is
 - **Phantom** (ice, sector 5+) — cloaked stalker; shimmers into view a moment
   before it fires, and vanishes from radar while cloaked
 - **Warlord** (crimson, every 5th sector) — boss hovercruiser; four turrets
@@ -217,16 +242,19 @@ style.css       retro CRT styling
 sw.js           offline cache (installable PWA; single-player works offline)
 js/settings.js  persistent settings + career progress, XP/ranks, medals,
                 daily streak (localStorage)
-js/audio.js     synthesized SFX & engine hum (Web Audio)
+js/audio.js     synthesized SFX, engine hum & the procedural synthwave
+                soundtrack (Web Audio lookahead sequencer, no sound files)
 js/input.js     keyboard / mouse / touch / gamepad
 js/geometry.js  procedural low-poly meshes
 js/renderer.js  WebGL renderer + mat4 helpers: flat-shaded forward pass,
                 dynamic point lights, additive glow draws, and the bloom /
                 FXAA / vignette post-processing chain
 js/hud.js       radar, shields/ammo bars, scoreboard, messages (Canvas 2D)
-js/game.js      arena generation, players, enemy AI, projectiles, pickups,
-                seeded daily arenas, versus rules
-js/net.js       WebRTC co-op/versus networking (host-authoritative, PeerJS)
+js/game.js      arena generation (four terrain layouts), players, per-type
+                enemy AI, projectiles, pickups, seeded daily arenas, versus
+                rules
+js/net.js       WebRTC co-op/versus networking (host-authoritative, PeerJS,
+                client-side snapshot interpolation)
 js/main.js      screen flow, camera, scene drawing, main loop
 js/vendor/      bundled third-party code (PeerJS, MIT licensed)
 ```
