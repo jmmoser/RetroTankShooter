@@ -47,6 +47,13 @@ const ENEMY_TYPES = {
   phantom: { hp: 110, speed: 15, turn: 2.2, fireRange: 95,  fireCd: 2.3, aggro: 999, score: 600, shotSpeed: 60, dmg: 22, lead: 0.8, cloaks: true },
 };
 
+// Spectre-style solid slabs: saturated flat-shaded colors that pop
+// against the void, dimming into the fog with distance.
+const OBSTACLE_PALETTE = [
+  [0.72, 0.20, 0.20], [0.20, 0.42, 0.78], [0.20, 0.62, 0.32],
+  [0.62, 0.62, 0.62], [0.72, 0.54, 0.18], [0.46, 0.28, 0.72],
+];
+
 // Hull colors used for the shard debris a destroyed tank breaks into.
 const DEBRIS_COLORS = {
   drone:   [1.0, 0.30, 0.24],
@@ -258,6 +265,7 @@ class Game {
     this.debris = [];
     this.depots = [];
     this.mines = [];
+    this._flagSites = null;
     this.shake = 0;
     this.killsThisLevel = 0;
     this.combo = 0; this.comboT = 0; this.mult = 1;
@@ -296,7 +304,7 @@ class Game {
 
     if (this.versus) {
       // deathmatch arena: cover and contested resupply, no AI
-      this._genObstacles(34);
+      this._genObstacles(34, RNG() < 0.5 ? 'scatter' : 'corridors');
       this._genDepots();
       this.puTimer = 6;
     } else if (this.bossLevel) {
@@ -313,7 +321,7 @@ class Game {
       this._sfx('alarm');
       this.hud.message('WARLORD DETECTED — DESTROY IT', '#ff4a3c', 3.5);
     } else {
-      this._genObstacles(48 + Math.min(L * 3, 36));
+      this._genObstacles(48 + Math.min(L * 3, 36), this._pickLayout());
       this._genFlags(6 + Math.min(L, 10));
       this._genEnemies();
       this._genDepots();
@@ -382,41 +390,130 @@ class Game {
     return null;
   }
 
-  _genObstacles(count) {
-    // Spectre-style solid slabs: saturated flat-shaded colors that pop
-    // against the void, dimming into the fog with distance.
-    const palette = [
-      [0.72, 0.20, 0.20], [0.20, 0.42, 0.78], [0.20, 0.62, 0.32],
-      [0.62, 0.62, 0.62], [0.72, 0.54, 0.18], [0.46, 0.28, 0.72],
-    ];
+  /* Try to place one slab. Rejects out-of-bounds spots, deploy zones and
+   * overlaps (pad = extra clearance against existing obstacles). */
+  _addSlab(x, z, w, d, h, type, pad) {
+    if (Math.abs(x) > ARENA_HALF - 8 || Math.abs(z) > ARENA_HALF - 8) return false;
+    for (const sp of this._spawnPoints()) {
+      if (Math.hypot(x - sp[0], z - sp[1]) < 18) return false;
+    }
+    if (this._collidesObstacle(x, z, Math.max(w, d) / 2 + (pad != null ? pad : 2))) return false;
+    this.obstacles.push({
+      x, z, w, d, h, type,
+      color: OBSTACLE_PALETTE[(RNG() * OBSTACLE_PALETTE.length) | 0],
+    });
+    return true;
+  }
+
+  /* Sector terrain comes in four flavors so the mid-game doesn't blur into
+   * one arena: the classic scatter, wall corridors, a central bastion, and
+   * cover rings thrown around the flag sites. Dailies stay deterministic —
+   * everything routes through RNG, which is seeded during generation. */
+  _pickLayout() {
+    if (this.level <= 1) return 'scatter';   // sector 1 teaches the basics
+    const r = RNG();
+    if (r < 0.34) return 'scatter';
+    if (r < 0.57) return 'corridors';
+    if (r < 0.80) return 'rings';
+    return 'bastion';
+  }
+
+  _genObstacles(count, layout) {
+    if (layout === 'corridors') return this._genCorridors(count);
+    if (layout === 'bastion') return this._genBastion(count);
+    if (layout === 'rings') return this._genRings(count);
+    this._genScatter(count);
+  }
+
+  _genScatter(count) {
     for (let i = 0; i < count; i++) {
       for (let tries = 0; tries < 40; tries++) {
         const x = rand(-ARENA_HALF + 10, ARENA_HALF - 10);
         const z = rand(-ARENA_HALF + 10, ARENA_HALF - 10);
-        // keep deploy zones clear
-        let nearSpawn = false;
-        for (const sp of this._spawnPoints()) {
-          if (Math.hypot(x - sp[0], z - sp[1]) < 18) { nearSpawn = true; break; }
-        }
-        if (nearSpawn) continue;
         const pyramid = RNG() < 0.4;
         const w = pyramid ? rand(5, 9) : rand(4, 11);
         const d = pyramid ? w : rand(4, 11);
         const h = pyramid ? rand(5, 11) : rand(3, 9);
-        if (this._collidesObstacle(x, z, Math.max(w, d) / 2 + 5)) continue;
-        this.obstacles.push({
-          x, z, w, d, h,
-          type: pyramid ? 'pyramid' : 'block',
-          color: palette[(RNG() * palette.length) | 0],
-        });
-        break;
+        if (this._addSlab(x, z, w, d, h, pyramid ? 'pyramid' : 'block', 5)) break;
       }
     }
   }
 
+  /* Long broken walls form firing lanes; the gaps between segments are the
+   * doors. Fights channel down the lanes instead of opening up everywhere. */
+  _genCorridors(count) {
+    const vertical = RNG() < 0.5;
+    const lanes = 3 + ((RNG() * 3) | 0);
+    const span = (ARENA_HALF - 45) * 2;
+    for (let i = 0; i < lanes; i++) {
+      const off = -ARENA_HALF + 45 + (i + 0.5) * (span / lanes) + rand(-8, 8);
+      let run = -ARENA_HALF + 20 + rand(0, 14);
+      while (run < ARENA_HALF - 34) {
+        const len = rand(16, 30);
+        const cx = run + len / 2;
+        const h = rand(4, 7), thick = rand(4, 6);
+        if (vertical) this._addSlab(off, cx, thick, len, h, 'block', 1);
+        else this._addSlab(cx, off, len, thick, h, 'block', 1);
+        run += len + rand(12, 20);
+      }
+    }
+    this._genScatter(Math.floor(count / 4));
+  }
+
+  /* A walled keep in the middle of the arena with a gate on each side and
+   * watchtower pyramids at the corners — whatever spawns inside has to be
+   * dug out through the gates. */
+  _genBastion(count) {
+    const r = rand(38, 50);
+    const h = rand(5, 8);
+    const gate = 16;
+    const seg = r - gate / 2;
+    const mid = gate / 2 + seg / 2;
+    for (const s of [-1, 1]) {
+      this._addSlab(s * mid, -r, seg, 5, h, 'block', 0);
+      this._addSlab(s * mid, r, seg, 5, h, 'block', 0);
+      this._addSlab(-r, s * mid, 5, seg, h, 'block', 0);
+      this._addSlab(r, s * mid, 5, seg, h, 'block', 0);
+    }
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        this._addSlab(sx * (r + 10), sz * (r + 10), 7, 7, rand(8, 12), 'pyramid', 1);
+      }
+    }
+    this._genScatter(Math.floor(count / 2));
+  }
+
+  /* Broken circles of cover scattered across the field; flags spawn inside
+   * them (via _flagSites), so every objective is a small breach-and-clear. */
+  _genRings(count) {
+    const sites = [];
+    const nSites = 3 + ((RNG() * 3) | 0);
+    for (let i = 0; i < nSites; i++) {
+      const pos = this._findSpot(24, 60);
+      if (!pos) continue;
+      const [cx, cz] = pos;
+      const rad = rand(14, 19);
+      const n = 5 + ((RNG() * 3) | 0);
+      const a0 = rand(0, Math.PI * 2);
+      for (let k = 0; k < n; k++) {
+        if (RNG() < 0.25) continue;   // breached sections = ways in
+        const a = a0 + (k / n) * Math.PI * 2;
+        this._addSlab(cx + Math.cos(a) * rad, cz + Math.sin(a) * rad,
+          rand(6, 10), rand(4, 6), rand(4, 7),
+          RNG() < 0.25 ? 'pyramid' : 'block', 0);
+      }
+      sites.push([cx, cz]);
+    }
+    this._flagSites = sites;
+    this._genScatter(Math.floor(count / 3));
+  }
+
   _genFlags(count) {
+    const sites = this._flagSites || [];
     for (let i = 0; i < count; i++) {
-      const pos = this._findSpot(3.5, 25);
+      let pos = null;
+      if (i < sites.length) pos = this._findSpotNear(sites[i][0], sites[i][1], 1, 7, 3.5, 25);
+      if (!pos) pos = this._findSpot(3.5, 25);
       if (pos) this.flags.push({ x: pos[0], z: pos[1], taken: false, spin: rand(0, Math.PI * 2) });
     }
   }
@@ -459,6 +556,12 @@ class Game {
       wanderX: x, wanderZ: z,
       wanderT: 0,
       hitFlash: 0,
+      // per-type maneuver state: hunters weave between flanking arcs and
+      // lunges, snipers relocate after every shot, drones regroup when hurt
+      orbitDir: RNG() < 0.5 ? 1 : -1,
+      phase: 'lunge',
+      phaseT: rand(0.4, 1.6),
+      relocT: 0, relocX: x, relocZ: z,
     });
   }
 
@@ -897,6 +1000,36 @@ class Game {
     return true;
   }
 
+  /* Nearest live grenade shell that threatens (x, z) — enemies scatter from
+   * incoming splash instead of sitting under it. Mines are deliberately NOT
+   * dodged: they're hidden traps, and prescient AI would gut the mechanic. */
+  _nearestThreat(x, z) {
+    let best = null, bd = 18 * 18;
+    for (const pr of this.projectiles) {
+      if (pr.kind !== 'nade' || pr.from !== 'player') continue;
+      const d = dist2(x, z, pr.x, pr.z);
+      if (d < bd) { bd = d; best = pr; }
+    }
+    return best;
+  }
+
+  /* Whisker steering: probe the desired heading, then fan out to either side
+   * and take the first open bearing. Enemies path around slabs toward their
+   * target instead of grinding along the first face they touch. */
+  _steerClear(e, desired) {
+    const probe = 8;
+    const open = (a) => {
+      const x = e.x + fwdX(a) * probe, z = e.z + fwdZ(a) * probe;
+      return !this._collidesObstacle(x, z, 2.2) &&
+        Math.abs(x) < ARENA_HALF - 4 && Math.abs(z) < ARENA_HALF - 4;
+    };
+    if (open(desired)) return desired;
+    for (const off of [0.55, -0.55, 1.1, -1.1, 1.7, -1.7]) {
+      if (open(desired + off)) return desired + off;
+    }
+    return desired + Math.PI * 0.8;   // boxed in: swing around and back out
+  }
+
   _updateEnemies(dt) {
     // sector alert makes survivors faster and more trigger-happy
     const alertMul = 1 + this.alert * 0.4;
@@ -913,9 +1046,55 @@ class Game {
         e.cloak += (target - e.cloak) * Math.min(1, dt * 2.5);
       }
 
-      // pick a destination
-      let tx, tz;
-      if (hunting) {
+      // pick a destination; forceMove keeps a maneuvering tank rolling even
+      // when its hull isn't pointed at the player
+      let tx, tz, forceMove = false;
+      const threat = this._nearestThreat(e.x, e.z);
+      if (threat) {
+        // grenade inbound — scatter straight away from the shell
+        const d = Math.hypot(e.x - threat.x, e.z - threat.z) || 1;
+        tx = e.x + ((e.x - threat.x) / d) * 24;
+        tz = e.z + ((e.z - threat.z) / d) * 24;
+        forceMove = true;
+      } else if (hunting && e.type === 'hunter') {
+        // hunters weave: wheel around the target on a flanking arc, then
+        // commit to a straight lunge (the lunge is when they can fire)
+        e.phaseT -= dt;
+        if (e.phaseT <= 0) {
+          e.phase = e.phase === 'lunge' ? 'flank' : 'lunge';
+          e.phaseT = e.phase === 'lunge' ? rand(1.1, 2.0) : rand(1.5, 2.6);
+          if (e.phase === 'flank' && RNG() < 0.4) e.orbitDir *= -1;
+        }
+        if (e.phase === 'flank' && distP < 60 && distP > 12) {
+          const a = angleTo(p.x - e.x, p.z - e.z) + e.orbitDir;
+          tx = e.x + fwdX(a) * 24;
+          tz = e.z + fwdZ(a) * 24;
+          forceMove = true;
+        } else {
+          tx = p.x; tz = p.z;
+        }
+      } else if (hunting && e.type === 'drone' && e.hp < e.maxHp * 0.45) {
+        // shot-up drones break off and fall back on the nearest packmate;
+        // a lone survivor has nowhere to run and fights on
+        let ally = null, ad = Infinity;
+        for (const o of this.enemies) {
+          if (o === e) continue;
+          const d2 = dist2(e.x, e.z, o.x, o.z);
+          if (d2 < ad) { ad = d2; ally = o; }
+        }
+        if (ally && ad > 12 * 12) {
+          tx = ally.x; tz = ally.z;
+          forceMove = true;
+        } else {
+          tx = p.x; tz = p.z;
+        }
+      } else if (hunting && e.type === 'sniper' && e.relocT > 0) {
+        // displaced after firing — slide to the new perch before settling
+        e.relocT -= dt;
+        tx = e.relocX; tz = e.relocZ;
+        forceMove = true;
+        if (dist2(e.x, e.z, tx, tz) < 25) e.relocT = 0;
+      } else if (hunting) {
         tx = p.x; tz = p.z;
       } else {
         e.wanderT -= dt;
@@ -935,23 +1114,16 @@ class Game {
         tx = e.wanderX; tz = e.wanderZ;
       }
 
-      let desired = angleTo(tx - e.x, tz - e.z);
-
-      // crude obstacle avoidance: probe ahead, steer right if blocked
-      const probe = 7;
-      const ax = e.x + fwdX(e.angle) * probe, az = e.z + fwdZ(e.angle) * probe;
-      if (this._collidesObstacle(ax, az, 2.2) ||
-          Math.abs(ax) > ARENA_HALF - 4 || Math.abs(az) > ARENA_HALF - 4) {
-        desired = e.angle + 1.4;
-      }
+      const desired = this._steerClear(e, angleTo(tx - e.x, tz - e.z));
 
       const diff = wrapAngle(desired - e.angle);
       const maxTurn = e.turn * alertMul * dt;
       e.angle += Math.max(-maxTurn, Math.min(maxTurn, diff));
 
-      // snipers hold still at range; others close in
-      const wantStop = e.type === 'sniper' && hunting && distP < e.fireRange * 0.8;
-      if (!wantStop && Math.abs(diff) < 1.2 && !(hunting && distP < 9)) {
+      // snipers hold still at range (unless relocating); others close in
+      const wantStop = e.type === 'sniper' && hunting && !forceMove &&
+        e.relocT <= 0 && distP < e.fireRange * 0.8;
+      if (!wantStop && (forceMove || (Math.abs(diff) < 1.2 && !(hunting && distP < 9)))) {
         e.x += fwdX(e.angle) * e.speed * alertMul * dt;
         e.z += fwdZ(e.angle) * e.speed * alertMul * dt;
       }
@@ -994,6 +1166,16 @@ class Game {
             speed: e.shotSpeed, from: 'enemy', dmg: e.dmg, life: 4,
           });
           this._sfx('enemyFire');
+          if (e.type === 'sniper') {
+            // shoot-and-scoot: slide to a flanking perch so return fire
+            // arrives where the sniper was, not where it is
+            const a = angleTo(p.x - e.x, p.z - e.z) +
+              (RNG() < 0.5 ? 1 : -1) * (Math.PI / 2 + rand(-0.4, 0.4));
+            const hop = rand(22, 38);
+            e.relocX = Math.max(-ARENA_HALF + 14, Math.min(ARENA_HALF - 14, e.x + fwdX(a) * hop));
+            e.relocZ = Math.max(-ARENA_HALF + 14, Math.min(ARENA_HALF - 14, e.z + fwdZ(a) * hop));
+            e.relocT = rand(2.5, 4);
+          }
         }
       }
     }

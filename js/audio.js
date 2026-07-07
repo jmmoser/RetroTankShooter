@@ -6,7 +6,13 @@ const AudioSys = (() => {
   let muted = false;
   // 0..1 volume from the settings screen; 0.7 default maps to the old 0.5 gain
   let vol = 0.7;
-  try { if (typeof Settings !== 'undefined') vol = Settings.get('volume') / 10; } catch (e) {}
+  let musicVol = 0.6;
+  try {
+    if (typeof Settings !== 'undefined') {
+      vol = Settings.get('volume') / 10;
+      musicVol = Settings.get('music') / 10;
+    }
+  } catch (e) {}
 
   try { muted = localStorage.getItem('pa_muted') === '1'; } catch (e) {}
 
@@ -26,6 +32,7 @@ const AudioSys = (() => {
   function resume() {
     if (!ensure()) return;
     if (ctx.state === 'suspended') ctx.resume();
+    startMusicEngine();   // the first user gesture also boots the soundtrack
   }
 
   function setVolume(v01) {
@@ -37,6 +44,7 @@ const AudioSys = (() => {
     muted = m;
     try { localStorage.setItem('pa_muted', m ? '1' : '0'); } catch (e) {}
     if (master) master.gain.value = gainValue();
+    if (musicBus) musicBus.gain.value = musicGainValue();
   }
   function toggleMuted() { setMuted(!muted); return muted; }
   function isMuted() { return muted; }
@@ -179,6 +187,187 @@ const AudioSys = (() => {
     },
   };
 
+  // -- procedural soundtrack -------------------------------------------------
+  // A tiny lookahead sequencer (the classic "tale of two clocks" pattern): a
+  // JS interval walks 16th-note steps a beat ahead of the AudioContext clock
+  // and schedules short-lived oscillators per voice. Three moods share the
+  // engine — brooding menu pads, a driving combat groove, and a harder boss
+  // variant — and the game's alert/combo state pumps an intensity knob that
+  // opens filters and thickens the hats. All synthesized live: the game
+  // still ships zero asset files.
+  let musicBus = null, musicTimer = null, musicNoiseBuf = null;
+  let musicMood = null, pendingMood = null;
+  let musicStep = 0, musicNext = 0, musicIntensity = 0;
+
+  const MUSIC_BPM = 112;
+  const MSTEP = 60 / MUSIC_BPM / 4;                       // one 16th note
+  const mf = (m) => 440 * Math.pow(2, (m - 69) / 12);     // midi note -> Hz
+
+  // chord roots per bar (midi); combat rides an Am / F / G / Em loop while
+  // the boss mix bends it phrygian for menace
+  const MOODS = {
+    menu:   { bars: [45, 41, 43, 40], drums: false, drive: 0 },
+    combat: { bars: [45, 41, 43, 40], drums: true,  drive: 1 },
+    boss:   { bars: [45, 46, 43, 44], drums: true,  drive: 2 },
+  };
+  const ARP = [0, 3, 7, 12, 7, 3];   // minor arpeggio, up and back
+
+  function musicGainValue() { return muted ? 0 : musicVol * 0.5; }
+
+  function setMusicVolume(v01) {
+    musicVol = Math.max(0, Math.min(1, v01));
+    if (musicBus) musicBus.gain.value = musicGainValue();
+  }
+
+  /* Switch the soundtrack mood; takes effect on the next bar so transitions
+   * land on the grid. Safe to call every frame — repeats are no-ops. */
+  function setMusicMood(mood) {
+    if (!MOODS[mood]) return;
+    if (mood === (pendingMood || musicMood)) return;
+    if (!musicMood) musicMood = mood;   // engine not audible yet: cut straight over
+    else pendingMood = mood;
+  }
+
+  /* 0..1 from the game (alert level / combo heat): opens the bass filter and
+   * densifies the hats so escalation is audible, not just a HUD bar. */
+  function setMusicIntensity(v) {
+    musicIntensity = Math.max(0, Math.min(1, v || 0));
+  }
+
+  function startMusicEngine() {
+    if (!ctx || musicTimer) return;
+    musicBus = ctx.createGain();
+    musicBus.gain.value = musicGainValue();
+    musicBus.connect(ctx.destination);
+    musicNext = ctx.currentTime + 0.06;
+    musicStep = 0;
+    musicTimer = setInterval(scheduleMusic, 90);
+  }
+
+  function scheduleMusic() {
+    if (!ctx || !musicBus) return;
+    while (musicNext < ctx.currentTime + 0.28) {
+      if ((musicStep & 15) === 0 && pendingMood) {
+        musicMood = pendingMood;
+        pendingMood = null;
+      }
+      if (musicMood && !muted && musicVol > 0) playMusicStep(musicStep, musicNext);
+      musicStep = (musicStep + 1) & 63;   // 4 bars of 16 steps
+      musicNext += MSTEP;
+    }
+  }
+
+  // voice helpers — every node routes into musicBus, never into the SFX master
+  function mOsc(type, freq, t, dur, peak, cutoff) {
+    const o = ctx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t);
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(cutoff, t);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(f); f.connect(g); g.connect(musicBus);
+    o.start(t); o.stop(t + dur + 0.03);
+  }
+
+  function mNoise(t, dur, peak, filterType, freq) {
+    if (!musicNoiseBuf) {
+      const len = ctx.sampleRate;   // one shared second of noise
+      musicNoiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const d = musicNoiseBuf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = musicNoiseBuf;
+    src.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = filterType;
+    f.frequency.setValueAtTime(freq, t);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(f); f.connect(g); g.connect(musicBus);
+    src.start(t, Math.random());
+    src.stop(t + dur + 0.03);
+  }
+
+  function mKick(t) {
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(130, t);
+    o.frequency.exponentialRampToValueAtTime(38, t + 0.1);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+    o.connect(g); g.connect(musicBus);
+    o.start(t); o.stop(t + 0.18);
+  }
+
+  /* One dark pad chord per bar: root + fifth as detuned saws through a
+   * closed lowpass, swelling under everything else. */
+  function mPad(root, t, cutoff, peak) {
+    const barDur = MSTEP * 16;
+    for (const [note, det] of [[root + 12, -4], [root + 12, 4], [root + 19, 3]]) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(mf(note), t);
+      o.detune.setValueAtTime(det, t);
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.setValueAtTime(cutoff, t);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(peak, t + 0.5);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + barDur);
+      o.connect(f); f.connect(g); g.connect(musicBus);
+      o.start(t); o.stop(t + barDur + 0.05);
+    }
+  }
+
+  function playMusicStep(step, t) {
+    const mood = MOODS[musicMood];
+    const bar = (step >> 4) & 3, pos = step & 15;
+    const root = mood.bars[bar];
+    const inten = musicIntensity;
+
+    if (pos === 0) {
+      mPad(root, t, mood.drive === 0 ? 520 : 700 + inten * 500,
+        mood.drive === 0 ? 0.07 : 0.05);
+    }
+
+    // bass: slow pulses on the menu, driving 8ths with octave lifts in combat
+    if (mood.drive === 0) {
+      if (pos === 0 || pos === 10) mOsc('sawtooth', mf(root - 12), t, MSTEP * 5, 0.15, 300);
+    } else if ((pos & 1) === 0) {
+      const oct = (pos === 6 || pos === 14) ? 0 : -12;
+      mOsc('sawtooth', mf(root + oct), t, MSTEP * 1.6,
+        mood.drive === 2 && (pos & 3) === 2 ? 0.28 : 0.22,
+        380 + inten * 450);
+    }
+
+    // arp: sparse chimes on the menu, a 16th-note pulse under fire
+    if (mood.drive === 0) {
+      if (pos === 4 || pos === 12) {
+        mOsc('triangle', mf(root + 24 + ARP[(step >> 2) % ARP.length]), t, MSTEP * 3.2, 0.05, 2200);
+      }
+    } else if ((pos & 1) === 0 || inten > 0.55) {
+      mOsc('square', mf(root + 12 + ARP[(step >> 1) % ARP.length]), t, MSTEP * 1.1,
+        0.04 + inten * 0.03, 1400 + inten * 2600);
+    }
+
+    if (mood.drums) {
+      if (pos === 0 || pos === 8 || (mood.drive === 2 && (pos === 4 || pos === 12))) mKick(t);
+      if (pos === 4 || pos === 12) mNoise(t, 0.12, 0.16, 'bandpass', 1900);         // snare
+      if ((pos & 1) === 1) mNoise(t, 0.03, 0.05 + inten * 0.05, 'highpass', 6500);  // hats
+      else if (inten > 0.7 && (pos & 3) === 2) mNoise(t, 0.025, 0.04, 'highpass', 7500);
+    }
+  }
+
   // -- engine hum ----------------------------------------------------------
   function startEngine() {
     if (!ctx || engineOsc) return;
@@ -218,5 +407,8 @@ const AudioSys = (() => {
     if (sfx[name]) sfx[name]();
   }
 
-  return { resume, play, setEngine, stopEngine, toggleMuted, isMuted, setVolume };
+  return {
+    resume, play, setEngine, stopEngine, toggleMuted, isMuted, setVolume,
+    setMusicVolume, setMusicMood, setMusicIntensity,
+  };
 })();

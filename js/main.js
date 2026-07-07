@@ -73,6 +73,7 @@
   // ---- live settings ---------------------------------------------------------
   function applySettings() {
     AudioSys.setVolume(Settings.get('volume') / 10);
+    AudioSys.setMusicVolume(Settings.get('music') / 10);
     document.getElementById('crt').style.display = Settings.get('crt') ? '' : 'none';
     renderer.setGlow(Settings.get('glow'));
   }
@@ -1128,6 +1129,7 @@
   // ---- settings screen -----------------------------------------------------
   const SETTING_DEFS = [
     { key: 'volume', max: 10 },
+    { key: 'music', max: 10 },
     { key: 'shake', max: 10 },
     { key: 'glow', bool: true },
     { key: 'crt', bool: true },
@@ -1355,6 +1357,23 @@
     }
   }
 
+  // soundtrack mood follows the screen: brooding loop under the menus, the
+  // combat groove in the arena, the boss mix while a WARLORD is alive. The
+  // intensity knob rides the alert level and combo heat.
+  function updateMusic() {
+    let mood = 'menu';
+    if (uiMode === 'playing' && (game.mode === 'playing' || game.mode === 'dying')) {
+      if (game.bossLevel && game.boss && !game.boss.dead) {
+        mood = 'boss';
+        AudioSys.setMusicIntensity(1);
+      } else {
+        mood = 'combat';
+        AudioSys.setMusicIntensity(Math.max(game.alert || 0, Math.min(1, (game.combo || 0) / 6)));
+      }
+    }
+    AudioSys.setMusicMood(mood);
+  }
+
   // client: advance purely cosmetic state between snapshots
   function clientCosmetics(dt) {
     game.shake = Math.max(0, game.shake - dt * 3);
@@ -1397,6 +1416,8 @@
       if (Net.role === 'client') {
         Net.sendInput(Input.axis());
         clientCosmetics(dt);
+        // smooth remote motion between the host's 30 Hz snapshots
+        if (game.mode === 'playing' || game.mode === 'dying') Net.clientInterpolate(game);
       } else {
         feedLocalInput();
         if (Net.role === 'host') Net.applyInputs(game);
@@ -1416,6 +1437,7 @@
     if (uiMode === 'playing' && game.mode === 'playing') checkRecordChase();
 
     updateEngine();
+    updateMusic();
     updateCamera(dt);
     renderer.beginFrame(cam);
 

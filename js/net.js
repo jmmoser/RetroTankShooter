@@ -11,6 +11,16 @@ const Net = (() => {
   const ID_PREFIX = 'phantom-arena-v1-';   // namespaces our ids on the shared broker
   const MAX_PLAYERS = 4;
 
+  // Interpolation: clients render remote entities this far in the past so
+  // there are always two snapshots to blend between — motion stays 60 fps
+  // smooth instead of stepping at the 30 Hz snapshot rate.
+  const INTERP_DELAY = 0.1;
+  const SNAP_KEEP = 30;   // ~1s of history
+
+  // host: monotonically increasing network ids, stamped lazily on the first
+  // serialize so clients can match the same enemy/shot across snapshots
+  let netSeq = 1;
+
   const state = {
     role: 'solo',        // 'solo' | 'host' | 'client'
     peer: null,
@@ -22,6 +32,7 @@ const Net = (() => {
     inputs: {},          // host: peerId -> latest input {t,d,f}
     started: false,
     mode: 'coop',        // 'coop' | 'versus' — host picks in the lobby
+    snaps: [],           // client: [{ t, msg }] snapshot history for interpolation
   };
 
   // Callbacks wired up by main.js.
@@ -184,17 +195,25 @@ const Net = (() => {
         bo: Math.round(p.boost || 0), bs: p.boosting ? 1 : 0, nd: p.nades || 0,
         mn: p.mines || 0,
       })),
-      en: game.enemies.map((e) => ({
-        k: ENEMY_ORDER.indexOf(e.type), x: e.x, z: e.z, a: e.angle, h: e.hitFlash,
-        c: e.cloak ? Math.round(e.cloak * 100) / 100 : 0,
-        el: e.elite ? 1 : 0,
-      })),
+      en: game.enemies.map((e) => {
+        if (!e._nid) e._nid = netSeq++;
+        return {
+          i: e._nid,
+          k: ENEMY_ORDER.indexOf(e.type), x: e.x, z: e.z, a: e.angle, h: e.hitFlash,
+          c: e.cloak ? Math.round(e.cloak * 100) / 100 : 0,
+          el: e.elite ? 1 : 0,
+        };
+      }),
       mi: game.mines.map((m) => ({ x: m.x, z: m.z, a: m.arm <= 0 ? 1 : 0 })),
       vk: game.versus ? game.killCounts : undefined,
-      pr: game.projectiles.map((pr) => ({
-        x: pr.x, y: pr.y, z: pr.z, a: pr.angle,
-        e: pr.from === 'enemy' ? 1 : 0, k: pr.kind === 'nade' ? 1 : 0,
-      })),
+      pr: game.projectiles.map((pr) => {
+        if (!pr._nid) pr._nid = netSeq++;
+        return {
+          i: pr._nid,
+          x: pr.x, y: pr.y, z: pr.z, a: pr.angle,
+          e: pr.from === 'enemy' ? 1 : 0, k: pr.kind === 'nade' ? 1 : 0,
+        };
+      }),
       pu: game.powerups.map((u) => ({ k: u.type, x: u.x, z: u.z, s: u.spin, b: u.bob })),
       fg: game.flags.map((f) => (f.taken ? 1 : 0)),
       al: game.alert,
@@ -208,7 +227,10 @@ const Net = (() => {
         hf: game.boss.hitFlash,
         tu: game.boss.turrets.map((t) => ({ v: t.hp > 0 ? 1 : 0, a: t.aim })),
       } : null,
-      ri: game.rings.map((r) => ({ x: r.x, z: r.z, r: r.r })),
+      ri: game.rings.map((r) => {
+        if (!r._nid) r._nid = netSeq++;
+        return { i: r._nid, x: r.x, z: r.z, r: r.r };
+      }),
       // slabs the boss has crushed (only ever changes on boss sectors)
       og: game.bossLevel ? game.obstacles.map((o) => (o.dead ? 0 : 1)) : undefined,
       snd: snd || game.frameSounds.slice(),
@@ -257,9 +279,19 @@ const Net = (() => {
       case 'roster': state.roster = msg.roster; state.mode = msg.mode || 'coop'; if (cb.onRoster) cb.onRoster(msg.roster); break;
       case 'full':   if (cb.onError) cb.onError('Game is full or already in progress.'); break;
       case 'start':  state.started = true; state.mode = msg.mode || 'coop'; if (cb.onStart) cb.onStart(msg.defs, state.id, state.mode); break;
-      case 'lv':     if (cb.onLevel) cb.onLevel(msg); break;
-      case 's':      if (cb.onState) cb.onState(msg); break;
-      case 'sc':     if (cb.onScreen) cb.onScreen(msg); break;
+      case 'lv':
+        state.snaps.length = 0;   // new arena: stale history would tween across it
+        if (cb.onLevel) cb.onLevel(msg);
+        break;
+      case 's':
+        state.snaps.push({ t: performance.now() / 1000, msg });
+        if (state.snaps.length > SNAP_KEEP) state.snaps.shift();
+        if (cb.onState) cb.onState(msg);
+        break;
+      case 'sc':
+        state.snaps.length = 0;
+        if (cb.onScreen) cb.onScreen(msg);
+        break;
     }
   }
 
@@ -344,10 +376,10 @@ const Net = (() => {
       game._prevAlive = lp.alive;
     }
 
-    game.enemies = msg.en.map((d) => ({ type: ENEMY_ORDER[d.k] || 'drone', x: d.x, z: d.z, angle: d.a, hitFlash: d.h, cloak: d.c || 0, elite: !!d.el }));
+    game.enemies = msg.en.map((d) => ({ nid: d.i, type: ENEMY_ORDER[d.k] || 'drone', x: d.x, z: d.z, angle: d.a, hitFlash: d.h, cloak: d.c || 0, elite: !!d.el }));
     game.mines = (msg.mi || []).map((d) => ({ x: d.x, z: d.z, arm: d.a ? 0 : 1, life: 60, owner: null }));
     if (msg.vk) game.killCounts = msg.vk;
-    game.projectiles = msg.pr.map((d) => ({ x: d.x, y: d.y, z: d.z, angle: d.a, from: d.e ? 'enemy' : 'player', kind: d.k ? 'nade' : undefined }));
+    game.projectiles = msg.pr.map((d) => ({ nid: d.i, x: d.x, y: d.y, z: d.z, angle: d.a, from: d.e ? 'enemy' : 'player', kind: d.k ? 'nade' : undefined }));
     game.powerups = msg.pu.map((d) => ({ type: d.k, x: d.x, z: d.z, spin: d.s, bob: d.b }));
     for (let i = 0; i < game.flags.length && i < msg.fg.length; i++) game.flags[i].taken = !!msg.fg[i];
 
@@ -368,7 +400,7 @@ const Net = (() => {
         dx: BOSS_TURRET_OFFSETS[i][0], dz: BOSS_TURRET_OFFSETS[i][1],
       })),
     } : null;
-    game.rings = (msg.ri || []).map((r) => ({ x: r.x, z: r.z, r: r.r }));
+    game.rings = (msg.ri || []).map((r) => ({ nid: r.i, x: r.x, z: r.z, r: r.r }));
     if (msg.og) {
       for (let i = 0; i < game.obstacles.length && i < msg.og.length; i++) {
         game.obstacles[i].dead = !msg.og[i];
@@ -390,12 +422,105 @@ const Net = (() => {
     }
   }
 
+  // ---- client-side snapshot interpolation ----------------------------------
+  // applyState above keeps the game's LOGICAL state (hp, ammo, events) on the
+  // newest snapshot the moment it lands; this pass runs every render frame and
+  // rewrites only the TRANSFORMS. Remote entities are drawn INTERP_DELAY in
+  // the past, blended between the two snapshots that bracket the render time,
+  // so they glide at display rate instead of stepping at the 30 Hz snapshot
+  // rate. The local tank is the exception: burying your own input under the
+  // interpolation delay would feel worse, so it rides the newest snapshot,
+  // dead-reckoned forward along its heading to hide the snapshot quantization.
+
+  function clientInterpolate(game) {
+    const snaps = state.snaps;
+    if (snaps.length < 2) return;
+    const now = performance.now() / 1000;
+    const rt = now - INTERP_DELAY;
+
+    let i = snaps.length - 1;
+    while (i > 0 && snaps[i].t > rt) i--;
+    const a = snaps[i];
+    const b = snaps[Math.min(i + 1, snaps.length - 1)];
+    const span = b.t - a.t;
+    const k = span > 0.0001 ? Math.max(0, Math.min(1, (rt - a.t) / span)) : 1;
+
+    const lerp = (x, y) => x + (y - x) * k;
+    const lerpA = (x, y) => x + wrapAngle(y - x) * k;
+    const index = (arr, key) => {
+      const m = {};
+      if (arr) for (const d of arr) m[d[key]] = d;
+      return m;
+    };
+
+    const pa = index(a.msg.pl, 'id'), pb = index(b.msg.pl, 'id');
+    for (const p of game.players) {
+      if (p.id === game.localId) continue;
+      const da = pa[p.id], db = pb[p.id];
+      if (da && db && da.al && db.al) {
+        p.x = lerp(da.x, db.x);
+        p.z = lerp(da.z, db.z);
+        p.angle = lerpA(da.a, db.a);
+      }
+    }
+
+    // own tank: newest state + forward dead-reckoning (capped — a stall
+    // should freeze the tank, not launch it through a wall)
+    const newest = snaps[snaps.length - 1];
+    const dl = index(newest.msg.pl, 'id')[game.localId];
+    const lp = game.player;
+    if (lp && dl && dl.al) {
+      const age = Math.min(Math.max(0, now - newest.t), 0.12);
+      lp.x = dl.x + fwdX(dl.a) * dl.sp * age;
+      lp.z = dl.z + fwdZ(dl.a) * dl.sp * age;
+      lp.angle = dl.a;
+    }
+
+    const ea = index(a.msg.en, 'i'), eb = index(b.msg.en, 'i');
+    for (const e of game.enemies) {
+      const da = ea[e.nid], db = eb[e.nid];
+      if (da && db) {
+        e.x = lerp(da.x, db.x);
+        e.z = lerp(da.z, db.z);
+        e.angle = lerpA(da.a, db.a);
+      }
+    }
+
+    const ra = index(a.msg.pr, 'i'), rb = index(b.msg.pr, 'i');
+    for (const pr of game.projectiles) {
+      const da = ra[pr.nid], db = rb[pr.nid];
+      if (da && db) {
+        pr.x = lerp(da.x, db.x);
+        pr.y = lerp(da.y, db.y);
+        pr.z = lerp(da.z, db.z);
+        pr.angle = lerpA(da.a, db.a);
+      }
+    }
+
+    const ga = index(a.msg.ri, 'i'), gb = index(b.msg.ri, 'i');
+    for (const r of game.rings) {
+      const da = ga[r.nid], db = gb[r.nid];
+      if (da && db) r.r = lerp(da.r, db.r);
+    }
+
+    if (game.boss && a.msg.bo && b.msg.bo) {
+      game.boss.x = lerp(a.msg.bo.x, b.msg.bo.x);
+      game.boss.z = lerp(a.msg.bo.z, b.msg.bo.z);
+      game.boss.angle = lerpA(a.msg.bo.a, b.msg.bo.a);
+      for (let t = 0; t < game.boss.turrets.length; t++) {
+        const ta = a.msg.bo.tu[t], tb = b.msg.bo.tu[t];
+        if (ta && tb) game.boss.turrets[t].aim = lerpA(ta.a, tb.a);
+      }
+    }
+  }
+
   function leave() {
     try { if (state.peer) state.peer.destroy(); } catch (e) {}
     state.role = 'solo'; state.peer = null; state.hostConn = null;
     state.conns = []; state.roster = []; state.inputs = {};
     state.started = false; state.id = null; state.code = null;
     state.mode = 'coop';
+    state.snaps = [];
   }
 
   return {
@@ -404,7 +529,7 @@ const Net = (() => {
     hostCreate: hostCreate, hostStartGame: hostStartGame, hostSetLocalLoadout: hostSetLocalLoadout, hostSetMode: hostSetMode, applyInputs: applyInputs,
     broadcastLevel: broadcastLevel, broadcastState: broadcastState, broadcastScreen: broadcastScreen,
     clientJoin: clientJoin, clientSetLoadout: clientSetLoadout, sendInput: sendInput,
-    applyLevel: applyLevel, applyState: applyState,
+    applyLevel: applyLevel, applyState: applyState, clientInterpolate: clientInterpolate,
     leave: leave,
     get role() { return state.role; },
   };
