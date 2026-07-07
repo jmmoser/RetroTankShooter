@@ -468,24 +468,41 @@
   const joinError = document.getElementById('join-error');
   let roomCode = '';
 
-  // Clicking the room code copies an invite — a full ?join= link when hosted
-  // over http(s), just the code when running from file://.
-  const COPY_HINT_DEFAULT = 'CLICK CODE TO COPY INVITE LINK';
+  // Clicking the room code shares an invite — the native share sheet where the
+  // browser supports Web Share, clipboard copy otherwise. The invite is a full
+  // ?join= link when hosted over http(s), just the code when running from file://.
+  const canWebShare = typeof navigator.share === 'function';
+  const COPY_HINT_DEFAULT = canWebShare
+    ? 'CLICK CODE TO SHARE INVITE'
+    : 'CLICK CODE TO COPY INVITE LINK';
   lobbyCodeEl.addEventListener('click', () => {
     if (!roomCode) return;
     AudioSys.resume();
-    const invite = /^https?:$/.test(location.protocol)
+    const isHttp = /^https?:$/.test(location.protocol);
+    const invite = isHttp
       ? location.origin + location.pathname + '?join=' + roomCode
       : roomCode;
-    const done = () => {
-      lobbyCopyHintEl.textContent = 'INVITE COPIED — SEND IT TO YOUR SQUAD';
+    const done = (msg) => {
+      lobbyCopyHintEl.textContent = msg;
       AudioSys.play('select');
       setTimeout(() => { lobbyCopyHintEl.textContent = COPY_HINT_DEFAULT; }, 2500);
     };
-    const fail = () => { lobbyCopyHintEl.textContent = 'COPY FAILED — CODE IS ' + roomCode; };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(invite).then(done, fail);
-    } else fail();
+    const copy = () => {
+      const fail = () => { lobbyCopyHintEl.textContent = 'COPY FAILED — CODE IS ' + roomCode; };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(invite).then(() => done('INVITE COPIED — SEND IT TO YOUR SQUAD'), fail);
+      } else fail();
+    };
+    if (canWebShare) {
+      const payload = { title: 'PHANTOM ARENA', text: 'JOIN MY SQUAD — ROOM ' + roomCode };
+      if (isHttp) payload.url = invite;
+      // A rejected share means the user dismissed the sheet (AbortError — leave
+      // quietly) or the payload was unsupported — fall back to clipboard.
+      navigator.share(payload).then(
+        () => done('INVITE SENT — SQUAD UP'),
+        (err) => { if (!err || err.name !== 'AbortError') copy(); },
+      );
+    } else copy();
   });
 
   function setRoomCode(code) {
