@@ -148,13 +148,24 @@ class Game {
     this.killCounts = {};  // versus: playerId -> kills
     this.winnerId = null;
     this.puTimer = 0;      // versus: contested powerup respawn timer
-    this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1 };
+    this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0 };
+    this.levelUntouched = true; // local player unhit this sector (medal)
   }
 
   /* Queue a sound: plays locally and is mirrored to clients by the host. */
   _sfx(key) {
     this.frameSounds.push(key);
     AudioSys.play(key);
+  }
+
+  /* Award a one-time medal to the LOCAL player: toast + jingle on first
+   * earn, silent no-op forever after. Local-only on purpose — the sound is
+   * played directly (not _sfx) so co-op clients don't hear the host's. */
+  _medal(id) {
+    if (this.versus || typeof Medals === 'undefined' || !Medals.award(id)) return;
+    const def = MEDALS.find((m) => m.id === id);
+    this.hud.message('★ MEDAL — ' + (def ? def.name : id) + ' ★', '#ffd24a', 2.6);
+    AudioSys.play('unlock');
   }
 
   _makePlayer(def, idx) {
@@ -212,7 +223,7 @@ class Game {
     this.killCounts = {};
     this.winnerId = null;
     this.score = 0;
-    this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1 };
+    this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0 };
     this.players = defs.map((d, i) => this._makePlayer(d, i));
     for (const p of this.players) this.killCounts[p.id] = 0;
     this.localId = localId != null ? localId : this.players[0].id;
@@ -255,6 +266,8 @@ class Game {
     this.rings = [];
     this.boss = null;
     this.bossLevel = !this.versus && L >= BOSS_EVERY && L % BOSS_EVERY === 0;
+    this.levelUntouched = true;
+    if (!this.versus && L >= 8) this._medal('deepstrike');
 
     // daily runs: the date + sector seeds generation, so every player in the
     // world fights the same layout. Combat randomness reverts to Math.random
@@ -609,6 +622,7 @@ class Game {
       this._sfx('combo');
       this.hud.message('COMBO ×' + mult, '#ffd24a', 1.4);
     }
+    if (mult >= 5 && ownerId === this.localId) this._medal('chain5');
     this.mult = mult;
     this.runStats.kills++;
     this.runStats.bestMult = Math.max(this.runStats.bestMult, mult);
@@ -1038,7 +1052,7 @@ class Game {
           const e = this.enemies[j];
           if (dist2(pr.x, pr.z, e.x, e.z) < 2.4 * 2.4) {
             dead = true;
-            this._hurtEnemy(j, pr.dmg, pr.owner);
+            this._hurtEnemy(j, pr.dmg, pr.owner, 'cannon');
             break;
           }
         }
@@ -1101,7 +1115,7 @@ class Game {
       const d = Math.hypot(pr.x - e.x, pr.z - e.z);
       if (d < R) {
         const dmg = pr.dmg * (d < 3 ? 1 : 1 - (d - 3) / (R - 3) * 0.75);
-        this._hurtEnemy(j, dmg, pr.owner);
+        this._hurtEnemy(j, dmg, pr.owner, 'nade');
       }
     }
     const b = this.boss;
@@ -1166,7 +1180,7 @@ class Game {
     for (let j = this.enemies.length - 1; j >= 0; j--) {
       const e = this.enemies[j];
       const d = Math.hypot(m.x - e.x, m.z - e.z);
-      if (d < R) this._hurtEnemy(j, falloff(d), m.owner);
+      if (d < R) this._hurtEnemy(j, falloff(d), m.owner, 'mine');
     }
     const b = this.boss;
     if (b && !b.dead) {
@@ -1181,21 +1195,33 @@ class Game {
     }
   }
 
-  _hurtEnemy(index, dmg, ownerId) {
+  /* via: 'cannon' | 'nade' | 'mine' — which weapon landed the hit, for the
+   * weapon-specific medals. */
+  _hurtEnemy(index, dmg, ownerId, via) {
     const e = this.enemies[index];
     e.hp -= dmg;
     e.hitFlash = 1;
     if (ENEMY_TYPES[e.type].cloaks) e.decloakT = Math.max(e.decloakT, 1.2);
     this._burst(e.x, 1.5, e.z, 10, [1, 0.6, 0.3], 8);
-    if (e.hp <= 0) this._killEnemy(index, ownerId);
+    if (e.hp <= 0) this._killEnemy(index, ownerId, via);
     else this._sfx('hitEnemy');
   }
 
-  _killEnemy(index, ownerId) {
+  _killEnemy(index, ownerId, via) {
     const e = this.enemies[index];
     this.enemies.splice(index, 1);
     this.killsThisLevel++;
     this._awardKill(e.score, ownerId);
+    if (!this.versus && ownerId === this.localId) {
+      const rs = this.runStats;
+      rs.localKills++;
+      if (via === 'nade') rs.nadeKills++;
+      if (via === 'mine') rs.mineKills++;
+      this._medal('firstblood');
+      if (rs.localKills >= 25) this._medal('ace');
+      if (rs.nadeKills >= 3) this._medal('demolition');
+      if (rs.mineKills >= 3) this._medal('trapper');
+    }
     this._burst(e.x, 1.5, e.z, 34, [1, 0.55, 0.15], 14);
     this._burst(e.x, 1.5, e.z, 16, [0.9, 0.9, 0.9], 9);
     this._spawnShards(e.x, e.z, DEBRIS_COLORS[e.type] || DEBRIS_COLORS.drone);
@@ -1212,6 +1238,7 @@ class Game {
     const isLocal = p.id === this.localId;
     p.shields -= dmg;
     this._breakCombo();   // any hit on the squad snaps the kill chain
+    if (isLocal) this.levelUntouched = false;
     if (isLocal) {
       this.hud.damage(Math.min(0.8, dmg / 30));
       this.shake = Math.min(this.shake + 0.5, 1.2);
@@ -1562,6 +1589,7 @@ class Game {
     this._sfx('bossDown');
     this.shake = 2;
     this.hud.message('WARLORD DESTROYED', '#3cff78', 3);
+    this._medal('giantkiller');
   }
 
   _spawnRing(x, z, dmg) {
@@ -1679,6 +1707,7 @@ class Game {
       am * 5 +
       this.killsThisLevel * 50;
     this.score += this.levelBonus;
+    if (this.levelUntouched) this._medal('untouchable');
     this.mode = 'levelclear';
     this._sfx('levelClear');
   }

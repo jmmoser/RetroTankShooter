@@ -19,6 +19,8 @@ class HUD {
     this.pops = [];     // floating score popups {text, t}
     this.flash = 0;     // red damage flash 0..1
     this.pickupFlash = 0;
+    this.recordScore = 0; // the score being chased (high score / daily best);
+                          // main.js arms it per run, score goes gold past it
   }
 
   resize() {
@@ -582,8 +584,22 @@ class HUD {
     // ---- bottom-right: score / level / flags
     ctx.textAlign = 'right';
     ctx.font = font(16, true);
-    ctx.fillStyle = '#4fd6bb';
+    const onRecord = this.recordScore > 0 && game.score > this.recordScore && !game.versus;
+    if (onRecord) {
+      ctx.fillStyle = '#ffd24a';
+      ctx.shadowColor = '#ffd24a';
+      ctx.shadowBlur = 10;
+    } else {
+      ctx.fillStyle = '#4fd6bb';
+    }
     ctx.fillText('SCORE ' + String(game.score).padStart(7, '0'), W - pad, H - pad - 64 * s);
+    ctx.shadowBlur = 0;
+    if (onRecord) {
+      ctx.font = font(10, true);
+      ctx.fillStyle = '#ffd24a';
+      ctx.fillText('★ RECORD PACE', W - pad, H - pad - 84 * s);
+      ctx.font = font(16, true);
+    }
     ctx.font = font(14, false);
     ctx.fillText('SECTOR ' + game.level, W - pad, H - pad - 38 * s);
     if (game.versus) {
