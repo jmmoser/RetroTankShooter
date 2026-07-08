@@ -47,6 +47,12 @@ The sector never goes quiet. Hostiles keep warping in on a **pressure
 timer that tightens the longer you stay** — camping behind a slab is a
 losing strategy, and most waves lead with rushers that come straight at you.
 
+Getting overwhelmed? **SETTINGS → DIFFICULTY** has three campaign presets:
+**RECRUIT** stretches the pressure timer, trims the alarm waves and softens
+incoming fire while you learn the systems, **STANDARD** is the game as
+designed, and **VETERAN** turns all of it up. Daily Ops always runs
+STANDARD so the shared leaderboard seed stays a level playing field.
+
 ### The heat cannon — ride the redline, nail the vent
 
 There is no ammo. The cannon builds **heat** per shell — and past the
@@ -177,7 +183,8 @@ browser. Two things are earned:
 
 ### Settings
 
-The **SETTINGS** screen has SFX and music volume, screen-shake intensity,
+The **SETTINGS** screen has the campaign **DIFFICULTY** preset (RECRUIT /
+STANDARD / VETERAN), SFX and music volume, screen-shake intensity,
 the **GLOW FX** post-processing pipeline (bloom, dynamic explosion lighting
 and FXAA — turn it off on weak GPUs), the CRT
 scanline overlay, aim assist, and a **colorblind hull palette**

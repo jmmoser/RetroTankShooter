@@ -13,7 +13,9 @@
 
 const Settings = (() => {
   // quality: 0 = LOW (no MSAA on the glow scene pass), 1 = HIGH
-  const DEFAULTS = { volume: 7, music: 6, shake: 10, glow: true, quality: 1, crt: true, aimAssist: true, colorblind: false, fps: false };
+  // difficulty: 0 = RECRUIT, 1 = STANDARD, 2 = VETERAN (campaign pacing;
+  // Daily Ops and versus always run STANDARD)
+  const DEFAULTS = { volume: 7, music: 6, shake: 10, glow: true, quality: 1, crt: true, aimAssist: true, colorblind: false, fps: false, difficulty: 1 };
   const s = Object.assign({}, DEFAULTS);
   try {
     const raw = JSON.parse(localStorage.getItem('pa_settings') || '{}');
@@ -58,7 +60,7 @@ const MEDALS = [
   { id: 'deepstrike',  name: 'DEEP STRIKE',    how: 'REACH SECTOR 8' },
   { id: 'streak3',     name: 'DAILY REGULAR',  how: '3-DAY DAILY OPS STREAK' },
   { id: 'veteran',     name: 'VETERAN',        how: 'FLY 25 MISSIONS' },
-  { id: 'flagday',     name: 'FLAG DAY',       how: 'SECURE 100 CAREER FLAGS' },
+  { id: 'flagday',     name: 'ZONE CONTROL',   how: 'SECURE 100 CAREER ZONES' },
   { id: 'centurion',   name: 'CENTURION',      how: '500 CAREER KILLS' },
 ];
 
