@@ -87,6 +87,7 @@
     document.getElementById('crt').style.display = Settings.get('crt') ? '' : 'none';
     document.getElementById('fps').classList.toggle('hidden', !Settings.get('fps'));
     renderer.setGlow(Settings.get('glow'));
+    renderer.setMsaa(Settings.get('quality') >= 1);
   }
   Settings.onChange = () => { applySettings(); renderSettingVals(); };
   applySettings();
@@ -1328,6 +1329,7 @@
     { key: 'music', max: 10 },
     { key: 'shake', max: 10 },
     { key: 'glow', bool: true },
+    { key: 'quality', max: 1, labels: ['LOW', 'HIGH'] },
     { key: 'crt', bool: true },
     { key: 'aimAssist', bool: true },
     { key: 'colorblind', bool: true },
@@ -1339,7 +1341,7 @@
       const el = document.getElementById('stv-' + d.key);
       if (!el) continue;
       const v = Settings.get(d.key);
-      el.textContent = d.bool ? (v ? 'ON' : 'OFF') : v + '/' + d.max;
+      el.textContent = d.bool ? (v ? 'ON' : 'OFF') : d.labels ? d.labels[v] : v + '/' + d.max;
     }
   }
   renderSettingVals();
@@ -1713,5 +1715,5 @@
   }
 
   // exposed for automated testing / tinkering
-  window.__PA = { game, hud, net: Net, getMode: () => uiMode };
+  window.__PA = { game, hud, renderer, net: Net, getMode: () => uiMode };
 })();

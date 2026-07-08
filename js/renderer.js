@@ -308,6 +308,7 @@ class Renderer {
 
     // ---- glow pipeline ----------------------------------------------------
     this.glowEnabled = true;    // user setting (setGlow)
+    this.msaaEnabled = true;    // user setting (setMsaa): RENDER QUALITY HIGH
     this.glowSupported = true;  // flipped false if FBO setup fails
     this.bloomStrength = 1.15;
     try {
@@ -436,7 +437,7 @@ class Renderer {
     this._dropTarget(this.pingFbo[0]);
     this._dropTarget(this.pingFbo[1]);
     const bw = Math.max(1, w >> 1), bh = Math.max(1, h >> 1);
-    if (this.isWebGL2 && !this.msaaBroken) {
+    if (this.isWebGL2 && this.msaaEnabled && !this.msaaBroken) {
       try {
         this.msaaFbo = this._makeMsaaTarget(w, h);
       } catch (e) {
@@ -452,6 +453,17 @@ class Renderer {
   }
 
   setGlow(on) { this.glowEnabled = !!on; }
+
+  /* RENDER QUALITY: HIGH multisamples the scene pass (WebGL2), LOW renders
+   * it plain and leaves the smoothing to FXAA — much cheaper in fill rate.
+   * Rebuilds the offscreen targets on the next frame, since depth ownership
+   * moves between the MSAA renderbuffer and the scene texture. */
+  setMsaa(on) {
+    on = !!on;
+    if (on === this.msaaEnabled) return;
+    this.msaaEnabled = on;
+    this.postW = 0;
+  }
 
   createMesh(data, mode) {
     const gl = this.gl;

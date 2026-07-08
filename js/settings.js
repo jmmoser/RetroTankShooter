@@ -1,7 +1,8 @@
 /* Persistent local state, loaded before every other module.
  *
  *  - Settings: player preferences (pa_settings) — volume, screen shake,
- *    CRT overlay, aim assist, colorblind palette, FPS counter.
+ *    CRT overlay, render quality, aim assist, colorblind palette,
+ *    FPS counter.
  *  - Progress: career stats, XP/rank and unlocks (pa_stats), the
  *    daily-challenge best (pa_daily) and daily streak (pa_streak).
  *  - Medals: one-time feats (pa_medals) toasted in-run and displayed on
@@ -11,7 +12,8 @@
  */
 
 const Settings = (() => {
-  const DEFAULTS = { volume: 7, music: 6, shake: 10, glow: true, crt: true, aimAssist: true, colorblind: false, fps: false };
+  // quality: 0 = LOW (no MSAA on the glow scene pass), 1 = HIGH
+  const DEFAULTS = { volume: 7, music: 6, shake: 10, glow: true, quality: 1, crt: true, aimAssist: true, colorblind: false, fps: false };
   const s = Object.assign({}, DEFAULTS);
   try {
     const raw = JSON.parse(localStorage.getItem('pa_settings') || '{}');
