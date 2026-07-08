@@ -75,6 +75,7 @@ html, body {
 body.touch-ui .help-touch { display: inline; }
 body.touch-ui .help-kb { display: none; }
 body.touch-ui .mkey { display: none; }
+body.touch-ui .draft-key { display: none; }
 body.touch-ui .mbtn { padding: 10px 20px; }
 
 .blink { animation: blink 1.1s steps(2, start) infinite; }
