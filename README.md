@@ -46,6 +46,9 @@ Leave, and the progress drains away. Your hull is gone when shields hit zero.
 The sector never goes quiet. Hostiles keep warping in on a **pressure
 timer that tightens the longer you stay** — camping behind a slab is a
 losing strategy, and most waves lead with rushers that come straight at you.
+Sector 1 opens gently: three zones, a light garrison, a long breather
+before the first pressure wave, and your first capture doesn't trip the
+alarm. The screw turns from sector 2 on.
 
 Getting overwhelmed? **SETTINGS → DIFFICULTY** has three campaign presets:
 **RECRUIT** stretches the pressure timer, trims the alarm waves and softens

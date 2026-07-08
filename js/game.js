@@ -48,7 +48,7 @@ const GRAZE_R = 4.2;             // enemy shots passing this close (but not
  * timer, potSpill is the pot fraction KEPT after a hit, waves trims the
  * alarm/alert reinforcement counts (never below 1). */
 const DIFFICULTY = [
-  { dmg: 0.65, pressure: 1.5,  potSpill: 0.85, waves: -1 },  // RECRUIT — learn the systems
+  { dmg: 0.5,  pressure: 1.8,  potSpill: 0.9,  waves: -1 },  // RECRUIT — learn the systems
   { dmg: 1,    pressure: 1,    potSpill: 0.7,  waves: 0  },  // STANDARD — as designed
   { dmg: 1.2,  pressure: 0.85, potSpill: 0.6,  waves: 0  },  // VETERAN — the arena bites back
 ];
@@ -392,7 +392,9 @@ class Game {
     this.bossLevel = !this.versus && L >= BOSS_EVERY && L % BOSS_EVERY === 0;
     this.levelUntouched = true;
     this.levelTime = 0;      // drives the continuous spawn-pressure ramp
-    this.pressureT = 7;      // countdown to the next pressure wave
+    // opening breather before the first pressure wave — long in the early
+    // sectors so new players can learn a fight before the arena starts hunting
+    this.pressureT = Math.max(7, 15 - L * 2.5);
     if (!this.versus && L >= 8) this._medal('deepstrike');
 
     // daily runs: the date + sector seeds generation, so every player in the
@@ -448,9 +450,11 @@ class Game {
       this._sfx('alarm');
       this.hud.message('WARLORD DETECTED — DESTROY IT', '#ff4a3c', 3.5);
     } else {
-      // fewer, harder objectives: each zone is a held fight, not a waypoint
+      // fewer, harder objectives: each zone is a held fight, not a waypoint.
+      // The count ramps from 3 so the first sectors are short campaigns,
+      // not marathons.
       this._genObstacles(40 + Math.min(L * 3, 28), this._pickLayout());
-      this._genFlags(4 + Math.min(L, 6));
+      this._genFlags(Math.min(2 + L, 10));
       this._genEnemies();
       this._genDepots();
     }
@@ -726,7 +730,7 @@ class Game {
   _genEnemies() {
     // lighter opening garrison — spawn pressure keeps the field fed after
     const L = this.level;
-    let total = Math.min(4 + Math.floor(L * 1.2), 12);
+    let total = Math.min(2 + Math.floor(L * 1.4), 12);
     if (this.mutator === 'swarm') total += 3;        // thin hulls, more of them
     if (this.mutator === 'gauntlet') total -= 2;     // all elites — fewer, harder
     for (let i = 0; i < total; i++) {
@@ -847,11 +851,12 @@ class Game {
     this.pressureT -= dt;
     if (this.pressureT > 0) return;
     const heat = Math.min(1, this.levelTime / 90);   // dawdling tightens the screw
-    this.pressureT = Math.max(3.5, (10 - this.level * 0.35) * (1 - heat * 0.55)) *
+    this.pressureT = Math.max(3.5, (11.5 - this.level * 0.5) * (1 - heat * 0.55)) *
       (this.mutator === 'swarm' ? 0.55 : 1) * this._diff().pressure;
-    const cap = 12 + Math.min(6, this.level);
+    const cap = Math.min(9 + this.level * 2, 18);
     if (this.enemies.length + this.pendingSpawns.length >= cap) return;
-    const n = 1 + ((heat > 0.5 || this.level > 4) ? 1 : 0);
+    // double waves are a mid-game threat — sectors 1-2 always send one tank
+    const n = 1 + ((this.level > 4 || (this.level >= 3 && heat > 0.5)) ? 1 : 0);
     for (let i = 0; i < n; i++) {
       // half the waves converge on the squad, half guard the objectives
       let cx, cz;
@@ -910,7 +915,9 @@ class Game {
       f.cap = (f.cap || 0) + (dt / CAP_TIME) * rate;
       if (!f.alarmed && f.cap > 0.1) {
         f.alarmed = true;
-        this._zoneAlarm(f);
+        // the first zone of sector 1 is the tutorial: no converge wave —
+        // learn what holding the ring means before the alarm bites
+        if (this.level > 1 || this.runStats.flags > 0) this._zoneAlarm(f);
       }
       if (f.cap >= 1) {
         f.cap = 1;
