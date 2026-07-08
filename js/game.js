@@ -46,12 +46,16 @@ const GRAZE_R = 4.2;             // enemy shots passing this close (but not
 /* Campaign difficulty presets (SETTINGS → DIFFICULTY). dmg scales what
  * enemies do to the squad, pressure stretches/shrinks the spawn-pressure
  * timer, potSpill is the pot fraction KEPT after a hit, waves trims the
- * alarm/alert reinforcement counts (never below 1). */
+ * alarm/alert reinforcement counts (never below 1). regen is the
+ * out-of-combat shield trickle (per second, after REGEN_DELAY unhit) and
+ * regenTo the fraction of max it can restore — chip damage stops being a
+ * death spiral, while depots and pickups still own the full top-up. */
 const DIFFICULTY = [
-  { dmg: 0.5,  pressure: 1.8,  potSpill: 0.9,  waves: -1 },  // RECRUIT — learn the systems
-  { dmg: 1,    pressure: 1,    potSpill: 0.7,  waves: 0  },  // STANDARD — as designed
-  { dmg: 1.2,  pressure: 0.85, potSpill: 0.6,  waves: 0  },  // VETERAN — the arena bites back
+  { dmg: 0.5,  pressure: 1.8,  potSpill: 0.9,  waves: -1, regen: 8, regenTo: 1    },  // RECRUIT — learn the systems
+  { dmg: 1,    pressure: 1,    potSpill: 0.7,  waves: 0,  regen: 5, regenTo: 0.65 },  // STANDARD — as designed
+  { dmg: 1.2,  pressure: 0.85, potSpill: 0.6,  waves: 0,  regen: 0, regenTo: 0    },  // VETERAN — the arena bites back
 ];
+const REGEN_DELAY = 5;   // seconds without taking a hit before the trickle starts
 
 /* Sector gate mutators: after a clear you pick the NEXT sector's ruleset.
  * Riskier gates pay a tech signing bonus the moment you deploy. */
@@ -322,6 +326,7 @@ class Game {
       offersSent: false,   // host: draft message delivered to a remote player
       ramCd: 0,            // per-ram cooldown so one pass = one hit
       boostHeld: 0,        // seconds the current boost has been engaged
+      sinceHit: 0,         // seconds since last damage, for shield recovery
     };
     p.shields = p.maxShields;
     return p;
@@ -1212,6 +1217,16 @@ class Game {
     p.mineCd = Math.max(0, p.mineCd - dt);
     p.ramCd = Math.max(0, (p.ramCd || 0) - dt);
 
+    // out-of-combat shield recovery: stay unhit for a few seconds and the
+    // hull patches itself back toward the preset's floor. Versus stays raw —
+    // respawns are free there — and VETERAN hulls only mend at a depot.
+    p.sinceHit = (p.sinceHit || 0) + dt;
+    const dr = this._diff();
+    if (!this.versus && dr.regen > 0 && p.sinceHit >= REGEN_DELAY) {
+      const cap = p.maxShields * dr.regenTo;
+      if (p.shields < cap) p.shields = Math.min(cap, p.shields + dr.regen * dt);
+    }
+
     const input = p.input;
     const isLocal = p.id === this.localId;
 
@@ -1233,18 +1248,23 @@ class Game {
 
     // ---- movement: velocity-vector physics with drift ----------------------
     // The hull points where you steer; VELOCITY chases the hull's intent at
-    // a grip rate. Boosting — or pulling the handbrake (hold reverse at
+    // a grip rate. Boosting — or pulling the handbrake (reverse + steer at
     // speed) — drops the grip so the tank slides: swing the gun through a
-    // drift while your momentum carries the line. The slide is the skill.
-    const vmag0 = Math.hypot(p.vx, p.vz);
-    const handbrake = input.drive < -0.35 && vmag0 > p.maxSpeed * 0.55;
+    // drift while your momentum carries the line. The slide is the skill;
+    // stopping isn't: a straight back-pull keeps full grip and brakes hard.
+    // Forward-projected velocity gates both, so full reverse (or a boostMult
+    // pushing reverse past 55% of rated speed) can't re-trip the brake.
+    const fwdVel = p.vx * fwdX(p.angle) + p.vz * fwdZ(p.angle);
+    const braking = input.drive < -0.35 && fwdVel > p.maxSpeed * 0.55;
+    const handbrake = braking && Math.abs(input.turn) > 0.25;
 
     const boostMult = (p.fx.overdrive > 0 ? 1.5 : 1) * (p.boosting ? 1.65 : 1);
     const maxSpd = p.maxSpeed * boostMult;
 
-    // throttle intent (hull axis). The handbrake doesn't reverse — it bleeds
-    // throttle while the grip goes; true reverse resumes once you've slowed.
-    const driveIn = handbrake ? 0 : input.drive;
+    // throttle intent (hull axis). Braking doesn't reverse — it bleeds
+    // throttle while you're still rolling forward; true reverse engages
+    // once you've slowed below the gate.
+    const driveIn = braking ? 0 : input.drive;
     const target = driveIn >= 0 ? driveIn * maxSpd : driveIn * maxSpd * 0.55;
     const rate = p.accel * (Math.abs(target) > Math.abs(p.speed) ? 1 : 2.2) * (p.boosting ? 1.5 : 1);
     if (p.speed < target) p.speed = Math.min(target, p.speed + rate * dt);
@@ -1434,7 +1454,7 @@ class Game {
     // inputs get a sliver — aim is a skill again on keyboard and pad.
     if (typeof Settings !== 'undefined' && !Settings.get('aimAssist')) return p.angle;
     const touch = typeof Input !== 'undefined' && Input.touchUI && Input.touchUI().mode;
-    const CONE = touch ? 0.15 : 0.07, RANGE = 150;
+    const CONE = touch ? 0.2 : 0.07, RANGE = 150;
     let best = p.angle, bestErr = CONE;
     const consider = (x, z) => {
       if (dist2(p.x, p.z, x, z) > RANGE * RANGE) return;
@@ -2103,6 +2123,7 @@ class Game {
     // hit — momentum play is defense, sitting still is not
     if (Math.hypot(p.vx || 0, p.vz || 0) > p.maxSpeed * 0.7) dmg *= 0.65;
     p.shields -= dmg;
+    p.sinceHit = 0;
     this._breakCombo();   // any hit on the squad snaps the kill chain
     if (!this.versus && this.pot > 0) {
       this.pot = Math.round(this.pot * this._diff().potSpill);   // ...and spills part of the pot
