@@ -1661,9 +1661,36 @@
   window.addEventListener('resize', () => { renderer.resize(); hud.resize(); });
   requestAnimationFrame(frame);
 
-  // Offline PWA: cache-first service worker (no-op on file://)
+  // Build stamp on the title screen. GAME_VERSION (js/version.js) is served
+  // from the same cache snapshot as the rest of the page, so it names the
+  // version actually running, not just the latest one deployed.
+  document.getElementById('build-tag').textContent = 'BUILD ' + GAME_VERSION;
+
+  // Offline PWA: cache-first service worker (no-op on file://). The cache
+  // only serves updates after a new worker installs, so drive that lifecycle:
+  // re-check whenever the tab regains focus (plus hourly, for long-lived
+  // tabs), and once a new worker takes over offer a one-tap restart — the
+  // running page keeps the files it booted with until then.
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then((reg) => {
+        const recheck = () => { reg.update().catch(() => {}); };
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') recheck();
+        });
+        setInterval(recheck, 60 * 60 * 1000);
+      })
+      .catch(() => {});
+
+    // On the very first visit clients.claim() also swaps the controller in,
+    // but the page already has the newest files then — only prompt when a
+    // controller existed before this one.
+    const hadController = !!navigator.serviceWorker.controller;
+    const toast = document.getElementById('update-toast');
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController) toast.classList.remove('hidden');
+    });
+    toast.addEventListener('click', () => location.reload());
   }
 
   // exposed for automated testing / tinkering

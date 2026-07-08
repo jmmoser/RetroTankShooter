@@ -50,7 +50,11 @@
       </span>
     </div>
     <div id="title-high" class="title-high"></div>
+    <div id="build-tag" class="build-tag"></div>
   </div>
+
+  <!-- new service worker took over: one tap serves the fresh files -->
+  <div id="update-toast" class="update-toast hidden">UPDATE INSTALLED &mdash; TAP TO RESTART</div>
 
   <!-- MULTIPLAYER LOBBY -->
   <div id="screen-lobby" class="screen hidden">
@@ -232,6 +236,7 @@
 </div>
 
 <script src="js/vendor/peerjs.min.js"></script>
+<script src="js/version.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/input.js"></script>
