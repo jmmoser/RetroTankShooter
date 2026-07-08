@@ -101,6 +101,36 @@ body.touch-ui .mbtn { padding: 10px 20px; }
   text-shadow: 0 0 8px rgba(232, 199, 90, 0.5);
 }
 
+/* build stamp: answers "which version am I running" at a glance */
+.build-tag {
+  position: absolute;
+  right: calc(14px + var(--sa-r));
+  bottom: calc(10px + var(--sa-b));
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: rgba(79, 214, 187, 0.45);
+}
+
+/* a fresh service worker has installed; one tap reloads onto the new files */
+.update-toast {
+  position: absolute;
+  top: calc(16px + var(--sa-t));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 10px 18px;
+  font-size: 13px;
+  letter-spacing: 3px;
+  color: #e8c75a;
+  text-shadow: 0 0 8px rgba(232, 199, 90, 0.5);
+  background: rgba(2, 6, 10, 0.9);
+  border: 1px solid rgba(232, 199, 90, 0.6);
+  border-radius: 3px;
+  box-shadow: 0 0 18px rgba(232, 199, 90, 0.25);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
 /* ---------- disk-label homage title card ---------- */
 .disk-label {
   position: relative;
