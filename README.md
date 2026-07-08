@@ -53,8 +53,11 @@ alarm. The screw turns from sector 2 on.
 Getting overwhelmed? **SETTINGS → DIFFICULTY** has three campaign presets:
 **RECRUIT** stretches the pressure timer, trims the alarm waves and softens
 incoming fire while you learn the systems, **STANDARD** is the game as
-designed, and **VETERAN** turns all of it up. Daily Ops always runs
-STANDARD so the shared leaderboard seed stays a level playing field.
+designed, and **VETERAN** turns all of it up. Stay unhit for a few seconds
+and your hull **self-repairs** — fully on RECRUIT, to about two-thirds on
+STANDARD, never on VETERAN, where a depot is the only way back. Daily Ops
+always runs STANDARD so the shared leaderboard seed stays a level playing
+field.
 
 ### The heat cannon — ride the redline, nail the vent
 
@@ -70,8 +73,9 @@ for you; the COOLANT LOOP and VENT TUNING upgrades tune the whole system.
 
 The hull points where you steer; your **velocity** has its own ideas.
 Boosting drops the tread grip so the tank **drifts** — swing the gun
-through a slide while your momentum carries the line — and holding reverse
-at speed pulls a **handbrake slide**. Above ~70% speed the hull sheds a
+through a slide while your momentum carries the line — and pulling reverse
+*while steering* at speed is a **handbrake slide** (a straight back-pull
+just brakes hard, then backs up). Above ~70% speed the hull sheds a
 third of any hit (**speed is armor**), boost-rams scale with impact speed,
 and an enemy shell that *nearly* clips you is a **graze**: it refunds
 boost, pays a tick of tech and keeps your combo window alive. Experts
@@ -206,7 +210,7 @@ and **gamepad** alike — pick whatever is closest to hand.
 | `X` / right-click | Lob a grenade (arcs over obstacles, splash damage) |
 | `V` / middle-click | Drop a proximity mine behind you |
 | `Shift` | Turbo boost (drains the gauge; low grip — the tank drifts) |
-| `S` at speed | Handbrake slide (keep momentum, swing the gun) |
+| `S` + steer at speed | Handbrake slide (keep momentum, swing the gun) |
 | `C` | Toggle first-person / chase camera |
 | `P` / `Esc` | Pause (single-player) |
 | `M` | Toggle sound |
@@ -227,8 +231,10 @@ On phones and tablets the game switches to a full touch scheme:
 
 - **Floating joystick** — touch anywhere on the left half and a stick spawns
   under your thumb. Push where you want to go: forward arcs drive and steer,
-  sideways pivots in place, straight back reverses. The base stays anchored
-  where you touched down; overshooting the rim just clamps at full deflection.
+  sideways pivots in place, and the whole back half reverses — pull
+  back-and-to-a-side and the tank backs toward your thumb, so reverse steers
+  just like forward. The base stays anchored where you touched down;
+  overshooting the rim just clamps at full deflection.
 - **Hold to fire** — anywhere on the right half, or the big FIRE button.
   A touch-friendly hint of aim assist snaps shots onto targets that are
   almost lined up (it applies to all players equally, so co-op stays fair).
