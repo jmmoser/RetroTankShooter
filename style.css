@@ -111,6 +111,19 @@ body.touch-ui .mbtn { padding: 10px 20px; }
   color: rgba(79, 214, 187, 0.45);
 }
 
+/* live frame-rate readout, toggled by the FPS COUNTER setting */
+#fps {
+  position: absolute;
+  top: calc(10px + var(--sa-t));
+  left: calc(14px + var(--sa-l));
+  z-index: 15;
+  pointer-events: none;
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: rgba(79, 214, 187, 0.85);
+  text-shadow: 0 0 6px rgba(79, 214, 187, 0.4);
+}
+
 /* a fresh service worker has installed; one tap reloads onto the new files */
 .update-toast {
   position: absolute;

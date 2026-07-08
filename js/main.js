@@ -85,6 +85,7 @@
     AudioSys.setVolume(Settings.get('volume') / 10);
     AudioSys.setMusicVolume(Settings.get('music') / 10);
     document.getElementById('crt').style.display = Settings.get('crt') ? '' : 'none';
+    document.getElementById('fps').classList.toggle('hidden', !Settings.get('fps'));
     renderer.setGlow(Settings.get('glow'));
   }
   Settings.onChange = () => { applySettings(); renderSettingVals(); };
@@ -1330,6 +1331,7 @@
     { key: 'crt', bool: true },
     { key: 'aimAssist', bool: true },
     { key: 'colorblind', bool: true },
+    { key: 'fps', bool: true },
   ];
 
   function renderSettingVals() {
@@ -1601,11 +1603,28 @@
   // ---- main loop -------------------------------------------------------------------
   let lastT = performance.now();
 
+  // FPS overlay: frames counted over half-second windows, so the readout is
+  // steady enough to compare before/after a settings change
+  const fpsEl = document.getElementById('fps');
+  let fpsFrames = 0, fpsWindowStart = performance.now();
+
   function frame(now) {
     requestAnimationFrame(frame);
     let dt = (now - lastT) / 1000;
     lastT = now;
     dt = Math.min(dt, 0.05);
+
+    if (Settings.get('fps')) {
+      fpsFrames++;
+      if (now - fpsWindowStart >= 500) {
+        fpsEl.textContent = 'FPS ' + Math.round((fpsFrames * 1000) / (now - fpsWindowStart));
+        fpsFrames = 0;
+        fpsWindowStart = now;
+      }
+    } else {
+      fpsFrames = 0;
+      fpsWindowStart = now;
+    }
 
     Input.pollGamepad();
     // gate matches the HUD's draw condition exactly: no invisible-but-live
