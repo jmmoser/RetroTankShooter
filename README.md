@@ -1,10 +1,13 @@
 # PHANTOM ARENA — Retro Tank Shooter
 
 A browser-based homage to the flat-shaded 3D tank arena games of the early
-1990s. Drive your hover-tank across a vast, near-black neon grid, secure
-every flag in the sector, and survive the faceted hunters that emerge from
-the dark. Bouncy walls, turbo boost, lobbed grenades, resupply depots,
-cloaked phantoms and tanks that shatter into tumbling polygon shards.
+1990s — rebuilt around a modern roguelite core. Drive your hover-tank across
+a near-black neon grid, hold every uplink zone in the sector while the arena
+warps in wave after wave to stop you, and spend the tech you earn on
+**3-choice upgrade drafts** that turn your cannon into something absurd by
+mid-run. Bouncy walls, turbo boost, boost-ram kills, lobbed grenades,
+resupply depots, kamikaze rushers, cloaked phantoms and tanks that shatter
+into tumbling polygon shards.
 
 Built with **plain WebGL, Canvas 2D and Web Audio** — no build step, no
 assets, no CDNs. Even the **synthwave soundtrack is synthesized live** by a
@@ -29,28 +32,50 @@ game is **installable as a PWA and fully playable offline** (co-op excepted).
 
 ## How to play
 
-Secure **all flags** in the sector to advance. Enemy tanks guard the flags
-and will hunt you on sight. Your hull is gone when shields hit zero.
+Secure **all uplink zones** in the sector to advance. A zone isn't a
+touch-and-go flag: drive into its ring and **hold it** while the uplink
+fills. Starting a capture trips the **zone alarm** — a converge wave warps
+in around you while the bar climbs, so every objective is a set-piece fight.
+Leave, and the progress drains away. Your hull is gone when shields hit zero.
+
+The sector never goes quiet. Hostiles keep warping in on a **pressure
+timer that tightens the longer you stay** — camping behind a slab is a
+losing strategy, and most waves lead with rushers that come straight at you.
+
+### Tech drafts — build your tank mid-run
+
+Kills, captures and salvage pay **TECH**. Each tech level deals a
+**3-choice upgrade draft**: twin cannons, ricochet rounds, piercing cores,
+cluster grenades, shock discharges, ram plating, shield siphons and more —
+sixteen stackable upgrades that compound into a build. Solo, the war waits
+while you choose; in co-op the fight doesn't pause, so you pick under fire
+(press `1 2 3`, tap, or click). By sector 5 no two runs fight alike.
+
+**Movement is a weapon.** Slam into a hostile at boost speed and it
+shatters — a boost-ram costs a scratch of shields (nothing with RAM
+PLATING) and it's the flashiest way to deal with a rusher bearing down
+on you.
 
 Sector terrain comes in four flavors so no two runs blur together: the
 classic **scatter** of slabs, long broken **wall corridors** that channel
 firefights down lanes, a central **bastion** with a gate on each side, and
-**cover rings** thrown around the flag sites so every objective is a small
+**cover rings** thrown around the zone sites so every objective is a small
 breach-and-clear. Daily Ops layouts stay identical for everyone — the
 generators all run off the day's seed.
 
-Every flag you take raises the sector **alert level**: survivors get faster
-and more trigger-happy, and crossing a threshold warps **reinforcements** in
-near the remaining flags — sectors end in a crescendo, not a mop-up. When
-only a couple of flags remain they light up with **beacon pillars** (and pin
-to the radar rim), so the last objective is a fight, never a search.
+Every zone you secure raises the sector **alert level**: survivors get
+faster and more trigger-happy, and crossing a threshold warps
+**reinforcements** in near the remaining zones — sectors end in a
+crescendo, not a mop-up. When only a couple of zones remain they light up
+with **beacon pillars** (and pin to the radar rim), so the last objective
+is a fight, never a search.
 
 Kills within a few seconds of each other chain into a **combo multiplier**
-(up to ×5) that also boosts flag captures — but taking a single hit breaks
+(up to ×5) that also boosts zone captures — but taking a single hit breaks
 the chain. Boost into a cluster and grenade it for big numbers; play sloppy
 and the score dries up.
 
-Every **5th sector** has no flags at all. Instead, a **WARLORD** holds the
+Every **5th sector** has no zones at all. Instead, a **WARLORD** holds the
 arena: a huge hovercruiser that crushes the very slabs you'd hide behind,
 telegraphs a ramming charge, and shields its core behind four destroyable
 turrets. Strip the turrets, then hammer the exposed core — while outrunning
@@ -95,7 +120,7 @@ more. They pop mid-run with a toast and a jingle, and hang on the medal
 wall in the service record.
 
 The **SERVICE RECORD** screen tracks the rest of your career: missions,
-kills, flags, warlords downed, best combo and best sector — all in your
+kills, zones secured, warlords downed, best combo and best sector — all in your
 browser. Two things are earned:
 
 - **MARAUDER chassis** — a fourth loadout (fast, armored, light on ammo,
@@ -208,9 +233,13 @@ Before deploying, allocate your tank's power — a classic trade-off:
 Each hostile fights its own way, and all of them steer around cover and
 scatter from a grenade in the air instead of sitting under it:
 
-- **Drone** (red) — patroller, guards flags; shot-up drones break off and
-  fall back on the nearest packmate, so wounded stragglers regroup into
+- **Drone** (red) — patroller, guards the zones; shot-up drones break off
+  and fall back on the nearest packmate, so wounded stragglers regroup into
   clusters instead of trickling in
+- **Rusher** (hot pink, sector 2+) — kamikaze hull that strobes like a lit
+  fuse and beelines straight at you; it detonates on contact, dies to a
+  single shell, chain-pops into anything beside it — and a boost-ram
+  defuses it entirely
 - **Hunter** (amber, sector 2+) — weaves between wide flanking arcs and
   straight lunges; it can only line up a shot during the lunge, so the
   rhythm is readable — and punishable
@@ -252,7 +281,7 @@ js/renderer.js  WebGL renderer + mat4 helpers: flat-shaded forward pass,
 js/hud.js       radar, shields/ammo bars, scoreboard, messages (Canvas 2D)
 js/game.js      arena generation (four terrain layouts), players, per-type
                 enemy AI, projectiles, pickups, seeded daily arenas, versus
-                rules
+                rules, TECH upgrade drafts, uplink zones, spawn pressure
 js/net.js       WebRTC co-op/versus networking (host-authoritative, PeerJS,
                 client-side snapshot interpolation)
 js/main.js      screen flow, camera, scene drawing, main loop

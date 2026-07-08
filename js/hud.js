@@ -7,8 +7,8 @@ const PLAYER_HEX = ['#4fd6bb', '#b07bd6', '#e8c75a', '#6fc7e8'];
  * colorblind setting additionally splits the hues (deuteranopia-safe). */
 function enemyBlipColor(type) {
   const cb = typeof Settings !== 'undefined' && Settings.get('colorblind');
-  if (!cb) return '#ff4a3c';
-  return { drone: '#ff8c1a', hunter: '#ffe84a', sniper: '#4a90ff', phantom: '#e8f4ff' }[type] || '#ff8c1a';
+  if (!cb) return type === 'rusher' ? '#ff7ab0' : '#ff4a3c';
+  return { drone: '#ff8c1a', hunter: '#ffe84a', sniper: '#4a90ff', phantom: '#e8f4ff', rusher: '#ff5ac8' }[type] || '#ff8c1a';
 }
 
 class HUD {
@@ -275,7 +275,7 @@ class HUD {
     ctx.shadowBlur = 16;
     ctx.fillText('×' + game.mult, W / 2, y);
     ctx.shadowBlur = 0;
-    const frac = Math.max(0, Math.min(1, (game.comboT || 0) / 4));
+    const frac = Math.max(0, Math.min(1, (game.comboT || 0) / (game.comboWin || 4)));
     const bw = 100 * s, bh = 4 * s;
     ctx.fillStyle = 'rgba(232,199,90,0.25)';
     ctx.fillRect(W / 2 - bw / 2, y + 16 * s, bw, bh);
@@ -394,6 +394,14 @@ class HUD {
       ctx.beginPath();
       ctx.arc(bx, by, 3 * s, 0, Math.PI * 2);
       ctx.fill();
+      // live capture: a progress arc sweeps around the zone blip
+      if ((f.cap || 0) > 0.01) {
+        ctx.strokeStyle = '#3cff78';
+        ctx.lineWidth = Math.max(1, 1.4 * s);
+        ctx.beginPath();
+        ctx.arc(bx, by, 5.5 * s, -Math.PI / 2, -Math.PI / 2 + f.cap * Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     // the WARLORD: a big pulsing diamond, pinned to the rim when out of range
@@ -469,6 +477,11 @@ class HUD {
       } else if (e.type === 'phantom') {
         ctx.moveTo(bx, by - r); ctx.lineTo(bx + r, by); ctx.lineTo(bx, by + r); ctx.lineTo(bx - r, by);
         ctx.closePath(); ctx.fill();
+      } else if (e.type === 'rusher') {
+        // rushers read as a hot cross — small, fast, urgent
+        const rr = r * 0.95;
+        ctx.fillRect(bx - rr, by - 1.1 * s, rr * 2, 2.2 * s);
+        ctx.fillRect(bx - 1.1 * s, by - rr, 2.2 * s, rr * 2);
       } else {
         ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
       }
@@ -613,11 +626,26 @@ class HUD {
     } else {
       const fl = game.flagsLeft();
       ctx.fillStyle = fl > 0 ? '#3cff78' : '#e8c75a';
-      ctx.fillText('FLAGS ' + fl, W - pad, H - pad - 12 * s);
+      ctx.fillText('ZONES ' + fl, W - pad, H - pad - 12 * s);
+    }
+
+    // ---- TECH progress toward the next upgrade draft
+    if (!game.versus && p.techLvl != null) {
+      const t01 = Math.max(0, Math.min(1, p.tech01 || 0));
+      const tw = 120 * s, th = 5 * s;
+      const tx = W - pad - tw, ty = H - pad - 124 * s;
+      ctx.font = font(10, true);
+      ctx.fillStyle = '#e8c75a';
+      ctx.fillText('TECH ' + (p.techLvl + 1), W - pad, ty - 8 * s);
+      ctx.strokeStyle = 'rgba(232,199,90,0.5)';
+      ctx.lineWidth = Math.max(1, s);
+      ctx.strokeRect(tx, ty, tw, th);
+      ctx.fillStyle = '#e8c75a';
+      ctx.fillRect(tx + s, ty + s, (tw - 2 * s) * t01, th - 2 * s);
     }
 
     // ---- active effects
-    let ey = H - pad - 96 * s;
+    let ey = H - pad - 148 * s;
     ctx.font = font(12, true);
     if (p.fx.overdrive > 0) {
       ctx.fillStyle = '#ffd24a';

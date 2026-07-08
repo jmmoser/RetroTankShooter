@@ -7,8 +7,9 @@
  * broker, so nothing extra has to be hosted alongside the static site.
  */
 const Net = (() => {
-  const ENEMY_ORDER = ['drone', 'hunter', 'sniper', 'phantom'];
-  const ID_PREFIX = 'phantom-arena-v1-';   // namespaces our ids on the shared broker
+  const ENEMY_ORDER = ['drone', 'hunter', 'sniper', 'phantom', 'rusher'];
+  const ID_PREFIX = 'phantom-arena-v2-';   // namespaces our ids on the shared broker
+                                           // (v2: zones/tech-draft protocol)
   const MAX_PLAYERS = 4;
 
   // Interpolation: clients render remote entities this far in the past so
@@ -45,6 +46,8 @@ const Net = (() => {
     onScreen: null,   // (msg)           client: screen transition (clear/over)
     onError: null,    // (text)
     onPeerLeft: null, // (id)
+    onDraft: null,    // (offers)        client: a TECH draft is waiting
+    onPick: null,     // (peerId, id)    host: a client answered a draft
   };
 
   function libReady() { return typeof window.Peer === 'function'; }
@@ -129,7 +132,23 @@ const Net = (() => {
       if (r) { r.loadoutIndex = msg.loadoutIndex | 0; if (cb.onRoster) cb.onRoster(state.roster); broadcast({ t: 'roster', roster: state.roster, mode: state.mode }); }
     } else if (msg.t === 'input') {
       state.inputs[conn.peer] = msg.in;
+    } else if (msg.t === 'pick') {
+      // client answered a TECH draft — the host's sim validates and applies
+      if (cb.onPick) cb.onPick(conn.peer, msg.u);
     }
+  }
+
+  /* Host: deliver a TECH draft (3 upgrade ids) to one remote player. */
+  function sendDraft(peerId, offers) {
+    for (const c of state.conns) {
+      if (c.peer === peerId) { try { c.send({ t: 'draft', of: offers }); } catch (e) {} return; }
+    }
+  }
+
+  /* Client: answer the open draft with a pick. */
+  function sendPick(upgradeId) {
+    const c = state.hostConn;
+    if (c && c.open) { try { c.send({ t: 'pick', u: upgradeId }); } catch (e) {} }
   }
 
   function hostSetLocalLoadout(idx) {
@@ -193,7 +212,9 @@ const Net = (() => {
         al: p.alive ? 1 : 0, sp: p.speed, mp: p.maxSpeed,
         ov: p.fx.overdrive, rp: p.fx.rapid, ci: p.colorIdx,
         bo: Math.round(p.boost || 0), bs: p.boosting ? 1 : 0, nd: p.nades || 0,
-        mn: p.mines || 0,
+        mn: p.mines || 0, mb: p.maxBoost || 100,
+        nx: p.maxNades || 6, mx: p.maxMines || 4,
+        tl: p.techLvl || 0, tx: Math.round((p.tech01 || 0) * 100) / 100,
       })),
       en: game.enemies.map((e) => {
         if (!e._nid) e._nid = netSeq++;
@@ -216,6 +237,7 @@ const Net = (() => {
       }),
       pu: game.powerups.map((u) => ({ k: u.type, x: u.x, z: u.z, s: u.spin, b: u.bob })),
       fg: game.flags.map((f) => (f.taken ? 1 : 0)),
+      fc: game.flags.map((f) => Math.round((f.cap || 0) * 100) / 100),
       al: game.alert,
       cb: game.combo, ct: game.comboT, mu: game.mult,
       // WARLORD boss: turret offsets are rebuilt client-side by index
@@ -229,7 +251,7 @@ const Net = (() => {
       } : null,
       ri: game.rings.map((r) => {
         if (!r._nid) r._nid = netSeq++;
-        return { i: r._nid, x: r.x, z: r.z, r: r.r };
+        return { i: r._nid, x: r.x, z: r.z, r: r.r, f: r.from === 'player' ? 1 : 0 };
       }),
       // slabs the boss has crushed (only ever changes on boss sectors)
       og: game.bossLevel ? game.obstacles.map((o) => (o.dead ? 0 : 1)) : undefined,
@@ -292,6 +314,9 @@ const Net = (() => {
         state.snaps.length = 0;
         if (cb.onScreen) cb.onScreen(msg);
         break;
+      case 'draft':
+        if (cb.onDraft) cb.onDraft(msg.of || []);
+        break;
     }
   }
 
@@ -316,7 +341,7 @@ const Net = (() => {
     game.level = msg.level;
     game.score = msg.score;
     game.obstacles = msg.obstacles;
-    game.flags = msg.flags.map((f) => ({ x: f.x, z: f.z, taken: f.taken, spin: f.spin || 0 }));
+    game.flags = msg.flags.map((f) => ({ x: f.x, z: f.z, taken: f.taken, spin: f.spin || 0, cap: 0, contested: false }));
     game.depots = msg.depots || [];
     game.enemies = [];
     game.projectiles = [];
@@ -355,9 +380,10 @@ const Net = (() => {
       p.alive = !!d.al; p.speed = d.sp; p.maxSpeed = d.mp;
       p.fx = { overdrive: d.ov, rapid: d.rp };
       p.colorIdx = d.ci;
-      p.boost = d.bo; p.maxBoost = 100; p.boosting = !!d.bs;
-      p.nades = d.nd; p.maxNades = 6;
-      p.mines = d.mn || 0; p.maxMines = 4;
+      p.boost = d.bo; p.maxBoost = d.mb || 100; p.boosting = !!d.bs;
+      p.nades = d.nd; p.maxNades = d.nx || 6;
+      p.mines = d.mn || 0; p.maxMines = d.mx || 4;
+      p.techLvl = d.tl || 0; p.tech01 = d.tx || 0;
       return p;
     });
     game.player = game.players.find((p) => p.id === game.localId) || game.players[0];
@@ -382,6 +408,13 @@ const Net = (() => {
     game.projectiles = msg.pr.map((d) => ({ nid: d.i, x: d.x, y: d.y, z: d.z, angle: d.a, from: d.e ? 'enemy' : 'player', kind: d.k ? 'nade' : undefined }));
     game.powerups = msg.pu.map((d) => ({ type: d.k, x: d.x, z: d.z, spin: d.s, bob: d.b }));
     for (let i = 0; i < game.flags.length && i < msg.fg.length; i++) game.flags[i].taken = !!msg.fg[i];
+    if (msg.fc) {
+      for (let i = 0; i < game.flags.length && i < msg.fc.length; i++) {
+        const f = game.flags[i];
+        f.contested = (msg.fc[i] || 0) > (f.cap || 0);   // rising uplink = being held
+        f.cap = msg.fc[i] || 0;
+      }
+    }
 
     game.alert = msg.al || 0;
     game.combo = msg.cb || 0;
@@ -400,7 +433,7 @@ const Net = (() => {
         dx: BOSS_TURRET_OFFSETS[i][0], dz: BOSS_TURRET_OFFSETS[i][1],
       })),
     } : null;
-    game.rings = (msg.ri || []).map((r) => ({ nid: r.i, x: r.x, z: r.z, r: r.r }));
+    game.rings = (msg.ri || []).map((r) => ({ nid: r.i, x: r.x, z: r.z, r: r.r, from: r.f ? 'player' : 'boss' }));
     if (msg.og) {
       for (let i = 0; i < game.obstacles.length && i < msg.og.length; i++) {
         game.obstacles[i].dead = !msg.og[i];
@@ -528,6 +561,7 @@ const Net = (() => {
     libReady: libReady,
     hostCreate: hostCreate, hostStartGame: hostStartGame, hostSetLocalLoadout: hostSetLocalLoadout, hostSetMode: hostSetMode, applyInputs: applyInputs,
     broadcastLevel: broadcastLevel, broadcastState: broadcastState, broadcastScreen: broadcastScreen,
+    sendDraft: sendDraft, sendPick: sendPick,
     clientJoin: clientJoin, clientSetLoadout: clientSetLoadout, sendInput: sendInput,
     applyLevel: applyLevel, applyState: applyState, clientInterpolate: clientInterpolate,
     leave: leave,

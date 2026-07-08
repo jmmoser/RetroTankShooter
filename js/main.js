@@ -34,6 +34,7 @@
     tankHunter: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullHunter)),
     tankSniper: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullSniper)),
     tankPhantom: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullPhantom)),
+    tankRusher: renderer.createMesh(Geometry.tankSolid([1.0, 0.28, 0.5])),
     tankPlayer: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullPlayer)),
     shotPlayer: renderer.createMesh(Geometry.shot(Geometry.C.shotPlayer)),
     shotEnemy: renderer.createMesh(Geometry.shot(Geometry.C.shotEnemy)),
@@ -53,7 +54,7 @@
     stars: renderer.createMesh(Geometry.stars(640, 110), renderer.gl.POINTS),
     eclipse: renderer.createMesh(Geometry.eclipse(630)),
   };
-  const TANK_MESH = { drone: M.tankDrone, hunter: M.tankHunter, sniper: M.tankSniper, phantom: M.tankPhantom };
+  const TANK_MESH = { drone: M.tankDrone, hunter: M.tankHunter, sniper: M.tankSniper, phantom: M.tankPhantom, rusher: M.tankRusher };
 
   // deuteranopia-safe hull palette, baked as a second mesh set and swapped
   // live by the COLORBLIND HULLS setting
@@ -62,6 +63,7 @@
     hunter: [1.0, 0.93, 0.25],
     sniper: [0.30, 0.55, 1.0],
     phantom: [0.93, 0.97, 1.0],
+    rusher: [1.0, 0.45, 0.85],
   };
   const TANK_MESH_CB = {};
   for (const k in CB_HULLS) TANK_MESH_CB[k] = renderer.createMesh(Geometry.tankSolid(CB_HULLS[k]));
@@ -160,6 +162,9 @@
     settings: makeMenu(screens.settings, 'st-volume'),
     records: makeMenu(screens.records, 'bt-records-back'),
     vsover: makeMenu(screens.vsover, 'bt-vs-again'),
+    // the TECH draft overlay lives outside the screens map: it can float
+    // over live gameplay in co-op, so showScreen must never touch it
+    draft: makeMenu(document.getElementById('screen-draft'), null),
   };
 
   function menuKeys(name) {
@@ -292,13 +297,14 @@
 
   function startRun() {
     mobileImmersive();
+    closeDraft();
     runRecorded = false;
     game.newRun(loadoutIndex, null, { startLevel: startSector });
     armRecordChase();
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message('SECTOR ' + game.level + ' — SECURE ALL FLAGS',
+    hud.message('SECTOR ' + game.level + ' — SECURE ALL ZONES',
       game.bossLevel ? '#ff4a3c' : '#4fd6bb', 3);
   }
 
@@ -306,13 +312,14 @@
   // level playing field, result shareable from the game-over screen.
   function startDaily() {
     mobileImmersive();
+    closeDraft();
     runRecorded = false;
     game.newRun(1, null, { dailySeed: Progress.todayKey() });
     armRecordChase();
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message('DAILY OPS ' + Progress.todayKey() + ' — SECURE ALL FLAGS', '#ffd24a', 3);
+    hud.message('DAILY OPS ' + Progress.todayKey() + ' — SECURE ALL ZONES', '#ffd24a', 3);
   }
 
   /* Career-stat medals: checked whenever the record advances. Awards are
@@ -398,6 +405,7 @@
   }
 
   function gameOver() {
+    closeDraft();
     uiMode = 'gameover';
     const res = recordRunEnd();
     const isHigh = recordHighScore();
@@ -641,6 +649,7 @@
   });
 
   function leaveToTitle() {
+    closeDraft();
     recordRunEnd();
     Net.leave();
     setRoomCode('');
@@ -658,6 +667,7 @@
       return;
     }
     mobileImmersive();
+    closeDraft();
     const info = Net.hostStartGame();
     runRecorded = versus;                   // versus matches stay out of career stats
     game.newRun(info.defs, info.localId, { versus });   // host owns the arena generation
@@ -665,7 +675,7 @@
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message(versus ? 'VERSUS — FIRST TO 10 KILLS' : 'SECTOR 1 — SECURE ALL FLAGS',
+    hud.message(versus ? 'VERSUS — FIRST TO 10 KILLS' : 'SECTOR 1 — SECURE ALL ZONES',
       versus ? '#ffd24a' : '#4fd6bb', 3);
     Net.broadcastLevel(game);               // ship the arena to clients
     netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = [];
@@ -690,12 +700,13 @@
     game.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0 };
     game.mode = 'playing';
     game._prevSh = null; game._prevAlive = null;  // reset damage-feedback tracking
+    closeDraft();
     runRecorded = versus;
     armRecordChase();
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message(versus ? 'VERSUS — FIRST TO 10 KILLS' : 'CO-OP DEPLOYED — SECURE ALL FLAGS',
+    hud.message(versus ? 'VERSUS — FIRST TO 10 KILLS' : 'CO-OP DEPLOYED — SECURE ALL ZONES',
       versus ? '#ffd24a' : '#4fd6bb', 3);
   }
 
@@ -712,6 +723,7 @@
   }
 
   function doVersusOver() {
+    closeDraft();
     uiMode = 'versusover';
     const rows = game.players
       .map((p) => ({ id: p.id, name: p.name, kills: game.killCounts[p.id] || 0, ci: p.colorIdx || 0 }))
@@ -790,6 +802,103 @@
     if (document.hidden && uiMode === 'playing' && Net.role === 'solo') pauseGame();
   });
 
+  // ---- TECH draft overlay ------------------------------------------------------
+  // In-run upgrade picks. Solo: the sim pauses while you choose (uiMode
+  // 'draft'). Co-op: the fight doesn't pause — the overlay floats over live
+  // gameplay (nonmodal) and you pick under fire. Clients get their offers
+  // relayed from the host and answer with a 'pick' message.
+  const draftEl = document.getElementById('screen-draft');
+  const draftChoicesEl = document.getElementById('draft-choices');
+  let draftOpen = false;
+
+  function draftPick(id) {
+    if (!draftOpen) return;
+    if (Net.role === 'client') {
+      Net.sendPick(id);
+      AudioSys.play('powerup');
+      closeDraft();
+      return;
+    }
+    game.applyUpgrade(game.localId, id);
+    const p = game.player;
+    if (p && p.pendingOffers) buildDraft(normalizeOffers(p.pendingOffers)); // banked level
+    else closeDraft();
+  }
+
+  /* Offers arrive as plain ids (local) or {id, c: current stacks} (relayed). */
+  function normalizeOffers(offers) {
+    return offers.map((o) => {
+      if (typeof o === 'string') {
+        const cur = (game.player && game.player.up && game.player.up[o]) || 0;
+        return { id: o, c: cur };
+      }
+      return o;
+    });
+  }
+
+  function buildDraft(offers) {
+    draftChoicesEl.innerHTML = '';
+    offers.forEach((o, i) => {
+      const def = UPGRADES.find((u) => u.id === o.id);
+      if (!def) return;
+      const el = document.createElement('div');
+      el.className = 'mbtn draft-choice';
+      el.innerHTML = `<span class="draft-key">${i + 1}</span>` +
+        `<span class="draft-name">${def.name}${o.c > 0 ? ` <span class="draft-stack">LV ${o.c + 1}</span>` : ''}</span>` +
+        `<span class="draft-desc">${def.desc}</span>`;
+      el.addEventListener('click', () => { AudioSys.resume(); draftPick(o.id); });
+      draftChoicesEl.appendChild(el);
+    });
+    menus.draft.reset();
+  }
+
+  function openDraft(offers) {
+    draftOpen = true;
+    buildDraft(normalizeOffers(offers));
+    if (Net.role === 'solo') {
+      uiMode = 'draft';               // the war waits while you fit the new part
+      draftEl.classList.remove('nonmodal');
+    } else {
+      draftEl.classList.add('nonmodal');
+    }
+    draftEl.classList.remove('hidden');
+  }
+
+  function closeDraft() {
+    if (!draftOpen && draftEl.classList.contains('hidden')) return;
+    draftOpen = false;
+    draftEl.classList.add('hidden');
+    if (uiMode === 'draft') uiMode = 'playing';
+  }
+
+  /* modal = solo (sim paused): Space may confirm. In co-op Space is the fire
+   * key, so only digits / arrows+Enter / click / tap pick there. */
+  function draftKeys(modal) {
+    const list = Array.from(draftChoicesEl.querySelectorAll('.draft-choice'));
+    for (let i = 0; i < list.length; i++) {
+      if (Input.consume('Digit' + (i + 1))) { list[i].click(); return; }
+    }
+    const m = menus.draft;
+    if (Input.consume('ArrowUp')) m.move(-1);
+    if (Input.consume('ArrowDown')) m.move(1);
+    if (Input.consume('Enter') || Input.consume('NumpadEnter') || (modal && Input.consume('Space'))) m.activate();
+  }
+
+  /* Host/solo, after each sim step: surface the local player's waiting draft
+   * and relay remote players' offers (once each). */
+  function checkDrafts() {
+    if (game.versus || game.mode !== 'playing') return;
+    for (const p of game.players) {
+      if (!p.pendingOffers) continue;
+      if (p.id === game.localId) {
+        if (!draftOpen) openDraft(p.pendingOffers);
+      } else if (Net.role === 'host' && !p.offersSent) {
+        p.offersSent = true;
+        Net.sendDraft(p.id, p.pendingOffers.map((id) => ({ id, c: p.up[id] || 0 })));
+      }
+    }
+  }
+
   function enterLevelClear() {
     uiMode = 'levelclear';
     showClearStats();
@@ -851,6 +960,7 @@
       showClearStats();
       showScreen('clear');
     } else if (msg.s === 'over') {
+      closeDraft();
       game.score = msg.score; game.level = msg.level;
       const res = recordRunEnd();
       const isHigh = recordHighScore();
@@ -868,12 +978,19 @@
       configureOverButtons();
       showScreen('over');
     } else if (msg.s === 'vswin') {
+      closeDraft();
       game.winnerId = msg.winnerId;
       uiMode = 'versusover';
       fillVsStandings(msg.standings || [], msg.winnerId === Net.state.id);
       showScreen('vsover');
     }
   };
+  // TECH drafts over the wire: clients get offers relayed from the host's
+  // sim and answer with a pick; the host validates and applies it.
+  Net.cb.onDraft = (offers) => {
+    if (Net.role === 'client' && uiMode === 'playing') openDraft(offers);
+  };
+  Net.cb.onPick = (peerId, id) => { game.applyUpgrade(peerId, id); };
 
   // ---- title demo scene -----------------------------------------------------
   const demoGame = new Game(new HUD(document.createElement('canvas')));
@@ -1005,9 +1122,24 @@
       renderer.draw(mesh, m4.trs(o.x, 0, o.z, 0, o.w, o.h, o.d), { tint: o.color });
     }
 
+    const zt = performance.now() / 1000;
     for (const f of src.flags) {
       if (f.taken) continue;
       renderer.draw(M.flag, m4.trs(f.x, 0, f.z, f.spin, 1, 1, 1));
+      // uplink zone: boundary ring on the ground, plus a growing progress
+      // ring while the capture is being held — amber pulse when contested
+      const cap = f.cap || 0;
+      const hot = !!f.contested;
+      const pulse = hot ? 0.75 + 0.25 * Math.sin(zt * 9) : 0.35 + 0.12 * Math.sin(zt * 2.5 + f.x);
+      const bc = hot
+        ? [1.0 * pulse, 0.75 * pulse, 0.2 * pulse]
+        : [0.2 * pulse, 0.9 * pulse, 0.45 * pulse];
+      renderer.draw(M.ring, m4.trs(f.x, 0.35, f.z, 0, CAP_RADIUS, 1, CAP_RADIUS),
+        { tint: bc, unlit: true, additive: true });
+      if (cap > 0.02) {
+        renderer.draw(M.ring, m4.trs(f.x, 0.6, f.z, 0, CAP_RADIUS * cap, 1, CAP_RADIUS * cap),
+          { tint: [0.3, 1.0, 0.55], unlit: true, additive: true });
+      }
     }
 
     // resupply pads pulse slowly in their supply color
@@ -1066,13 +1198,16 @@
         { tint: [coreTint[0] * 0.30, coreTint[1] * 0.30, coreTint[2] * 0.30], unlit: true, additive: true });
     }
 
-    // expanding shockwave rings
+    // expanding shockwave rings — hostile orange, squad discharges teal
     for (const r of game.rings) {
       const fade = Math.max(0.25, 1 - r.r / 190);
+      const ours = r.from === 'player';
+      const c1 = ours ? [0.3 * fade + 0.15, 1.0 * fade, 0.8 * fade] : [1 * fade + 0.3, 0.55 * fade, 0.2 * fade];
+      const c2 = ours ? [0.2 * fade, 0.8 * fade, 0.65 * fade] : [0.8 * fade, 0.4 * fade, 0.15 * fade];
       renderer.draw(M.ring, m4.trs(r.x, 0.5, r.z, 0, r.r, 1, r.r),
-        { tint: [1 * fade + 0.3, 0.55 * fade, 0.2 * fade], unlit: true, additive: true });
+        { tint: c1, unlit: true, additive: true });
       renderer.draw(M.ring, m4.trs(r.x, 1.6, r.z, 0, r.r * 0.985, 1, r.r * 0.985),
-        { tint: [0.8 * fade, 0.4 * fade, 0.15 * fade], unlit: true, additive: true });
+        { tint: c2, unlit: true, additive: true });
     }
     for (const e of game.enemies) {
       let tint = e.hitFlash > 0 ? [1 + e.hitFlash * 2, 1 + e.hitFlash * 2, 1 + e.hitFlash * 2] : null;
@@ -1081,12 +1216,16 @@
       if (ck > 0.01 && e.hitFlash <= 0) {
         const v = Math.max(0.02, 1 - ck * (0.92 + 0.08 * Math.sin(now / 120)));
         tint = [v, v, v];
+      } else if (e.type === 'rusher' && !tint) {
+        // rushers strobe hot and fast — a fuse you can read at a glance
+        const pu = 1 + 0.5 * (0.5 + 0.5 * Math.sin(now / 70));
+        tint = [pu, pu * 0.8, pu * 0.9];
       } else if (e.elite && !tint) {
         // elites strobe white-hot so they read across the arena
         const pu = 1 + 0.25 * (0.5 + 0.5 * Math.sin(now / 150));
         tint = [pu, pu, pu];
       }
-      const sc = e.elite ? 1.18 : 1;
+      const sc = (e.elite ? 1.18 : 1) * (e.type === 'rusher' ? 0.82 : 1);
       renderer.draw(tankMeshFor(e.type), m4.trs(e.x, 0, e.z, e.angle, sc, sc, sc), { tint });
     }
 
@@ -1289,11 +1428,16 @@
         break;
 
       case 'playing':
+        if (draftOpen) draftKeys(false);   // co-op: pick under fire
         if (Input.consume('cam')) { chaseCam = !chaseCam; chaseCamUserSet = true; }
         if (Input.consume('pause') || Input.consume('Escape')) {
           if (Net.role === 'solo') pauseGame();
           else hud.message('PAUSE UNAVAILABLE IN CO-OP', '#ffd24a', 1.6);
         }
+        break;
+
+      case 'draft':
+        draftKeys(true);   // solo: the sim is paused while you choose
         break;
 
       case 'paused':
@@ -1379,7 +1523,8 @@
   // intensity knob rides the alert level and combo heat.
   function updateMusic() {
     let mood = 'menu';
-    if (uiMode === 'playing' && (game.mode === 'playing' || game.mode === 'dying')) {
+    // a solo TECH draft pauses the sim but shouldn't drop the combat groove
+    if ((uiMode === 'playing' || uiMode === 'draft') && (game.mode === 'playing' || game.mode === 'dying')) {
       if (game.bossLevel && game.boss && !game.boss.dead) {
         mood = 'boss';
         AudioSys.setMusicIntensity(1);
@@ -1443,6 +1588,7 @@
           if (Net.role === 'host') hostNetTick(dt);
           if (game.mode === 'levelclear') enterLevelClear();
           else if (game.mode === 'versusover') doVersusOver();
+          else checkDrafts();
         } else if (game.mode === 'dying') {
           game.updateDying(dt);
           if (Net.role === 'host') Net.broadcastState(game);
