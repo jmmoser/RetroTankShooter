@@ -7,8 +7,15 @@ const PLAYER_HEX = ['#4fd6bb', '#b07bd6', '#e8c75a', '#6fc7e8'];
  * colorblind setting additionally splits the hues (deuteranopia-safe). */
 function enemyBlipColor(type) {
   const cb = typeof Settings !== 'undefined' && Settings.get('colorblind');
-  if (!cb) return type === 'rusher' ? '#ff7ab0' : '#ff4a3c';
-  return { drone: '#ff8c1a', hunter: '#ffe84a', sniper: '#4a90ff', phantom: '#e8f4ff', rusher: '#ff5ac8' }[type] || '#ff8c1a';
+  if (!cb) {
+    if (type === 'rusher') return '#ff7ab0';
+    if (type === 'warden') return '#ffd24a';
+    return '#ff4a3c';
+  }
+  return {
+    drone: '#ff8c1a', hunter: '#ffe84a', sniper: '#4a90ff', phantom: '#e8f4ff',
+    rusher: '#ff5ac8', shellback: '#c9d4e0', warden: '#ffd24a',
+  }[type] || '#ff8c1a';
 }
 
 class HUD {
@@ -139,6 +146,7 @@ class HUD {
       fire:  '#ff6a5a',
       nade:  '#8cff6e',
       mine:  '#ff7ab0',
+      vent:  '#e8c75a',
       boost: '#6fc7e8',
       cam:   '#4fd6bb',
       pause: '#4fd6bb',
@@ -159,6 +167,16 @@ class HUD {
       // boost shows its gauge as a sweeping arc around the rim
       if (b.key === 'boost' && p && p.maxBoost) {
         const frac = Math.max(0, Math.min(1, p.boost / p.maxBoost));
+        ctx.globalAlpha = 0.9;
+        ctx.lineWidth = Math.max(1, 3 * d);
+        ctx.beginPath();
+        ctx.arc(bx, by, r - 4 * d, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+        ctx.stroke();
+        ctx.lineWidth = Math.max(1, 1.5 * d);
+      }
+      // vent wears the heat gauge on its rim — tap when it's climbing
+      if (b.key === 'vent' && p && p.maxHeat) {
+        const frac = Math.max(0, Math.min(1, (p.heat || 0) / p.maxHeat));
         ctx.globalAlpha = 0.9;
         ctx.lineWidth = Math.max(1, 3 * d);
         ctx.beginPath();
@@ -259,6 +277,16 @@ class HUD {
       ctx.strokeRect(ax, ay, aw, ah);
       ctx.fillStyle = `rgb(${r},${g},80)`;
       ctx.fillRect(ax + s, ay + s, (aw - 2 * s) * a01, ah - 2 * s);
+    }
+
+    // sector bounty, live under the dish
+    if (game.bounty) {
+      const b = game.bounty;
+      ctx.font = font(10, true);
+      ctx.fillStyle = b.paid ? '#3cff78' : '#e8c75a';
+      ctx.fillText(
+        b.paid ? '✓ BOUNTY PAID' : 'BOUNTY: ' + b.name + '  ' + b.prog + '/' + b.n,
+        W / 2, topY + 34 * s);
     }
   }
 
@@ -435,7 +463,7 @@ class HUD {
     ctx.lineWidth = Math.max(1, 1.4 * s);
     for (const d of (game.depots || [])) {
       const [bx, by] = toRadar(d.x, d.z);
-      ctx.strokeStyle = d.type === 'ammo' ? '#e8c75a' : '#4dff9e';
+      ctx.strokeStyle = d.type === 'coolant' ? '#e8c75a' : '#4dff9e';
       ctx.strokeRect(bx - 3 * s, by - 3 * s, 6 * s, 6 * s);
     }
 
@@ -482,6 +510,20 @@ class HUD {
         const rr = r * 0.95;
         ctx.fillRect(bx - rr, by - 1.1 * s, rr * 2, 2.2 * s);
         ctx.fillRect(bx - 1.1 * s, by - rr, 2.2 * s, rr * 2);
+      } else if (e.type === 'shellback') {
+        // hollow square = armored front, crack it from behind
+        ctx.strokeStyle = enemyBlipColor(e.type);
+        ctx.lineWidth = Math.max(1, 1.4 * s);
+        ctx.strokeRect(bx - r, by - r, r * 2, r * 2);
+      } else if (e.type === 'warden') {
+        // dot inside a ring = the umbrella carrier — priority target
+        ctx.arc(bx, by, r * 0.55, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = enemyBlipColor(e.type);
+        ctx.lineWidth = Math.max(1, 1.2 * s);
+        ctx.beginPath();
+        ctx.arc(bx, by, r + 1.6 * s, 0, Math.PI * 2);
+        ctx.stroke();
       } else {
         ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
       }
@@ -540,19 +582,39 @@ class HUD {
       ctx.fillRect(bx + s, gy + s, (bw * 0.7 - 2 * s) * bo01, gh - 2 * s);
     }
 
-    // ammo pips
+    // heat gauge: the cannon's whole economy in one bar — redline ticks at
+    // 55/85, a sweeping marker plus perfect-window band while venting
     const ay = by - 68 * s;
+    const heat01 = Math.max(0, Math.min(1, (p.heat || 0) / (p.maxHeat || 100)));
+    const overheated = (p.overheatT || 0) > 0;
+    const heatCol = overheated ? '#ff4a3c' : heat01 > 0.85 ? '#ff6a3c' : heat01 > 0.55 ? '#ffd24a' : '#4fd6bb';
+    let heatLabel = 'HEAT';
+    if (overheated) heatLabel = 'OVERHEAT';
+    else if ((p.venting || 0) > 0) heatLabel = 'VENTING — TAP AGAIN IN THE BAND';
+    else if ((p.superShots || 0) > 0) heatLabel = 'SUPERCHARGED ×' + p.superShots;
     ctx.font = font(13, true);
-    ctx.fillStyle = 'rgba(79,214,187,0.9)';
-    ctx.fillText('AMMO ' + p.ammo, bx, ay - 12 * s);
-    const pipW = 7 * s, pipH = 10 * s, gap = 3 * s;
-    const maxPips = 30;
-    const pipsShown = Math.min(maxPips, p.maxAmmo);
-    const perPip = p.maxAmmo / pipsShown;
-    for (let i = 0; i < pipsShown; i++) {
-      const filled = p.ammo >= (i + 1) * perPip - 0.001;
-      ctx.fillStyle = filled ? '#e8c75a' : 'rgba(79,214,187,0.18)';
-      ctx.fillRect(bx + i * (pipW + gap), ay, pipW, pipH);
+    ctx.fillStyle = (p.superShots > 0 && !overheated) ? '#4fd6bb' : heatCol;
+    ctx.fillText(heatLabel, bx, ay - 12 * s);
+    const hw = bw, hh = 10 * s;
+    ctx.strokeStyle = 'rgba(79,214,187,0.7)';
+    ctx.lineWidth = Math.max(1, s);
+    ctx.strokeRect(bx, ay, hw, hh);
+    if (!overheated || Math.sin(performance.now() / 90) > -0.3) {
+      ctx.fillStyle = heatCol;
+      ctx.fillRect(bx + s, ay + s, (hw - 2 * s) * heat01, hh - 2 * s);
+    }
+    ctx.fillStyle = 'rgba(255,210,74,0.7)';
+    ctx.fillRect(bx + hw * 0.55, ay - 2 * s, s, hh + 4 * s);
+    ctx.fillStyle = 'rgba(255,90,60,0.8)';
+    ctx.fillRect(bx + hw * 0.85, ay - 2 * s, s, hh + 4 * s);
+    if ((p.venting || 0) > 0) {
+      const widen = p.ventWiden != null ? p.ventWiden : (((p.up || {}).vent || 0) * 0.1);
+      const w0 = VENT_WIN[0] / VENT_TIME, w1 = (VENT_WIN[1] + widen) / VENT_TIME;
+      ctx.fillStyle = 'rgba(79,214,187,0.4)';
+      ctx.fillRect(bx + hw * w0, ay, hw * (w1 - w0), hh);
+      const mx = bx + hw * Math.min(1, p.venting / VENT_TIME);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(mx - s, ay - 3 * s, 2 * s, hh + 6 * s);
     }
 
     // grenade diamonds under the ammo row
@@ -607,6 +669,14 @@ class HUD {
     }
     ctx.fillText('SCORE ' + String(game.score).padStart(7, '0'), W - pad, H - pad - 64 * s);
     ctx.shadowBlur = 0;
+    // the unbanked pot: kill score riding on the line until a zone banks it
+    if (!game.versus && (game.pot || 0) > 0) {
+      const pp = 1 + 0.05 * Math.sin(performance.now() / 140);
+      ctx.font = `bold ${Math.round(13 * s * pp)}px "Courier New", monospace`;
+      ctx.fillStyle = '#ffd24a';
+      ctx.fillText('POT +' + game.pot, W - pad, H - pad - 102 * s);
+      ctx.font = font(16, true);
+    }
     if (onRecord) {
       ctx.font = font(10, true);
       ctx.fillStyle = '#ffd24a';

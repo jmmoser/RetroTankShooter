@@ -1,13 +1,18 @@
 # PHANTOM ARENA — Retro Tank Shooter
 
 A browser-based homage to the flat-shaded 3D tank arena games of the early
-1990s — rebuilt around a modern roguelite core. Drive your hover-tank across
-a near-black neon grid, hold every uplink zone in the sector while the arena
-warps in wave after wave to stop you, and spend the tech you earn on
+1990s — rebuilt around a modern momentum-roguelite core. Drive (and drift)
+a hover-tank across a near-black neon grid, ride a **heat cannon's
+redline** and perfect-vent it mid-firefight, hold uplink zones while the
+arena warps in wave after wave to stop you, and spend the tech you earn on
 **3-choice upgrade drafts** that turn your cannon into something absurd by
-mid-run. Bouncy walls, turbo boost, boost-ram kills, lobbed grenades,
-resupply depots, kamikaze rushers, cloaked phantoms and tanks that shatter
-into tumbling polygon shards.
+mid-run. Between sectors you pick your route through **warp gates** —
+mutated high-risk sectors pay signing bonuses. Speed is armor, grazing
+enemy fire refunds boost, kill variety drives the score multiplier, and
+everything you earn rides an unbanked **pot** until you cash it out at a
+zone. Bouncy walls, boost-ram kills, kamikaze rushers, armored shellbacks,
+shield-warden packs, cloaked phantoms and tanks that shatter into tumbling
+polygon shards.
 
 Built with **plain WebGL, Canvas 2D and Web Audio** — no build step, no
 assets, no CDNs. Even the **synthwave soundtrack is synthesized live** by a
@@ -41,6 +46,47 @@ Leave, and the progress drains away. Your hull is gone when shields hit zero.
 The sector never goes quiet. Hostiles keep warping in on a **pressure
 timer that tightens the longer you stay** — camping behind a slab is a
 losing strategy, and most waves lead with rushers that come straight at you.
+
+### The heat cannon — ride the redline, nail the vent
+
+There is no ammo. The cannon builds **heat** per shell — and past the
+redline ticks it fires *faster and harder*, so skilled play lives near the
+top of the bar. Redline past the max and the gun locks up for seconds you
+don't have. Tap `R` to **vent** manually: a marker sweeps the bar, and a
+second tap inside the highlighted band is a **perfect vent** — instant
+clear plus a burst of supercharged shells. Coolant depots and pickups vent
+for you; the COOLANT LOOP and VENT TUNING upgrades tune the whole system.
+
+### Momentum is everything
+
+The hull points where you steer; your **velocity** has its own ideas.
+Boosting drops the tread grip so the tank **drifts** — swing the gun
+through a slide while your momentum carries the line — and holding reverse
+at speed pulls a **handbrake slide**. Above ~70% speed the hull sheds a
+third of any hit (**speed is armor**), boost-rams scale with impact speed,
+and an enemy shell that *nearly* clips you is a **graze**: it refunds
+boost, pays a tick of tech and keeps your combo window alive. Experts
+thread fire on purpose.
+
+### Style pays, greed decides
+
+The combo multiplier runs on **variety**: repeat the same kill method and
+the chain cools; mix cannon, ram, grenade, mine and shockwave kills and it
+climbs to ×5 — and the multiplier boosts your **tech income**, so stylish
+play literally builds faster. Kill score doesn't bank directly: it rides
+an at-risk **POT** that cashes out when you capture a zone (or down a boss
+milestone). Take a hit and 30% of the pot spills. One more fight at ×5, or
+cash out now? That question never goes away.
+
+### Warp gates & bounties — plan the run
+
+After each clear you choose the next sector through a **warp gate**:
+STANDARD, or a mutated route that pays a **tech signing bonus** — SWARM
+PROTOCOL (relentless thin-hull waves), BARREN GRID (no depots), ELITE
+SURGE, VOLATILE HULLS (every kill detonates), or the all-elite GAUNTLET.
+Every sector also posts an optional **bounty** (3 ram kills, graze 8
+shots, reach ×4...) that pays the whole squad in tech. Daily Ops seeds the
+gate offers too, so everyone plays the same map.
 
 ### Tech drafts — build your tank mid-run
 
@@ -123,8 +169,8 @@ The **SERVICE RECORD** screen tracks the rest of your career: missions,
 kills, zones secured, warlords downed, best combo and best sector — all in your
 browser. Two things are earned:
 
-- **MARAUDER chassis** — a fourth loadout (fast, armored, light on ammo,
-  heavy on mines) unlocked by destroying your first WARLORD.
+- **MARAUDER chassis** — a fourth loadout (fast, armored, a small cooling
+  plant, heavy on mines) unlocked by destroying your first WARLORD.
 - **Checkpoint starts** — once you fight past a WARLORD, the loadout screen
   lets you start at the sector after it (6, 11, …) instead of replaying the
   early game.
@@ -145,10 +191,12 @@ and **gamepad** alike — pick whatever is closest to hand.
 | --- | --- |
 | `W S` / `↑ ↓` | Drive forward / reverse |
 | `A D` / `← →` | Steer |
-| `Space` / click | Fire cannon |
+| `Space` / click | Fire cannon (builds heat — watch the redline) |
+| `R` | Vent heat — tap again in the band for a **perfect vent** |
 | `X` / right-click | Lob a grenade (arcs over obstacles, splash damage) |
 | `V` / middle-click | Drop a proximity mine behind you |
-| `Shift` | Turbo boost (drains the boost gauge; recharges when idle) |
+| `Shift` | Turbo boost (drains the gauge; low grip — the tank drifts) |
+| `S` at speed | Handbrake slide (keep momentum, swing the gun) |
 | `C` | Toggle first-person / chase camera |
 | `P` / `Esc` | Pause (single-player) |
 | `M` | Toggle sound |
@@ -160,8 +208,8 @@ and **gamepad** alike — pick whatever is closest to hand.
 
 Plug in any standard controller and it just works, menus included:
 left stick drives and steers, `A`/`RT` fires, `B`/`RB` lobs a grenade,
-`X`/`LB` drops a mine, `LT` boosts, `Y` toggles the camera, `Start` pauses,
-and the d-pad or stick navigates every menu.
+`X` vents, `LB` drops a mine, `LT` boosts, `Y` toggles the camera,
+`Start` pauses, and the d-pad or stick navigates every menu.
 
 ### Touch controls
 
@@ -223,9 +271,9 @@ PartyKit or Ably — the rest of the game is unchanged.)
 Before deploying, allocate your tank's power — a classic trade-off:
 
 - **SCOUT** — fast and agile, thin shields
-- **VANGUARD** — balanced, extra ammo
+- **VANGUARD** — balanced, the best cooling plant
 - **JUGGERNAUT** — slow, heavily shielded, extra mines
-- **MARAUDER** — fast *and* armored but light on ammo, packs the most mines —
+- **MARAUDER** — fast *and* armored but quick to overheat, packs the most mines —
   unlocked by destroying a WARLORD
 
 ### Enemies
@@ -240,6 +288,12 @@ scatter from a grenade in the air instead of sitting under it:
   fuse and beelines straight at you; it detonates on contact, dies to a
   single shell, chain-pops into anything beside it — and a boost-ram
   defuses it entirely
+- **Shellback** (gunmetal, sector 3+) — slow siege hull whose frontal
+  plate deflects shells; flank the arc, lob over it, or ram straight
+  through it
+- **Warden** (gold, sector 4+) — projects a cannon-proof umbrella over
+  every packmate near it and shepherds the pack; grenades, mines, rams and
+  shockwaves ignore the dome — or kill the warden and shoot what's left
 - **Hunter** (amber, sector 2+) — weaves between wide flanking arcs and
   straight lunges; it can only line up a shot during the lunge, so the
   rhythm is readable — and punishable
@@ -254,10 +308,11 @@ scatter from a grenade in the air instead of sitting under it:
 ### Pickups & depots
 
 Destroyed enemies sometimes drop supplies; a few crates are scattered around
-each sector: **ammo**, **shield repair**, **grenades**, **mines**,
+each sector: **coolant**, **shield repair**, **grenades**, **mines**,
 **overdrive** (speed boost) and **rapid fire**. Every sector also has a
-glowing **ammo depot** and **shield depot** — park on the pad to resupply.
-Sector-clear bonus scales with remaining shields, ammo and kills. High score,
+glowing **coolant depot** and **shield depot** — park on the pad to vent
+and repair. Sector-clear bonus scales with remaining shields, kills and
+the pot you carried over the line. High score,
 daily bests, settings and your service record are all kept in your browser.
 
 Watch your speed near the arena's slabs: slam into one fast enough and your
@@ -278,7 +333,7 @@ js/geometry.js  procedural low-poly meshes
 js/renderer.js  WebGL renderer + mat4 helpers: flat-shaded forward pass,
                 dynamic point lights, additive glow draws, and the bloom /
                 FXAA / vignette post-processing chain
-js/hud.js       radar, shields/ammo bars, scoreboard, messages (Canvas 2D)
+js/hud.js       radar, shield/heat/vent bars, pot & bounty, scoreboard (Canvas 2D)
 js/game.js      arena generation (four terrain layouts), players, per-type
                 enemy AI, projectiles, pickups, seeded daily arenas, versus
                 rules, TECH upgrade drafts, uplink zones, spawn pressure

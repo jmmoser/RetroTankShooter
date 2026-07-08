@@ -33,6 +33,35 @@ const BOSS_EVERY = 5;            // a WARLORD guards every Nth sector
 const CAP_RADIUS = 8.5;          // uplink zone radius — stand inside to capture
 const CAP_TIME = 3.2;            // seconds of uncontested holding per zone
 
+// Heat cannon: no ammo — the gun rides a heat gauge. Hotter = faster and
+// harder (redline), overheat = locked out. A manual vent with a perfect-tap
+// window (Gears-style) is the rhythm skill at the center of every fight.
+const SHOT_HEAT = 7;             // heat per shell
+const VENT_TIME = 1.1;           // full manual vent duration (seconds)
+const VENT_WIN = [0.38, 0.58];   // perfect-tap window inside the vent sweep
+const OVERHEAT_LOCK = 2.6;       // forced cooldown after redlining past max
+const GRAZE_R = 4.2;             // enemy shots passing this close (but not
+                                 // hitting) refund boost and pay tech
+
+/* Sector gate mutators: after a clear you pick the NEXT sector's ruleset.
+ * Riskier gates pay a tech signing bonus the moment you deploy. */
+const MUTATORS = [
+  { id: 'swarm',    name: 'SWARM PROTOCOL', desc: 'relentless light waves, thin hulls',  tech: 40 },
+  { id: 'barren',   name: 'BARREN GRID',    desc: 'no depots — live off salvage',        tech: 40 },
+  { id: 'elite',    name: 'ELITE SURGE',    desc: 'hardened hulls everywhere',           tech: 50 },
+  { id: 'volatile', name: 'VOLATILE HULLS', desc: 'every kill detonates',                tech: 40 },
+  { id: 'gauntlet', name: 'ELITE GAUNTLET', desc: 'all elites, no mercy',                tech: 95 },
+];
+
+/* Per-sector optional bounties: auto-tracked, pay tech to the whole squad. */
+const BOUNTIES = [
+  { id: 'ram',   name: '3 RAM KILLS',      n: 3 },
+  { id: 'nade',  name: '3 GRENADE KILLS',  n: 3 },
+  { id: 'mine',  name: '2 MINE KILLS',     n: 2 },
+  { id: 'graze', name: 'GRAZE 8 SHOTS',    n: 8 },
+  { id: 'mult',  name: 'REACH COMBO ×4',   n: 1 },
+];
+
 // Boss turret mounts in hull-local space (model faces -Z). Shared with the
 // renderer and net code so clients can rebuild turret positions by index.
 const BOSS_TURRET_OFFSETS = [[-4.2, -2.6], [4.2, -2.6], [-3.4, 4.4], [3.4, 4.4]];
@@ -53,11 +82,14 @@ const LOADOUTS = [
 ];
 
 const ENEMY_TYPES = {
-  drone:   { hp: 60,  speed: 14, turn: 1.6, fireRange: 95,  fireCd: 2.2, aggro: 160, score: 150, shotSpeed: 50, dmg: 14, lead: 0 },
-  rusher:  { hp: 22,  speed: 26, turn: 3.4, fireRange: 0,   fireCd: 9,   aggro: 999, score: 100, shotSpeed: 0,  dmg: 30, lead: 0 },
-  hunter:  { hp: 85,  speed: 22, turn: 2.4, fireRange: 70,  fireCd: 1.5, aggro: 999, score: 300, shotSpeed: 58, dmg: 18, lead: 0.8 },
-  sniper:  { hp: 75,  speed: 7,  turn: 1.2, fireRange: 160, fireCd: 3.2, aggro: 200, score: 400, shotSpeed: 85, dmg: 26, lead: 0.9 },
-  phantom: { hp: 110, speed: 19, turn: 2.2, fireRange: 100, fireCd: 2.3, aggro: 999, score: 600, shotSpeed: 66, dmg: 22, lead: 0.8, cloaks: true },
+  drone:     { hp: 60,  speed: 14, turn: 1.6, fireRange: 95,  fireCd: 2.2, aggro: 160, score: 150, shotSpeed: 50, dmg: 14, lead: 0 },
+  rusher:    { hp: 22,  speed: 26, turn: 3.4, fireRange: 0,   fireCd: 9,   aggro: 999, score: 100, shotSpeed: 0,  dmg: 30, lead: 0 },
+  hunter:    { hp: 85,  speed: 22, turn: 2.4, fireRange: 70,  fireCd: 1.5, aggro: 999, score: 300, shotSpeed: 58, dmg: 18, lead: 0.8 },
+  sniper:    { hp: 75,  speed: 7,  turn: 1.2, fireRange: 160, fireCd: 3.2, aggro: 200, score: 400, shotSpeed: 85, dmg: 26, lead: 0.9 },
+  phantom:   { hp: 110, speed: 19, turn: 2.2, fireRange: 100, fireCd: 2.3, aggro: 999, score: 600, shotSpeed: 66, dmg: 22, lead: 0.8, cloaks: true },
+  // counterplay hulls: reading the fight matters more than holding fire
+  shellback: { hp: 150, speed: 9,  turn: 1.1, fireRange: 75,  fireCd: 2.6, aggro: 170, score: 350, shotSpeed: 48, dmg: 20, lead: 0.4, frontArmor: true },
+  warden:    { hp: 90,  speed: 8,  turn: 1.4, fireRange: 70,  fireCd: 3.0, aggro: 160, score: 500, shotSpeed: 46, dmg: 12, lead: 0.3, aura: 16 },
 };
 
 /* In-run TECH upgrade pool: kills and zone captures pay tech, each tech level
@@ -77,7 +109,9 @@ const UPGRADES = [
   { id: 'coolhead',   name: 'COMBO REGULATOR',  desc: 'combo window +1.5s',                    max: 2 },
   { id: 'bandolier',  name: 'BANDOLIER',        desc: '+2 max grenades, +1 max mine (restocked)', max: 2 },
   { id: 'plating',    name: 'REACTIVE PLATING', desc: 'max shields +25 (repaired)',            max: 3 },
-  { id: 'cache',      name: 'AMMO CACHE',       desc: 'max ammo +12 (restocked)',              max: 3 },
+  { id: 'cache',      name: 'COOLANT LOOP',     desc: 'heat capacity +25, faster dissipation', max: 3 },
+  { id: 'vent',       name: 'VENT TUNING',      desc: 'wider perfect-vent window, +2 supercharged shells', max: 2 },
+  { id: 'razor',      name: 'RAZOR EDGE',       desc: 'grazes refund more boost and pay tech', max: 2 },
   { id: 'uplink',     name: 'UPLINK SPIKE',     desc: 'capture zones 30% faster',              max: 2 },
   { id: 'magnet',     name: 'SALVAGE MAGNET',   desc: 'pickups are drawn to you',              max: 1 },
   { id: 'overcharge', name: 'BOOST OVERCHARGE', desc: '+35 boost capacity, faster regen',      max: 2 },
@@ -92,16 +126,18 @@ const OBSTACLE_PALETTE = [
 
 // Hull colors used for the shard debris a destroyed tank breaks into.
 const DEBRIS_COLORS = {
-  drone:   [1.0, 0.30, 0.24],
-  rusher:  [1.0, 0.30, 0.55],
-  hunter:  [1.0, 0.62, 0.14],
-  sniper:  [0.78, 0.44, 1.0],
-  phantom: [0.62, 0.92, 0.95],
-  player:  [0.25, 1.0, 0.82],
+  drone:     [1.0, 0.30, 0.24],
+  rusher:    [1.0, 0.30, 0.55],
+  hunter:    [1.0, 0.62, 0.14],
+  sniper:    [0.78, 0.44, 1.0],
+  phantom:   [0.62, 0.92, 0.95],
+  shellback: [0.62, 0.68, 0.74],
+  warden:    [0.95, 0.76, 0.28],
+  player:    [0.25, 1.0, 0.82],
 };
 
 const POWERUP_TYPES = {
-  ammo:      { tint: [0.95, 0.8, 0.25], label: '+AMMO' },
+  coolant:   { tint: [0.95, 0.8, 0.25], label: '+COOLANT' },
   shield:    { tint: [0.3, 0.95, 0.6],  label: '+SHIELDS' },
   nade:      { tint: [0.55, 1.0, 0.35], label: '+GRENADES' },
   mine:      { tint: [1.0, 0.35, 0.6],  label: '+MINES' },
@@ -167,7 +203,7 @@ class Game {
     this.particles = [];
     this.flashes = [];     // short-lived point lights from bursts (cosmetic)
     this.debris = [];      // tumbling polygon shards from destroyed tanks
-    this.depots = [];      // resupply pads: { x, z, type: 'ammo'|'shield' }
+    this.depots = [];      // resupply pads: { x, z, type: 'coolant'|'shield' }
     this.players = [];     // all tanks in the run (co-op); player[0..n]
     this.player = null;    // alias to the LOCAL player (for HUD / camera)
     this.localId = null;
@@ -176,12 +212,18 @@ class Game {
     this.frameDebris = []; // shard spawns this update — drained by the net layer
     this.levelBonus = 0;
     this.killsThisLevel = 0;
-    this.combo = 0;        // kills in the current chain
+    this.combo = 0;        // style points in the current chain (float)
     this.comboT = 0;       // time left before the chain expires
     this.comboWin = COMBO_WINDOW; // window length (stretched by COMBO REGULATOR)
     this.mult = 1;         // score multiplier from the chain
+    this.lastKillVia = null; // style engine: repeat kills are worth less
+    this.pot = 0;          // unbanked kill score — banks on zone capture,
+                           // spills 30% every time the squad takes a hit
     this.levelTime = 0;    // seconds into the current sector (spawn pressure)
     this.pressureT = 7;    // countdown to the next pressure wave
+    this.mutator = null;   // active sector mutator id (chosen at the gate)
+    this.gates = null;     // gate options offered on the level-clear screen
+    this.bounty = null;    // this sector's optional bounty { id, name, n, prog, paid }
     this.alert = 0;        // 0..1 — fraction of flags secured this sector
     this.alertTier = 0;    // reinforcement waves already triggered
     this.pendingSpawns = []; // warp-in telegraphs: { x, z, type, t, tick }
@@ -223,14 +265,21 @@ class Game {
       colorIdx: idx % PLAYER_TINTS.length,
       input: { turn: 0, drive: 0, fire: false, nade: false, boost: false },
       x: 0, z: 0, angle: 0,
-      speed: 0,
+      speed: 0,            // throttle scalar (hull-axis intent)
+      vx: 0, vz: 0,        // true velocity — drifts decouple it from facing
       maxSpeed: 14 + lo.speed * 3.2,
       accel: 26 + lo.speed * 5,
       turnRate: 1.7 + lo.speed * 0.14,
       maxShields: 50 + lo.armor * 22,
       shields: 0,
-      maxAmmo: 14 + lo.ammo * 8,
-      ammo: 0,
+      // heat cannon: the loadout's old ammo stat is now its cooling plant
+      heat: 0,
+      maxHeat: 100,
+      heatDiss: 5 + lo.ammo * 1.2,
+      venting: 0,          // >0: manual vent in progress (elapsed seconds)
+      overheatT: 0,        // >0: locked out after redlining past maxHeat
+      superShots: 0,       // perfect-vent reward: free +50% shells
+      ventHeld: false,     // previous frame's vent input, for edge detection
       maxBoost: 100,
       boost: 100,
       boosting: false,
@@ -265,7 +314,6 @@ class Game {
       boostHeld: 0,        // seconds the current boost has been engaged
     };
     p.shields = p.maxShields;
-    p.ammo = p.maxAmmo;
     return p;
   }
 
@@ -281,6 +329,9 @@ class Game {
     this.killCounts = {};
     this.winnerId = null;
     this.score = 0;
+    this.pot = 0;
+    this.mutator = null;
+    this.gates = null;
     this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0 };
     this.players = defs.map((d, i) => this._makePlayer(d, i));
     for (const p of this.players) this.killCounts[p.id] = 0;
@@ -347,13 +398,22 @@ class Game {
         p.z = ARENA_HALF - 22;
         p.angle = 0;
       }
-      p.speed = 0;
+      p.speed = 0; p.vx = 0; p.vz = 0;
       p.fx.overdrive = 0; p.fx.rapid = 0;
       p.boost = p.maxBoost;
+      p.heat = 0; p.venting = 0; p.overheatT = 0;
       p.alive = true; p.respawnT = 0; p.lowWarned = false;
       p.input.fire = false; p.input.nade = false; p.input.mine = false;
       p.depotAcc = 0; p.onDepot = false;
     });
+
+    // per-sector bounty: an optional objective, auto-tracked, paid in tech
+    this.bounty = null;
+    if (!this.versus && !this.bossLevel) {
+      const b = BOUNTIES[(RNG() * BOUNTIES.length) | 0];
+      this.bounty = { id: b.id, name: b.name, n: b.n, prog: 0, paid: false };
+    }
+    this.lastKillVia = null;
 
     if (this.versus) {
       // deathmatch arena: cover and contested resupply, no AI
@@ -383,10 +443,17 @@ class Game {
     // a couple of starter pickups scattered on the field
     for (let i = 0; i < 2; i++) {
       const pos = this._findSpot(4, 40);
-      if (pos) this._spawnPowerup(pos[0], pos[1], RNG() < 0.5 ? 'ammo' : 'shield');
+      if (pos) this._spawnPowerup(pos[0], pos[1], RNG() < 0.5 ? 'coolant' : 'shield');
     }
     RNG = Math.random;   // seeded window ends with generation
     this.mode = 'playing';
+    if (this.mutator) {
+      const m = MUTATORS.find((x) => x.id === this.mutator);
+      if (m) this.hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3);
+    }
+    if (this.bounty) {
+      this.hud.message('BOUNTY: ' + this.bounty.name, '#e8c75a', 2.4);
+    }
   }
 
   /* Where tanks deploy: the home corridor in the campaign, spread corners in
@@ -578,8 +645,9 @@ class Game {
   }
 
   _genDepots() {
-    // one ammo pad and one shield pad per sector — drive on to resupply
-    for (const type of ['ammo', 'shield']) {
+    if (this.mutator === 'barren') return;   // BARREN GRID: live off salvage
+    // one coolant pad and one shield pad per sector — drive on to resupply
+    for (const type of ['coolant', 'shield']) {
       const pos = this._findSpot(6, 45);
       if (pos) this.depots.push({ x: pos[0], z: pos[1], type });
     }
@@ -591,15 +659,19 @@ class Game {
     const diff = 1 + (L - 1) * 0.085;
     // elites: hardened variants that show up from sector 3 — tougher, faster,
     // meaner and worth half again the score. They strobe white-hot in the
-    // arena and wear a ring on the radar.
-    const elite = !this.bossLevel && L >= 3 && RNG() < Math.min(0.06 + L * 0.02, 0.3);
+    // arena and wear a ring on the radar. ELITE SURGE triples the odds;
+    // the GAUNTLET is nothing but.
+    let eliteP = !this.bossLevel && L >= 3 ? Math.min(0.06 + L * 0.02, 0.3) : 0;
+    if (this.mutator === 'elite') eliteP = Math.min(eliteP * 3, 0.75);
+    const elite = this.mutator === 'gauntlet' || RNG() < eliteP;
+    const hpMul = (elite ? 1.6 : 1) * (this.mutator === 'swarm' ? 0.7 : 1);
     this.enemies.push({
       type,
       elite,
       x, z,
       angle: rand(0, Math.PI * 2),
-      hp: spec.hp * (elite ? 1.6 : 1),
-      maxHp: spec.hp * (elite ? 1.6 : 1),
+      hp: spec.hp * hpMul,
+      maxHp: spec.hp * hpMul,
       speed: spec.speed * diff * (elite ? 1.15 : 1),
       turn: spec.turn * diff,
       fireRange: spec.fireRange,
@@ -627,13 +699,17 @@ class Game {
   _genEnemies() {
     // lighter opening garrison — spawn pressure keeps the field fed after
     const L = this.level;
-    const total = Math.min(4 + Math.floor(L * 1.2), 12);
+    let total = Math.min(4 + Math.floor(L * 1.2), 12);
+    if (this.mutator === 'swarm') total += 3;        // thin hulls, more of them
+    if (this.mutator === 'gauntlet') total -= 2;     // all elites — fewer, harder
     for (let i = 0; i < total; i++) {
       let type = 'drone';
       if (L >= 2 && i % 3 === 1) type = 'hunter';
       if (L >= 4 && i % 4 === 2) type = 'sniper';
       if (L >= 5 && i % 5 === 3) type = 'phantom';
       if (L >= 2 && i % 5 === 4) type = 'rusher';
+      if (L >= 3 && i % 6 === 5) type = 'shellback';
+      if (L >= 4 && i % 7 === 3) type = 'warden';
       const pos = this._findSpot(4, 65);
       if (!pos) continue;
       this._spawnEnemy(type, pos[0], pos[1]);
@@ -744,7 +820,8 @@ class Game {
     this.pressureT -= dt;
     if (this.pressureT > 0) return;
     const heat = Math.min(1, this.levelTime / 90);   // dawdling tightens the screw
-    this.pressureT = Math.max(3.5, (10 - this.level * 0.35) * (1 - heat * 0.55));
+    this.pressureT = Math.max(3.5, (10 - this.level * 0.35) * (1 - heat * 0.55)) *
+      (this.mutator === 'swarm' ? 0.55 : 1);
     const cap = 12 + Math.min(6, this.level);
     if (this.enemies.length + this.pendingSpawns.length >= cap) return;
     const n = 1 + ((heat > 0.5 || this.level > 4) ? 1 : 0);
@@ -802,6 +879,7 @@ class Game {
         this.runStats.flags++;
         const pts = 100 * this.level * this.mult;
         this.score += pts;
+        this._bankPot();   // the capture is the cash-out
         this._burst(f.x, 2.5, f.z, 18, [0.3, 1, 0.5], 8);
         this._sfx('flag');
         for (const h of holders) this._awardTech(h, 25);
@@ -883,7 +961,7 @@ class Game {
       case 'bandolier':  p.maxNades += 2; p.nades = Math.min(p.maxNades, p.nades + 2);
                          p.maxMines += 1; p.mines = Math.min(p.maxMines, p.mines + 1); break;
       case 'plating':    p.maxShields += 25; p.shields = Math.min(p.maxShields, p.shields + 25); break;
-      case 'cache':      p.maxAmmo += 12; p.ammo = Math.min(p.maxAmmo, p.ammo + 12); break;
+      case 'cache':      p.maxHeat += 25; p.heatDiss *= 1.25; p.heat = 0; break;
       case 'overcharge': p.maxBoost += 35; p.boost = p.maxBoost; break;
     }
     p.pendingOffers = null;
@@ -935,10 +1013,13 @@ class Game {
 
   _reinforcementType() {
     const L = this.level, r = RNG();
-    if (L >= 5 && r < 0.18) return 'phantom';
-    if (L >= 4 && r < 0.40) return 'sniper';
-    if (L >= 2 && r < 0.70) return 'hunter';
-    if (L >= 2 && r < 0.85) return 'rusher';
+    if (this.mutator === 'swarm') return r < 0.6 ? 'rusher' : 'drone';
+    if (L >= 5 && r < 0.15) return 'phantom';
+    if (L >= 4 && r < 0.28) return 'sniper';
+    if (L >= 4 && r < 0.38) return 'warden';
+    if (L >= 3 && r < 0.52) return 'shellback';
+    if (L >= 2 && r < 0.72) return 'hunter';
+    if (L >= 2 && r < 0.86) return 'rusher';
     return 'drone';
   }
 
@@ -964,21 +1045,32 @@ class Game {
   // ---- combo multiplier -------------------------------------------------------
   // Kills chain into a score multiplier; taking any damage breaks it.
 
-  _awardKill(baseScore, ownerId) {
-    this.combo++;
+  _awardKill(baseScore, ownerId, via) {
+    // STYLE ENGINE: variety keeps the chain white-hot. Repeating the same
+    // kill method pays less and less; mixing cannon → ram → nade → mine →
+    // shock is what climbs the multiplier.
+    const inc = via && via === this.lastKillVia ? 0.4 : 1;
+    if (via) this.lastKillVia = via;
+    this.combo += inc;
     this.comboT = this.comboWin;
-    const mult = this.combo >= 8 ? 5 : this.combo >= 5 ? 4 : this.combo >= 3 ? 3 : this.combo >= 2 ? 2 : 1;
+    const c = this.combo;
+    const mult = c >= 8 ? 5 : c >= 5 ? 4 : c >= 3 ? 3 : c >= 2 ? 2 : 1;
     if (mult > this.mult) {
       this._sfx('combo');
       this.hud.message('COMBO ×' + mult, '#ffd24a', 1.4);
     }
+    if (mult >= 4) this._bountyTick('mult');
     if (mult >= 5 && ownerId === this.localId) this._medal('chain5');
     this.mult = mult;
     this.runStats.kills++;
     this.runStats.bestMult = Math.max(this.runStats.bestMult, mult);
     const pts = baseScore * mult;
-    this.score += pts;
-    this._awardTech(this._playerById(ownerId), Math.round(baseScore / 10));
+    // kill score rides in the POT until you bank it at a zone — greed is a
+    // live decision, not a stat
+    if (this.versus) this.score += pts;
+    else this.pot += pts;
+    // stylish play also builds faster: tech income scales with the chain
+    this._awardTech(this._playerById(ownerId), Math.round((baseScore / 10) * (1 + (mult - 1) * 0.5)));
     if (ownerId === this.localId) {
       this.hud.scorePop('+' + pts + (mult > 1 ? ' ×' + mult : ''));
     }
@@ -993,6 +1085,30 @@ class Game {
     this.combo = 0;
     this.comboT = 0;
     this.mult = 1;
+    this.lastKillVia = null;
+  }
+
+  /* Bank the unbanked pot into the score — called on zone captures, boss
+   * milestones and sector clear. */
+  _bankPot() {
+    if (this.versus || this.pot <= 0) return;
+    this.score += this.pot;
+    this.hud.scorePop('BANKED +' + this.pot);
+    this._sfx('flag');
+    this.pot = 0;
+  }
+
+  /* Advance this sector's bounty; pays the whole squad in tech on completion. */
+  _bountyTick(id, n) {
+    const b = this.bounty;
+    if (!b || b.paid || b.id !== id) return;
+    b.prog = Math.min(b.n, b.prog + (n || 1));
+    if (b.prog >= b.n) {
+      b.paid = true;
+      for (const p of this.players) this._awardTech(p, 40);
+      this._sfx('unlock');
+      this.hud.message('BOUNTY COMPLETE — +40 TECH', '#ffd24a', 2.2);
+    }
   }
 
   _respawn(p) {
@@ -1001,10 +1117,10 @@ class Game {
       const pos = this._findSpotNear(0, 0, 80, ARENA_HALF - 30, 4, 55) || [0, 0];
       p.x = pos[0]; p.z = pos[1];
       p.angle = angleTo(-p.x, -p.z);
-      p.speed = 0;
+      p.speed = 0; p.vx = 0; p.vz = 0;
       p.alive = true;
       p.shields = p.maxShields;
-      p.ammo = p.maxAmmo;
+      p.heat = 0; p.venting = 0; p.overheatT = 0;
       p.nades = p.initNades;
       p.mines = p.initMines;
       p.boost = p.maxBoost;
@@ -1016,9 +1132,10 @@ class Game {
     // only revive if a teammate is still fighting (otherwise the run is over)
     if (!this.players.some((o) => o !== p && o.alive)) { p.respawnT = 0; return; }
     p.x = 0; p.z = ARENA_HALF - 22; p.angle = 0; p.speed = 0;
+    p.vx = 0; p.vz = 0;
     p.alive = true;
     p.shields = p.maxShields * 0.6;
-    p.ammo = Math.max(p.ammo, Math.round(p.maxAmmo * 0.5));
+    p.heat = 0; p.venting = 0; p.overheatT = 0;
     p.boost = p.maxBoost;
     p.lowWarned = false;
     this._burst(p.x, 1.5, p.z, 24, [0.4, 0.8, 1.0], 10);
@@ -1068,11 +1185,21 @@ class Game {
     if (p.boosting) p.boost = Math.max(0, p.boost - dt * 34);
     else p.boost = Math.min(p.maxBoost, p.boost + dt * regen);
 
+    // ---- movement: velocity-vector physics with drift ----------------------
+    // The hull points where you steer; VELOCITY chases the hull's intent at
+    // a grip rate. Boosting — or pulling the handbrake (hold reverse at
+    // speed) — drops the grip so the tank slides: swing the gun through a
+    // drift while your momentum carries the line. The slide is the skill.
+    const vmag0 = Math.hypot(p.vx, p.vz);
+    const handbrake = input.drive < -0.35 && vmag0 > p.maxSpeed * 0.55;
+
     const boostMult = (p.fx.overdrive > 0 ? 1.5 : 1) * (p.boosting ? 1.65 : 1);
     const maxSpd = p.maxSpeed * boostMult;
 
-    // throttle
-    const target = input.drive >= 0 ? input.drive * maxSpd : input.drive * maxSpd * 0.55;
+    // throttle intent (hull axis). The handbrake doesn't reverse — it bleeds
+    // throttle while the grip goes; true reverse resumes once you've slowed.
+    const driveIn = handbrake ? 0 : input.drive;
+    const target = driveIn >= 0 ? driveIn * maxSpd : driveIn * maxSpd * 0.55;
     const rate = p.accel * (Math.abs(target) > Math.abs(p.speed) ? 1 : 2.2) * (p.boosting ? 1.5 : 1);
     if (p.speed < target) p.speed = Math.min(target, p.speed + rate * dt);
     else if (p.speed > target) p.speed = Math.max(target, p.speed - rate * dt);
@@ -1081,31 +1208,39 @@ class Game {
     const steerScale = 1 - 0.25 * Math.min(1, Math.abs(p.speed) / maxSpd);
     p.angle += input.turn * p.turnRate * steerScale * dt * (p.speed < -0.5 ? -1 : 1);
 
-    p.x += fwdX(p.angle) * p.speed * dt;
-    p.z += fwdZ(p.angle) * p.speed * dt;
+    const grip = (p.boosting || handbrake) ? 2.1 : 9;
+    const gk = Math.min(1, grip * dt);
+    p.vx += (fwdX(p.angle) * p.speed - p.vx) * gk;
+    p.vz += (fwdZ(p.angle) * p.speed - p.vz) * gk;
+    p.x += p.vx * dt;
+    p.z += p.vz * dt;
 
     // bouncy walls: slam into a slab or the perimeter and you rebound
     const hit = this._collideTank(p, 1.9);
-    if (hit && Math.abs(p.speed) > p.maxSpeed * 0.45 && p.bounceCd <= 0) {
+    if (hit && Math.hypot(p.vx, p.vz) > p.maxSpeed * 0.45 && p.bounceCd <= 0) {
       p.bounceCd = 0.35;
       p.speed *= -0.45;
+      p.vx = fwdX(p.angle) * p.speed;
+      p.vz = fwdZ(p.angle) * p.speed;
       p.boosting = false;
       this._sfx('bounce');
       this._burst(p.x + fwdX(p.angle) * 2.5, 1.2, p.z + fwdZ(p.angle) * 2.5, 8, [0.9, 0.9, 0.7], 6);
       if (isLocal) this.shake = Math.min(this.shake + 0.45, 1.2);
     } else if (hit) {
       p.speed *= 0.5;
+      p.vx *= 0.5; p.vz *= 0.5;
     }
 
     // BOOST RAM: movement is a weapon — hammering a hostile at boost speed
-    // shatters it for a small shield cost (none with RAM PLATING). Never
-    // lethal to the rammer; rushers are the marquee target.
-    if (!this.versus && p.boosting && p.ramCd <= 0 && Math.abs(p.speed) > p.maxSpeed * 1.15) {
+    // shatters it, and the damage scales with how fast you arrive. Costs a
+    // scratch of shields (none with RAM PLATING); never lethal to the rammer.
+    const vmag = Math.hypot(p.vx, p.vz);
+    if (!this.versus && p.boosting && p.ramCd <= 0 && vmag > p.maxSpeed * 1.15) {
       for (let j = this.enemies.length - 1; j >= 0; j--) {
         const e = this.enemies[j];
         if (dist2(p.x, p.z, e.x, e.z) > 3.4 * 3.4) continue;
         p.ramCd = 0.5;
-        const rdmg = 90 + ((p.up && p.up.ram) || 0) * 70;
+        const rdmg = 60 + vmag * 2 + ((p.up && p.up.ram) || 0) * 70;
         this._hurtEnemy(j, rdmg, p.id, 'ram');
         p.speed *= 0.5;
         if (!(p.up && p.up.ram > 0)) p.shields = Math.max(1, p.shields - 8);
@@ -1115,18 +1250,63 @@ class Game {
       }
     }
 
-    // main cannon
+    // ---- manual vent: the rhythm skill ------------------------------------
+    // Tap VENT to start the sweep; tap again inside the perfect window for an
+    // instant clear plus supercharged shells. Miss it and the vent runs long.
+    p.overheatT = Math.max(0, p.overheatT - dt);
+    const ventEdge = !!input.vent && !p.ventHeld;
+    p.ventHeld = !!input.vent;
+    if (p.venting > 0) {
+      const winHi = VENT_WIN[1] + ((p.up && p.up.vent) || 0) * 0.1;
+      p.venting += dt;
+      if (ventEdge && p.venting >= VENT_WIN[0] && p.venting <= winHi) {
+        p.venting = 0;
+        p.heat = 0;
+        p.superShots = 3 + ((p.up && p.up.vent) || 0) * 2;
+        this._sfx('combo');
+        this._burst(p.x, 1.8, p.z, 14, [0.4, 1.0, 0.9], 8);
+        if (isLocal) this.hud.message('PERFECT VENT', '#4fd6bb', 1);
+      } else if (p.venting >= VENT_TIME) {
+        p.venting = 0;
+        p.heat = 0;
+        this._sfx('refuel');
+      }
+    } else if (ventEdge && p.overheatT <= 0 && p.heat > 12) {
+      p.venting = 0.0001;
+      this._sfx('select');
+    }
+    if (p.venting <= 0) {
+      // passive dissipation; the overheat lockout purges much faster
+      p.heat = Math.max(0, p.heat - p.heatDiss * (p.overheatT > 0 ? 3.2 : 1) * dt);
+    }
+
+    // main cannon: HEAT replaces ammo. The hotter the gun the faster and
+    // harder it fires — ride the redline for output, redline past the top
+    // and the cannon locks. Perfect-vent shells are free and supercharged.
     p.fireCd -= dt;
-    const delay = p.fireDelay * (p.fx.rapid > 0 ? 0.45 : 1);
+    const hot1 = p.heat >= 55, hot2 = p.heat >= 85;
+    const delay = p.fireDelay * (p.fx.rapid > 0 ? 0.45 : 1) * (hot2 ? 0.72 : hot1 ? 0.85 : 1);
     if (input.fire && p.fireCd <= 0) {
-      if (p.ammo > 0) {
-        p.ammo--;
+      if (p.overheatT <= 0 && p.venting <= 0) {
         p.fireCd = delay;
+        const superShot = p.superShots > 0;
+        if (superShot) {
+          p.superShots--;
+        } else {
+          p.heat += SHOT_HEAT;
+          if (p.heat >= p.maxHeat) {
+            p.heat = p.maxHeat;
+            p.overheatT = OVERHEAT_LOCK;
+            this._sfx('lowShield');
+            if (isLocal) this.hud.message('OVERHEAT — COOLING', '#ff4a3c', 1.6);
+          }
+        }
         const shotAngle = this._aimAssist(p);
         // TECH build shapes the shot: TWIN CANNON adds barrels, HOT SHELLS
         // adds damage, RICOCHET/PIERCING ride along on the projectile.
         const shots = 1 + ((p.up && p.up.twin) || 0);
-        const dmg = 25 * (1 + 0.3 * ((p.up && p.up.hipower) || 0));
+        const dmg = 25 * (1 + 0.3 * ((p.up && p.up.hipower) || 0)) *
+          (hot2 ? 1.3 : hot1 ? 1.15 : 1) * (superShot ? 1.5 : 1);
         for (let si = 0; si < shots; si++) {
           const a = shotAngle + (si - (shots - 1) / 2) * 0.1;
           this.projectiles.push({
@@ -1138,13 +1318,12 @@ class Game {
         }
         const bx = p.x + fwdX(shotAngle) * 3.2;
         const bz = p.z + fwdZ(shotAngle) * 3.2;
-        this._burst(bx, 1.6, bz, 4, [1, 0.9, 0.5], 5); // muzzle flash
+        this._burst(bx, 1.6, bz, superShot ? 8 : 4, superShot ? [0.5, 1, 0.9] : [1, 0.9, 0.5], 5);
         this._sfx('fire');
         if (isLocal) this.shake = Math.min(this.shake + 0.12, 0.5);
       } else {
-        p.fireCd = 0.3;
-        this._sfx('select'); // dry-fire click
-        if (isLocal && RNG() < 0.3) this.hud.message('OUT OF AMMO', '#ff4a3c', 1.2);
+        p.fireCd = 0.25;
+        this._sfx('select'); // thermal-lock click
       }
     }
 
@@ -1204,9 +1383,12 @@ class Game {
    * players just feel accurate rather than assisted. Applies uniformly so
    * every input scheme stays on equal footing in co-op. */
   _aimAssist(p) {
-    // togglable in settings; the host's sim applies it for everyone in co-op
+    // togglable in settings; the host's sim applies it for everyone in co-op.
+    // Touch aiming is inherently sloppy and keeps the wide cone; precise
+    // inputs get a sliver — aim is a skill again on keyboard and pad.
     if (typeof Settings !== 'undefined' && !Settings.get('aimAssist')) return p.angle;
-    const CONE = 0.15, RANGE = 150;
+    const touch = typeof Input !== 'undefined' && Input.touchUI && Input.touchUI().mode;
+    const CONE = touch ? 0.15 : 0.07, RANGE = 150;
     let best = p.angle, bestErr = CONE;
     const consider = (x, z) => {
       if (dist2(p.x, p.z, x, z) > RANGE * RANGE) return;
@@ -1332,7 +1514,7 @@ class Game {
       // A boost-speed target flips the exchange — the rusher is ram-killed
       // instead (score, no blast). Booms resolve after the loop.
       if (e.type === 'rusher' && p && distP < 4.6) {
-        const ramming = p.boosting && Math.abs(p.speed) > p.maxSpeed * 1.15;
+        const ramming = p.boosting && Math.hypot(p.vx || 0, p.vz || 0) > p.maxSpeed * 1.15;
         e._boom = ramming ? 'ram' : 'det';
         e._boomBy = p.id;
         continue;
@@ -1352,6 +1534,25 @@ class Game {
         // suicidal commitment: straight at the target, no maneuvering
         tx = p.x; tz = p.z;
         forceMove = true;
+      } else if (e.type === 'warden') {
+        // wardens shepherd the pack: hug the nearest packmate and keep the
+        // cannon-proof umbrella over it
+        let ally = null, ad = Infinity;
+        for (const o of this.enemies) {
+          if (o === e || o.type === 'warden') continue;
+          const d2 = dist2(e.x, e.z, o.x, o.z);
+          if (d2 < ad) { ad = d2; ally = o; }
+        }
+        if (ally && ad > 10 * 10) {
+          tx = ally.x; tz = ally.z;
+          forceMove = true;
+        } else if (ally) {
+          tx = e.x; tz = e.z;      // umbrella in place
+        } else if (hunting) {
+          tx = p.x; tz = p.z;
+        } else {
+          tx = e.wanderX; tz = e.wanderZ;
+        }
       } else if (hunting && e.type === 'hunter') {
         // hunters weave: wheel around the target on a flanking arc, then
         // commit to a straight lunge (the lunge is when they can fire)
@@ -1441,10 +1642,11 @@ class Game {
       e.fireCd -= dt;
       if (hunting && distP < e.fireRange && e.fireCd <= 0) {
         let aimX = p.x, aimZ = p.z;
-        if (e.lead > 0 && Math.abs(p.speed) > 1) {
+        // lead the target's TRUE velocity — a drifting hull's facing lies
+        if (e.lead > 0 && Math.hypot(p.vx || 0, p.vz || 0) > 1) {
           const tFly = distP / e.shotSpeed;
-          aimX += fwdX(p.angle) * p.speed * tFly * e.lead;
-          aimZ += fwdZ(p.angle) * p.speed * tFly * e.lead;
+          aimX += (p.vx || 0) * tFly * e.lead;
+          aimZ += (p.vz || 0) * tFly * e.lead;
         }
         const aimDiff = Math.abs(wrapAngle(angleTo(aimX - e.x, aimZ - e.z) - e.angle));
         // phantoms telegraph: decloak a beat before the shot lands
@@ -1581,6 +1783,15 @@ class Game {
           const e = this.enemies[j];
           if (pr.hitList && pr.hitList.indexOf(e) >= 0) continue;   // already pierced
           if (dist2(pr.x, pr.z, e.x, e.z) < 2.4 * 2.4) {
+            // SHELLBACK: the frontal plate deflects shells — flank the arc,
+            // lob over it, or ram straight through it
+            if (e.type === 'shellback' &&
+                Math.abs(wrapAngle(angleTo(pr.x - e.x, pr.z - e.z) - e.angle)) < 1.05) {
+              dead = true;
+              this._burst(pr.x, 1.6, pr.z, 6, [0.7, 0.8, 1.0], 5);
+              this._sfx('deflect');
+              break;
+            }
             this._hurtEnemy(j, pr.dmg, pr.owner, 'cannon');
             if (pr.pierce > 0) {
               // PIERCING CORE: punch through and keep flying
@@ -1622,6 +1833,23 @@ class Game {
             dead = true;
             this._damagePlayer(pl, pr.dmg);
             break;
+          }
+        }
+        if (!dead) {
+          // GRAZE: a shot that nearly clips you refunds boost, pays a tick
+          // of tech and keeps the style chain warm — threading enemy fire
+          // on purpose is expert play
+          for (const pl of this.players) {
+            if (!pl.alive || (pr.grz && pr.grz[pl.id])) continue;
+            if (dist2(pr.x, pr.z, pl.x, pl.z) < GRAZE_R * GRAZE_R) {
+              (pr.grz || (pr.grz = {}))[pl.id] = 1;
+              const razor = (pl.up && pl.up.razor) || 0;
+              pl.boost = Math.min(pl.maxBoost, pl.boost + 5 + razor * 3);
+              this._awardTech(pl, 1 + razor * 2);
+              if (this.comboT > 0) this.comboT = Math.min(this.comboWin, this.comboT + 0.4);
+              this._burst(pr.x, 1.4, pr.z, 3, [0.5, 1.0, 0.9], 4);
+              this._bountyTick('graze');
+            }
           }
         }
       }
@@ -1748,6 +1976,18 @@ class Game {
    * weapon-specific medals. */
   _hurtEnemy(index, dmg, ownerId, via) {
     const e = this.enemies[index];
+    // WARDEN umbrella: hostiles under it shrug off cannon fire — lob over
+    // it, mine it, ram through it, or kill the warden first
+    if (via === 'cannon' && e.type !== 'warden') {
+      for (const w of this.enemies) {
+        if (w.type !== 'warden') continue;
+        if (dist2(w.x, w.z, e.x, e.z) < 16 * 16) {
+          this._burst(e.x, 1.8, e.z, 6, [1, 0.85, 0.3], 5);
+          this._sfx('deflect');
+          return;
+        }
+      }
+    }
     e.hp -= dmg;
     e.hitFlash = 1;
     if (ENEMY_TYPES[e.type].cloaks) e.decloakT = Math.max(e.decloakT, 1.2);
@@ -1760,7 +2000,8 @@ class Game {
     const e = this.enemies[index];
     this.enemies.splice(index, 1);
     this.killsThisLevel++;
-    this._awardKill(e.score, ownerId);
+    this._awardKill(e.score, ownerId, via);
+    if (via === 'ram' || via === 'nade' || via === 'mine') this._bountyTick(via);
     if (!this.versus && ownerId === this.localId) {
       const rs = this.runStats;
       rs.localKills++;
@@ -1789,6 +2030,19 @@ class Game {
         if (dist2(e.x, e.z, o.x, o.z) < 36) this._hurtEnemy(j, 40, ownerId, via);
       }
     }
+    // VOLATILE HULLS: every kill detonates — dangerous up close, devastating
+    // when you chain a pack. Forces range discipline for the reward
+    if (this.mutator === 'volatile' && e.type !== 'rusher') {
+      this._burst(e.x, 1.2, e.z, 18, [1, 0.6, 0.2], 10);
+      for (const pl of this.players) {
+        if (!pl.alive) continue;
+        if (dist2(e.x, e.z, pl.x, pl.z) < 36) this._damagePlayer(pl, 16);
+      }
+      for (let j = this.enemies.length - 1; j >= 0; j--) {
+        const o = this.enemies[j];
+        if (dist2(e.x, e.z, o.x, o.z) < 36) this._hurtEnemy(j, 30, ownerId, via);
+      }
+    }
     // chance to drop a pickup
     if (RNG() < 0.35) {
       const keys = Object.keys(POWERUP_TYPES);
@@ -1798,8 +2052,14 @@ class Game {
 
   _damagePlayer(p, dmg, attackerId) {
     const isLocal = p.id === this.localId;
+    // SPEED IS ARMOR: above 70% of rated speed the hull sheds a third of the
+    // hit — momentum play is defense, sitting still is not
+    if (Math.hypot(p.vx || 0, p.vz || 0) > p.maxSpeed * 0.7) dmg *= 0.65;
     p.shields -= dmg;
     this._breakCombo();   // any hit on the squad snaps the kill chain
+    if (!this.versus && this.pot > 0) {
+      this.pot = Math.round(this.pot * 0.7);   // ...and spills part of the pot
+    }
     if (isLocal) this.levelUntouched = false;
     if (isLocal) {
       this.hud.damage(Math.min(0.8, dmg / 30));
@@ -1868,7 +2128,7 @@ class Game {
       }
       const isLocal = p.id === this.localId;
       if (on && !p.onDepot && isLocal) {
-        this.hud.message(on.type === 'ammo' ? 'AMMO DEPOT — RESUPPLYING' : 'SHIELD DEPOT — RECHARGING', '#4fd6bb', 1.6);
+        this.hud.message(on.type === 'coolant' ? 'COOLANT DEPOT — VENTING HEAT' : 'SHIELD DEPOT — RECHARGING', '#4fd6bb', 1.6);
       }
       p.onDepot = !!on;
       if (!on) { p.depotAcc = 0; continue; }
@@ -1878,15 +2138,12 @@ class Game {
           p.depotAcc += dt;
           if (p.depotAcc >= 0.5) { p.depotAcc -= 0.5; this._sfx('refuel'); }
         }
-      } else {
-        if (p.ammo < p.maxAmmo) {
-          p.depotAcc += dt * 2.5;
-          while (p.depotAcc >= 1 && p.ammo < p.maxAmmo) {
-            p.depotAcc -= 1;
-            p.ammo++;
-            this._sfx('refuel');
-          }
-        }
+      } else if (p.heat > 0 || p.overheatT > 0) {
+        // coolant pad: rapid vent, and it burns off an overheat lock early
+        p.heat = Math.max(0, p.heat - dt * 30);
+        p.overheatT = Math.max(0, p.overheatT - dt * 2);
+        p.depotAcc += dt;
+        if (p.depotAcc >= 0.5) { p.depotAcc -= 0.5; this._sfx('refuel'); }
       }
     }
   }
@@ -1894,7 +2151,8 @@ class Game {
   _applyPowerup(p, type) {
     const spec = POWERUP_TYPES[type];
     switch (type) {
-      case 'ammo':   p.ammo = Math.min(p.maxAmmo, p.ammo + 18); break;
+      case 'coolant': p.heat = 0; p.overheatT = 0;
+                      p.superShots = Math.min(6, p.superShots + 2); break;
       case 'shield': p.shields = Math.min(p.maxShields, p.shields + 35); break;
       case 'nade':   p.nades = Math.min(p.maxNades, p.nades + 2); break;
       case 'mine':   p.mines = Math.min(p.maxMines, p.mines + 2); break;
@@ -2023,6 +2281,7 @@ class Game {
           pl.x += (dx / d) * 6;
           pl.z += (dz / d) * 6;
           pl.speed *= -0.5;
+          pl.vx *= -0.5; pl.vz *= -0.5;
         }
       }
       const lim = ARENA_HALF - WALL_PAD - b.radius;
@@ -2067,10 +2326,10 @@ class Game {
       if (!t) continue;
       const dist = Math.hypot(t.x - wx, t.z - wz);
       let aimX = t.x, aimZ = t.z;
-      if (Math.abs(t.speed) > 1) {
+      if (Math.hypot(t.vx || 0, t.vz || 0) > 1) {
         const tFly = dist / 55;
-        aimX += fwdX(t.angle) * t.speed * tFly * 0.7;
-        aimZ += fwdZ(t.angle) * t.speed * tFly * 0.7;
+        aimX += (t.vx || 0) * tFly * 0.7;
+        aimZ += (t.vz || 0) * tFly * 0.7;
       }
       const want = angleTo(aimX - wx, aimZ - wz);
       const diff = wrapAngle(want - tu.aim);
@@ -2098,7 +2357,8 @@ class Game {
     if (tu.hp <= 0) {
       tu.hp = 0;
       this.killsThisLevel++;
-      this._awardKill(400, ownerId);
+      this._awardKill(400, ownerId, 'turret');
+      this._bankPot();   // boss milestones are cash-outs too
       this._burst(wx, 3.4, wz, 30, [1, 0.55, 0.15], 13);
       this._spawnShards(wx, wz, [1.0, 0.5, 0.2]);
       this._sfx('explosion');
@@ -2132,7 +2392,8 @@ class Game {
     this.runStats.warlords++;
     this.rings = [];
     this.killsThisLevel++;
-    this._awardKill(b.score, ownerId);
+    this._awardKill(b.score, ownerId, 'boss');
+    this._bankPot();
     for (let i = 0; i < 3; i++) {
       this._burst(b.x + rand(-5, 5), rand(1, 4), b.z + rand(-5, 5), 40, [1, 0.5, 0.1], 16);
     }
@@ -2175,7 +2436,7 @@ class Game {
           const d = Math.hypot(e.x - r.x, e.z - r.z);
           if (Math.abs(d - r.r) < 2.6) {
             (r.hitE || (r.hitE = [])).push(e);
-            if (this._losClear(r.x, r.z, e.x, e.z)) this._hurtEnemy(j, r.dmg, r.owner, 'cannon');
+            if (this._losClear(r.x, r.z, e.x, e.z)) this._hurtEnemy(j, r.dmg, r.owner, 'shock');
           }
         }
       } else {
@@ -2273,16 +2534,36 @@ class Game {
   }
 
   _levelClear() {
-    let sh = 0, am = 0;
-    for (const p of this.players) { sh += Math.max(0, p.shields); am += p.ammo; }
+    let sh = 0;
+    for (const p of this.players) sh += Math.max(0, p.shields);
     this.levelBonus = this.level * 250 +
       Math.round(sh) * 3 +
-      am * 5 +
-      this.killsThisLevel * 50;
+      this.killsThisLevel * 50 +
+      this.pot;                    // whatever's still riding banks with the clear
     this.score += this.levelBonus;
+    this.pot = 0;
     if (this.levelUntouched) this._medal('untouchable');
+    this._rollGates();
     this.mode = 'levelclear';
     this._sfx('levelClear');
+  }
+
+  /* Warp gates: the strategic beat between sectors. STANDARD is always on
+   * offer next to two mutated routes that pay a tech signing bonus. Daily
+   * runs seed the roll so everyone faces the same map. The WARLORD allows
+   * no alternate routes. */
+  _rollGates() {
+    const next = this.level + 1;
+    if (this.versus || next % BOSS_EVERY === 0) { this.gates = null; return; }
+    const rng = this.dailySeed ? mulberry32(hashStr(this.dailySeed + '#gates' + this.level)) : Math.random;
+    const pool = MUTATORS.filter((m) => m.id !== 'gauntlet' || next >= 4);
+    const i1 = (rng() * pool.length) | 0;
+    let i2 = (rng() * (pool.length - 1)) | 0;
+    if (i2 >= i1) i2++;
+    this.gates = [
+      { id: 'standard', name: 'STANDARD SECTOR', desc: 'no modifiers', tech: 0 },
+      pool[i1], pool[i2],
+    ];
   }
 
   _beginDeath() {
@@ -2292,18 +2573,23 @@ class Game {
     this.shake = 2;
   }
 
-  nextLevel() {
+  /* gateId: which warp gate the squad took ('standard' / mutator id / null). */
+  nextLevel(gateId) {
     this.level++;
+    const gate = (this.gates || []).find((g) => g.id === gateId);
+    this.mutator = gate && gate.id !== 'standard' ? gate.id : null;
+    this.gates = null;
     // partial resupply between sectors; revive anyone who fell
     for (const p of this.players) {
       const wasDead = !p.alive;
       p.alive = true; p.respawnT = 0; p.lowWarned = false;
       const base = wasDead ? 0 : p.shields;
       p.shields = Math.min(p.maxShields, base + p.maxShields * 0.4);
-      p.ammo = Math.min(p.maxAmmo, (wasDead ? 0 : p.ammo) + Math.round(p.maxAmmo * 0.6));
       p.nades = Math.min(p.maxNades, p.nades + 2);
     }
     this.startLevel();
+    // riskier gates pay their tech signing bonus the moment you deploy
+    if (gate && gate.tech) for (const p of this.players) this._awardTech(p, gate.tech);
   }
 
   /* during 'dying': keep simulating particles & enemies for drama */

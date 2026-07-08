@@ -35,6 +35,8 @@
     tankSniper: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullSniper)),
     tankPhantom: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullPhantom)),
     tankRusher: renderer.createMesh(Geometry.tankSolid([1.0, 0.28, 0.5])),
+    tankShellback: renderer.createMesh(Geometry.tankSolid([0.62, 0.68, 0.76])),
+    tankWarden: renderer.createMesh(Geometry.tankSolid([0.95, 0.74, 0.22])),
     tankPlayer: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullPlayer)),
     shotPlayer: renderer.createMesh(Geometry.shot(Geometry.C.shotPlayer)),
     shotEnemy: renderer.createMesh(Geometry.shot(Geometry.C.shotEnemy)),
@@ -54,7 +56,11 @@
     stars: renderer.createMesh(Geometry.stars(640, 110), renderer.gl.POINTS),
     eclipse: renderer.createMesh(Geometry.eclipse(630)),
   };
-  const TANK_MESH = { drone: M.tankDrone, hunter: M.tankHunter, sniper: M.tankSniper, phantom: M.tankPhantom, rusher: M.tankRusher };
+  const TANK_MESH = {
+    drone: M.tankDrone, hunter: M.tankHunter, sniper: M.tankSniper,
+    phantom: M.tankPhantom, rusher: M.tankRusher,
+    shellback: M.tankShellback, warden: M.tankWarden,
+  };
 
   // deuteranopia-safe hull palette, baked as a second mesh set and swapped
   // live by the COLORBLIND HULLS setting
@@ -64,6 +70,8 @@
     sniper: [0.30, 0.55, 1.0],
     phantom: [0.93, 0.97, 1.0],
     rusher: [1.0, 0.45, 0.85],
+    shellback: [0.75, 0.78, 0.85],
+    warden: [1.0, 0.85, 0.30],
   };
   const TANK_MESH_CB = {};
   for (const k in CB_HULLS) TANK_MESH_CB[k] = renderer.createMesh(Geometry.tankSolid(CB_HULLS[k]));
@@ -745,13 +753,29 @@
       `BONUS <span class="gold">+${game.levelBonus}</span><br>` +
       `SCORE ${game.score}` +
       (bossNext ? `<br><span class="red">WARLORD SIGNATURE IN SECTOR ${next}</span>` : '');
-    document.getElementById('bt-continue').classList.toggle('hidden', Net.role === 'client');
+    // warp gates: the strategic beat — pick the next sector's ruleset.
+    // Risky routes flash their tech signing bonus. Clients watch the host.
+    const gatesEl = document.getElementById('gate-choices');
+    gatesEl.innerHTML = '';
+    const gates = Net.role !== 'client' ? game.gates : null;
+    if (gates && gates.length) {
+      for (const g of gates) {
+        const el = document.createElement('div');
+        el.className = 'mbtn gate-choice' + (g.id === 'standard' ? '' : ' gate-risky');
+        el.innerHTML = `<span class="draft-name">${g.name}</span>` +
+          `<span class="draft-desc">${g.desc.toUpperCase()}${g.tech ? ` — <span class="gate-pay">+${g.tech} TECH</span>` : ''}</span>`;
+        el.addEventListener('click', () => { AudioSys.resume(); AudioSys.play('select'); advanceLevel(g.id); });
+        gatesEl.appendChild(el);
+      }
+    }
+    document.getElementById('bt-continue').classList.toggle('hidden',
+      Net.role === 'client' || !!(gates && gates.length));
     document.getElementById('clear-wait').classList.toggle('hidden', Net.role !== 'client');
   }
 
-  function advanceLevel() {
+  function advanceLevel(gateId) {
     if (uiMode !== 'levelclear' || Net.role === 'client') return;
-    game.nextLevel();
+    game.nextLevel(gateId || 'standard');
     uiMode = 'playing';
     showScreen(null);
     hud.message('SECTOR ' + game.level, game.bossLevel ? '#ff4a3c' : '#4fd6bb', 2.5);
@@ -950,6 +974,12 @@
     } else {
       hud.message('SECTOR ' + game.level, '#4fd6bb', 2.5);
       AudioSys.play('sectorStart');
+      // mirror the host's sector-start banners
+      if (game.mutator) {
+        const m = MUTATORS.find((x) => x.id === game.mutator);
+        if (m) hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3);
+      }
+      if (game.bounty) hud.message('BOUNTY: ' + game.bounty.name, '#e8c75a', 2.4);
     }
   };
   Net.cb.onState = (msg) => { if (Net.role === 'client') Net.applyState(game, msg); };
@@ -1145,8 +1175,8 @@
     // resupply pads pulse slowly in their supply color
     const t = performance.now() / 1000;
     for (const d of (src.depots || [])) {
-      const pulse = 0.7 + 0.3 * Math.sin(t * 3 + (d.type === 'ammo' ? 0 : 2));
-      const tint = d.type === 'ammo'
+      const pulse = 0.7 + 0.3 * Math.sin(t * 3 + (d.type === 'coolant' ? 0 : 2));
+      const tint = d.type === 'coolant'
         ? [0.95 * pulse, 0.8 * pulse, 0.2 * pulse]
         : [0.25 * pulse, 1.0 * pulse, 0.55 * pulse];
       renderer.draw(M.depot, m4.trs(d.x, 0, d.z, 0, 1, 1, 1), { tint, unlit: true });
@@ -1225,8 +1255,17 @@
         const pu = 1 + 0.25 * (0.5 + 0.5 * Math.sin(now / 150));
         tint = [pu, pu, pu];
       }
-      const sc = (e.elite ? 1.18 : 1) * (e.type === 'rusher' ? 0.82 : 1);
+      const sc = (e.elite ? 1.18 : 1) *
+        (e.type === 'rusher' ? 0.82 : e.type === 'shellback' ? 1.22 : 1);
       renderer.draw(tankMeshFor(e.type), m4.trs(e.x, 0, e.z, e.angle, sc, sc, sc), { tint });
+      // warden: the cannon-proof umbrella reads as a slow golden ring
+      if (e.type === 'warden') {
+        const wp = 0.45 + 0.2 * Math.sin(now / 260);
+        renderer.draw(M.ring, m4.trs(e.x, 0.8, e.z, 0, 16, 1, 16),
+          { tint: [1.0 * wp, 0.8 * wp, 0.25 * wp], unlit: true, additive: true });
+        renderer.draw(M.ring, m4.trs(e.x, 2.2, e.z, 0, 15.6, 1, 15.6),
+          { tint: [0.8 * wp, 0.6 * wp, 0.18 * wp], unlit: true, additive: true });
+      }
     }
 
     // proximity mines: dim while arming, blinking hot once live
@@ -1505,7 +1544,7 @@
     if (lp && lp.input) {
       lp.input.turn = ax.turn; lp.input.drive = ax.drive;
       lp.input.fire = ax.fire; lp.input.nade = ax.nade; lp.input.boost = ax.boost;
-      lp.input.mine = ax.mine;
+      lp.input.mine = ax.mine; lp.input.vent = ax.vent;
     }
   }
 

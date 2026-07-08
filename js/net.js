@@ -7,7 +7,7 @@
  * broker, so nothing extra has to be hosted alongside the static site.
  */
 const Net = (() => {
-  const ENEMY_ORDER = ['drone', 'hunter', 'sniper', 'phantom', 'rusher'];
+  const ENEMY_ORDER = ['drone', 'hunter', 'sniper', 'phantom', 'rusher', 'shellback', 'warden'];
   const ID_PREFIX = 'phantom-arena-v2-';   // namespaces our ids on the shared broker
                                            // (v2: zones/tech-draft protocol)
   const MAX_PLAYERS = 4;
@@ -181,7 +181,7 @@ const Net = (() => {
       if (inp) {
         p.input.turn = inp.t; p.input.drive = inp.d;
         p.input.fire = !!inp.f; p.input.nade = !!inp.g; p.input.boost = !!inp.b;
-        p.input.mine = !!inp.m;
+        p.input.mine = !!inp.m; p.input.vent = !!inp.v;
       }
     }
   }
@@ -196,6 +196,8 @@ const Net = (() => {
       depots: game.depots,
       vs: game.versus ? 1 : 0,
       kt: game.killTarget,
+      mut: game.mutator || null,
+      bounty: game.bounty ? { name: game.bounty.name, n: game.bounty.n } : null,
     });
   }
 
@@ -208,8 +210,13 @@ const Net = (() => {
       lv: game.level,
       pl: game.players.map((p) => ({
         id: p.id, x: p.x, z: p.z, a: p.angle,
-        sh: p.shields, ms: p.maxShields, am: p.ammo, ma: p.maxAmmo,
+        sh: p.shields, ms: p.maxShields,
+        ht: Math.round(p.heat || 0), mh: p.maxHeat || 100,
+        vt: p.venting > 0 ? Math.round(p.venting * 100) / 100 : 0,
+        oh: p.overheatT > 0 ? 1 : 0, ss: p.superShots || 0,
+        vw: Math.round((((p.up && p.up.vent) || 0) * 0.1) * 100) / 100,
         al: p.alive ? 1 : 0, sp: p.speed, mp: p.maxSpeed,
+        vx: Math.round((p.vx || 0) * 100) / 100, vz: Math.round((p.vz || 0) * 100) / 100,
         ov: p.fx.overdrive, rp: p.fx.rapid, ci: p.colorIdx,
         bo: Math.round(p.boost || 0), bs: p.boosting ? 1 : 0, nd: p.nades || 0,
         mn: p.mines || 0, mb: p.maxBoost || 100,
@@ -239,7 +246,9 @@ const Net = (() => {
       fg: game.flags.map((f) => (f.taken ? 1 : 0)),
       fc: game.flags.map((f) => Math.round((f.cap || 0) * 100) / 100),
       al: game.alert,
-      cb: game.combo, ct: game.comboT, mu: game.mult,
+      cb: game.combo, ct: game.comboT, mu: game.mult, cw: game.comboWin,
+      pt: game.pot || 0,
+      by: game.bounty ? { p: game.bounty.prog, d: game.bounty.paid ? 1 : 0 } : undefined,
       // WARLORD boss: turret offsets are rebuilt client-side by index
       bo: (game.boss && !game.boss.dead) ? {
         x: game.boss.x, z: game.boss.z, a: game.boss.angle,
@@ -327,7 +336,7 @@ const Net = (() => {
         c.send({ t: 'input', in: {
           t: input.turn, d: input.drive,
           f: input.fire ? 1 : 0, g: input.nade ? 1 : 0, b: input.boost ? 1 : 0,
-          m: input.mine ? 1 : 0,
+          m: input.mine ? 1 : 0, v: input.vent ? 1 : 0,
         } });
       } catch (e) {}
     }
@@ -358,6 +367,9 @@ const Net = (() => {
     game.bossLevel = !game.versus && msg.level >= BOSS_EVERY && msg.level % BOSS_EVERY === 0;
     game.alert = 0;
     game.combo = 0; game.comboT = 0; game.mult = 1;
+    game.pot = 0;
+    game.mutator = msg.mut || null;
+    game.bounty = msg.bounty ? { name: msg.bounty.name, n: msg.bounty.n, prog: 0, paid: false } : null;
     game.mode = 'playing';
   }
 
@@ -376,8 +388,12 @@ const Net = (() => {
     game.players = msg.pl.map((d) => {
       const p = byId[d.id] || { input: { turn: 0, drive: 0, fire: false }, fx: {} };
       p.id = d.id; p.x = d.x; p.z = d.z; p.angle = d.a;
-      p.shields = d.sh; p.maxShields = d.ms; p.ammo = d.am; p.maxAmmo = d.ma;
+      p.shields = d.sh; p.maxShields = d.ms;
+      p.heat = d.ht || 0; p.maxHeat = d.mh || 100;
+      p.venting = d.vt || 0; p.overheatT = d.oh ? 1 : 0;
+      p.superShots = d.ss || 0; p.ventWiden = d.vw || 0;
       p.alive = !!d.al; p.speed = d.sp; p.maxSpeed = d.mp;
+      p.vx = d.vx || 0; p.vz = d.vz || 0;
       p.fx = { overdrive: d.ov, rapid: d.rp };
       p.colorIdx = d.ci;
       p.boost = d.bo; p.maxBoost = d.mb || 100; p.boosting = !!d.bs;
@@ -420,6 +436,12 @@ const Net = (() => {
     game.combo = msg.cb || 0;
     game.comboT = msg.ct || 0;
     game.mult = msg.mu || 1;
+    game.comboWin = msg.cw || 4;
+    game.pot = msg.pt || 0;
+    if (msg.by && game.bounty) {
+      game.bounty.prog = msg.by.p || 0;
+      game.bounty.paid = !!msg.by.d;
+    }
 
     game.boss = msg.bo ? {
       x: msg.bo.x, z: msg.bo.z, angle: msg.bo.a,
@@ -497,15 +519,16 @@ const Net = (() => {
       }
     }
 
-    // own tank: newest state + forward dead-reckoning (capped — a stall
-    // should freeze the tank, not launch it through a wall)
+    // own tank: newest state + forward dead-reckoning along the TRUE
+    // velocity (drift makes hull facing lie about direction). Capped — a
+    // stall should freeze the tank, not launch it through a wall.
     const newest = snaps[snaps.length - 1];
     const dl = index(newest.msg.pl, 'id')[game.localId];
     const lp = game.player;
     if (lp && dl && dl.al) {
       const age = Math.min(Math.max(0, now - newest.t), 0.12);
-      lp.x = dl.x + fwdX(dl.a) * dl.sp * age;
-      lp.z = dl.z + fwdZ(dl.a) * dl.sp * age;
+      lp.x = dl.x + (dl.vx || 0) * age;
+      lp.z = dl.z + (dl.vz || 0) * age;
       lp.angle = dl.a;
     }
 

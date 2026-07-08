@@ -561,3 +561,22 @@ body.touch-ui .mbtn { padding: 10px 20px; }
 /* co-op: the draft floats over live gameplay — dim panel, playfield stays hot */
 .screen.nonmodal { pointer-events: none; justify-content: flex-end; padding-bottom: 8vh; }
 .screen.nonmodal .panel { pointer-events: auto; background: rgba(8, 22, 18, 0.84); }
+
+/* ---------- warp gates (level-clear sector choice) ---------- */
+.gate-menu { width: min(400px, 88vw); gap: 8px; }
+.gate-menu:empty { display: none; }
+.mbtn.gate-choice {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 9px 18px;
+  min-height: 48px;
+  text-align: left;
+}
+.gate-choice .draft-name { letter-spacing: 3px; }
+.mbtn.gate-risky { border-color: rgba(232, 199, 90, 0.45); }
+.mbtn.gate-risky:hover, .mbtn.gate-risky.focus {
+  border-color: #e8c75a;
+  box-shadow: 0 0 14px rgba(232, 199, 90, 0.35);
+}
+.gate-choice .gate-pay { color: #e8c75a; }

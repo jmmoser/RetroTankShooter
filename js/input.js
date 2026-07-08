@@ -1,9 +1,9 @@
 /* Keyboard + mouse + touch + gamepad input.
  *
  * Gamepad (standard layout): left stick drives and steers, A/RT fire,
- * B/RB grenade, X/LB mine, LT boost, Y camera, Start pause. The d-pad and
- * stick also navigate menus by synthesizing the same virtual key edges the
- * keyboard uses, so every screen works from the couch.
+ * B/RB grenade, X vent, LB mine, LT boost, Y camera, Start pause. The d-pad
+ * and stick also navigate menus by synthesizing the same virtual key edges
+ * the keyboard uses, so every screen works from the couch.
  *
  * Touch is a first-class scheme, not a fallback:
  *  - A floating joystick spawns wherever the left thumb lands and stays
@@ -31,6 +31,7 @@ const Input = (() => {
     Space: 'fire',
     KeyX: 'nade', ControlLeft: 'nade',
     KeyV: 'mine',
+    KeyR: 'vent',
     ShiftLeft: 'boost', ShiftRight: 'boost',
     KeyC: 'cam', KeyP: 'pause',
   };
@@ -134,6 +135,7 @@ const Input = (() => {
       { key: 'fire',  label: 'FIRE',  x: right - 84 * u,  y: bottom - 100 * u, r: 48 * u },
       { key: 'nade',  label: 'NADE',  x: right - 180 * u, y: bottom - 54 * u,  r: 32 * u },
       { key: 'mine',  label: 'MINE',  x: right - 262 * u, y: bottom - 40 * u,  r: 26 * u },
+      { key: 'vent',  label: 'VENT',  x: right - 172 * u, y: bottom - 128 * u, r: 27 * u },
       { key: 'boost', label: 'BOOST', x: right - 60 * u,  y: bottom - 210 * u, r: 32 * u },
       { key: 'cam',   label: 'CAM',   x: right - 100 * u, y: safe.t + 32 * u,  r: 24 * u },
       { key: 'pause', label: 'II',    x: right - 40 * u,  y: safe.t + 32 * u,  r: 24 * u },
@@ -275,7 +277,7 @@ const Input = (() => {
   const pad = {
     connected: false,
     turn: 0, drive: 0,
-    fire: false, nade: false, mine: false, boost: false,
+    fire: false, nade: false, mine: false, boost: false, vent: false,
     prev: [],          // previous frame's button states, for edge detection
     prevStickX: 0, prevStickY: 0,
   };
@@ -295,7 +297,7 @@ const Input = (() => {
     pad.connected = !!gp;
     if (!gp) {
       pad.turn = 0; pad.drive = 0;
-      pad.fire = pad.nade = pad.mine = pad.boost = false;
+      pad.fire = pad.nade = pad.mine = pad.boost = pad.vent = false;
       pad.prev.length = 0;
       return;
     }
@@ -313,7 +315,8 @@ const Input = (() => {
     pad.drive = -sy;
     pad.fire = held(0) || held(7);    // A / RT
     pad.nade = held(1) || held(5);    // B / RB
-    pad.mine = held(2) || held(4);    // X / LB
+    pad.vent = held(2);               // X — the vent tap
+    pad.mine = held(4);               // LB
     pad.boost = held(6);              // LT
 
     // momentary edges
@@ -365,6 +368,7 @@ const Input = (() => {
       fire: keys.fire || fireHeld || pad.fire || touch.fireIds.size > 0,
       nade: keys.nade || nadeHeld || pad.nade || buttonHeld('nade'),
       mine: keys.mine || mineHeld || pad.mine || buttonHeld('mine'),
+      vent: !!keys.vent || pad.vent || buttonHeld('vent'),
       boost: !!keys.boost || pad.boost || buttonHeld('boost'),
     };
   }
