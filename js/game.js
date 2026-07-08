@@ -43,6 +43,16 @@ const OVERHEAT_LOCK = 2.6;       // forced cooldown after redlining past max
 const GRAZE_R = 4.2;             // enemy shots passing this close (but not
                                  // hitting) refund boost and pay tech
 
+/* Campaign difficulty presets (SETTINGS → DIFFICULTY). dmg scales what
+ * enemies do to the squad, pressure stretches/shrinks the spawn-pressure
+ * timer, potSpill is the pot fraction KEPT after a hit, waves trims the
+ * alarm/alert reinforcement counts (never below 1). */
+const DIFFICULTY = [
+  { dmg: 0.65, pressure: 1.5,  potSpill: 0.85, waves: -1 },  // RECRUIT — learn the systems
+  { dmg: 1,    pressure: 1,    potSpill: 0.7,  waves: 0  },  // STANDARD — as designed
+  { dmg: 1.2,  pressure: 0.85, potSpill: 0.6,  waves: 0  },  // VETERAN — the arena bites back
+];
+
 /* Sector gate mutators: after a clear you pick the NEXT sector's ruleset.
  * Riskier gates pay a tech signing bonus the moment you deploy. */
 const MUTATORS = [
@@ -333,6 +343,10 @@ class Game {
     this.mutator = null;
     this.gates = null;
     this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0 };
+    // one-shot coaching lines: zones are HELD, not touched — say so the
+    // first time the local tank starts (and abandons) a capture this run
+    this._hintHold = false;
+    this._hintDrain = false;
     this.players = defs.map((d, i) => this._makePlayer(d, i));
     for (const p of this.players) this.killCounts[p.id] = 0;
     this.localId = localId != null ? localId : this.players[0].id;
@@ -447,6 +461,10 @@ class Game {
     }
     RNG = Math.random;   // seeded window ends with generation
     this.mode = 'playing';
+    // first sector of a fresh campaign: spell out the capture rule up front
+    if (!this.versus && !this.bossLevel && L === 1) {
+      this.hud.message('DRIVE INTO A ZONE RING AND HOLD IT TO CAPTURE', '#8ecbff', 3.4);
+    }
     if (this.mutator) {
       const m = MUTATORS.find((x) => x.id === this.mutator);
       if (m) this.hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3);
@@ -468,6 +486,15 @@ class Game {
     let n = 0;
     for (const f of this.flags) if (!f.taken) n++;
     return n;
+  }
+
+  /* Active difficulty preset. Daily Ops always runs STANDARD so the shared
+   * seed stays a level playing field, and versus is player-vs-player. In
+   * co-op the host simulates, so the host's setting is the squad's. */
+  _diff() {
+    if (this.versus || this.dailySeed) return DIFFICULTY[1];
+    const d = typeof Settings !== 'undefined' ? Settings.get('difficulty') : 1;
+    return DIFFICULTY[d] || DIFFICULTY[1];
   }
 
   // ---- generation ---------------------------------------------------------
@@ -821,7 +848,7 @@ class Game {
     if (this.pressureT > 0) return;
     const heat = Math.min(1, this.levelTime / 90);   // dawdling tightens the screw
     this.pressureT = Math.max(3.5, (10 - this.level * 0.35) * (1 - heat * 0.55)) *
-      (this.mutator === 'swarm' ? 0.55 : 1);
+      (this.mutator === 'swarm' ? 0.55 : 1) * this._diff().pressure;
     const cap = 12 + Math.min(6, this.level);
     if (this.enemies.length + this.pendingSpawns.length >= cap) return;
     const n = 1 + ((heat > 0.5 || this.level > 4) ? 1 : 0);
@@ -859,11 +886,23 @@ class Game {
       for (const p of this.players) {
         if (p.alive && dist2(p.x, p.z, f.x, f.z) < CAP_RADIUS * CAP_RADIUS) holders.push(p);
       }
+      const localIn = holders.some((h) => h.id === this.localId);
       if (!holders.length) {
         f.contested = false;
+        // coach the drain the first time the local tank walks away mid-capture
+        if (!this._hintDrain && f.localWas && f.cap > 0.08) {
+          this._hintDrain = true;
+          this.hud.message('UPLINK DRAINING — GET BACK IN THE RING', '#ffd24a', 2.6);
+        }
+        f.localWas = false;
         f.cap = Math.max(0, (f.cap || 0) - dt / 6);   // uplink decays if abandoned
         continue;
       }
+      if (!this._hintHold && localIn) {
+        this._hintHold = true;
+        this.hud.message('HOLD THE RING UNTIL THE UPLINK FILLS', '#4fd6bb', 3);
+      }
+      f.localWas = localIn;
       f.contested = true;
       let spike = 0;
       for (const h of holders) spike = Math.max(spike, h.up ? (h.up.uplink || 0) : 0);
@@ -898,7 +937,7 @@ class Game {
   /* Starting a capture trips the alarm: a converge wave warps in around the
    * zone while the uplink fills — hold the ground or lose the progress. */
   _zoneAlarm(f) {
-    const n = 1 + Math.min(2, Math.floor(this.level / 3));
+    const n = Math.max(1, 1 + Math.min(2, Math.floor(this.level / 3)) + this._diff().waves);
     let queued = 0;
     for (let i = 0; i < n; i++) {
       if (this.enemies.length + this.pendingSpawns.length >= 18) break;
@@ -993,7 +1032,7 @@ class Game {
     while (this.alertTier < thresholds.length && this.alert >= thresholds[this.alertTier]) {
       this.alertTier++;
       if (this.flagsLeft() === 0) break;   // sector's done — no pointless wave
-      const wave = Math.min(4, 1 + Math.floor((this.level + this.alertTier) / 3));
+      const wave = Math.max(1, Math.min(4, 1 + Math.floor((this.level + this.alertTier) / 3)) + this._diff().waves);
       let queued = 0;
       for (let i = 0; i < wave; i++) {
         if (this.enemies.length + this.pendingSpawns.length >= 18) break;
@@ -2052,13 +2091,14 @@ class Game {
 
   _damagePlayer(p, dmg, attackerId) {
     const isLocal = p.id === this.localId;
+    dmg *= this._diff().dmg;   // versus stays 1:1 — _diff() is STANDARD there
     // SPEED IS ARMOR: above 70% of rated speed the hull sheds a third of the
     // hit — momentum play is defense, sitting still is not
     if (Math.hypot(p.vx || 0, p.vz || 0) > p.maxSpeed * 0.7) dmg *= 0.65;
     p.shields -= dmg;
     this._breakCombo();   // any hit on the squad snaps the kill chain
     if (!this.versus && this.pot > 0) {
-      this.pot = Math.round(this.pot * 0.7);   // ...and spills part of the pot
+      this.pot = Math.round(this.pot * this._diff().potSpill);   // ...and spills part of the pot
     }
     if (isLocal) this.levelUntouched = false;
     if (isLocal) {

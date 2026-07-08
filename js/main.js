@@ -1325,6 +1325,7 @@
 
   // ---- settings screen -----------------------------------------------------
   const SETTING_DEFS = [
+    { key: 'difficulty', max: 2, labels: ['RECRUIT', 'STANDARD', 'VETERAN'] },
     { key: 'volume', max: 10 },
     { key: 'music', max: 10 },
     { key: 'shake', max: 10 },
@@ -1385,7 +1386,7 @@
       ['HIGH SCORE', highScore],
       ['BEST SECTOR', st.bestSector],
       ['TANKS DESTROYED', st.kills],
-      ['FLAGS SECURED', st.flags],
+      ['ZONES SECURED', st.flags],
       ['WARLORDS DOWN', st.warlords],
       ['BEST COMBO', '×' + st.bestCombo],
       ['DAILY BEST TODAY', daily ? daily.score : '—'],
