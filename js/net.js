@@ -7,8 +7,9 @@
  * broker, so nothing extra has to be hosted alongside the static site.
  */
 const Net = (() => {
-  const ENEMY_ORDER = ['drone', 'hunter', 'sniper', 'phantom'];
-  const ID_PREFIX = 'phantom-arena-v1-';   // namespaces our ids on the shared broker
+  const ENEMY_ORDER = ['drone', 'hunter', 'sniper', 'phantom', 'rusher', 'shellback', 'warden'];
+  const ID_PREFIX = 'phantom-arena-v2-';   // namespaces our ids on the shared broker
+                                           // (v2: zones/tech-draft protocol)
   const MAX_PLAYERS = 4;
 
   // Interpolation: clients render remote entities this far in the past so
@@ -45,6 +46,8 @@ const Net = (() => {
     onScreen: null,   // (msg)           client: screen transition (clear/over)
     onError: null,    // (text)
     onPeerLeft: null, // (id)
+    onDraft: null,    // (offers)        client: a TECH draft is waiting
+    onPick: null,     // (peerId, id)    host: a client answered a draft
   };
 
   function libReady() { return typeof window.Peer === 'function'; }
@@ -129,7 +132,23 @@ const Net = (() => {
       if (r) { r.loadoutIndex = msg.loadoutIndex | 0; if (cb.onRoster) cb.onRoster(state.roster); broadcast({ t: 'roster', roster: state.roster, mode: state.mode }); }
     } else if (msg.t === 'input') {
       state.inputs[conn.peer] = msg.in;
+    } else if (msg.t === 'pick') {
+      // client answered a TECH draft — the host's sim validates and applies
+      if (cb.onPick) cb.onPick(conn.peer, msg.u);
     }
+  }
+
+  /* Host: deliver a TECH draft (3 upgrade ids) to one remote player. */
+  function sendDraft(peerId, offers) {
+    for (const c of state.conns) {
+      if (c.peer === peerId) { try { c.send({ t: 'draft', of: offers }); } catch (e) {} return; }
+    }
+  }
+
+  /* Client: answer the open draft with a pick. */
+  function sendPick(upgradeId) {
+    const c = state.hostConn;
+    if (c && c.open) { try { c.send({ t: 'pick', u: upgradeId }); } catch (e) {} }
   }
 
   function hostSetLocalLoadout(idx) {
@@ -162,7 +181,7 @@ const Net = (() => {
       if (inp) {
         p.input.turn = inp.t; p.input.drive = inp.d;
         p.input.fire = !!inp.f; p.input.nade = !!inp.g; p.input.boost = !!inp.b;
-        p.input.mine = !!inp.m;
+        p.input.mine = !!inp.m; p.input.vent = !!inp.v;
       }
     }
   }
@@ -177,6 +196,8 @@ const Net = (() => {
       depots: game.depots,
       vs: game.versus ? 1 : 0,
       kt: game.killTarget,
+      mut: game.mutator || null,
+      bounty: game.bounty ? { name: game.bounty.name, n: game.bounty.n } : null,
     });
   }
 
@@ -189,11 +210,18 @@ const Net = (() => {
       lv: game.level,
       pl: game.players.map((p) => ({
         id: p.id, x: p.x, z: p.z, a: p.angle,
-        sh: p.shields, ms: p.maxShields, am: p.ammo, ma: p.maxAmmo,
+        sh: p.shields, ms: p.maxShields,
+        ht: Math.round(p.heat || 0), mh: p.maxHeat || 100,
+        vt: p.venting > 0 ? Math.round(p.venting * 100) / 100 : 0,
+        oh: p.overheatT > 0 ? 1 : 0, ss: p.superShots || 0,
+        vw: Math.round((((p.up && p.up.vent) || 0) * 0.1) * 100) / 100,
         al: p.alive ? 1 : 0, sp: p.speed, mp: p.maxSpeed,
+        vx: Math.round((p.vx || 0) * 100) / 100, vz: Math.round((p.vz || 0) * 100) / 100,
         ov: p.fx.overdrive, rp: p.fx.rapid, ci: p.colorIdx,
         bo: Math.round(p.boost || 0), bs: p.boosting ? 1 : 0, nd: p.nades || 0,
-        mn: p.mines || 0,
+        mn: p.mines || 0, mb: p.maxBoost || 100,
+        nx: p.maxNades || 6, mx: p.maxMines || 4,
+        tl: p.techLvl || 0, tx: Math.round((p.tech01 || 0) * 100) / 100,
       })),
       en: game.enemies.map((e) => {
         if (!e._nid) e._nid = netSeq++;
@@ -216,8 +244,11 @@ const Net = (() => {
       }),
       pu: game.powerups.map((u) => ({ k: u.type, x: u.x, z: u.z, s: u.spin, b: u.bob })),
       fg: game.flags.map((f) => (f.taken ? 1 : 0)),
+      fc: game.flags.map((f) => Math.round((f.cap || 0) * 100) / 100),
       al: game.alert,
-      cb: game.combo, ct: game.comboT, mu: game.mult,
+      cb: game.combo, ct: game.comboT, mu: game.mult, cw: game.comboWin,
+      pt: game.pot || 0,
+      by: game.bounty ? { p: game.bounty.prog, d: game.bounty.paid ? 1 : 0 } : undefined,
       // WARLORD boss: turret offsets are rebuilt client-side by index
       bo: (game.boss && !game.boss.dead) ? {
         x: game.boss.x, z: game.boss.z, a: game.boss.angle,
@@ -229,7 +260,7 @@ const Net = (() => {
       } : null,
       ri: game.rings.map((r) => {
         if (!r._nid) r._nid = netSeq++;
-        return { i: r._nid, x: r.x, z: r.z, r: r.r };
+        return { i: r._nid, x: r.x, z: r.z, r: r.r, f: r.from === 'player' ? 1 : 0 };
       }),
       // slabs the boss has crushed (only ever changes on boss sectors)
       og: game.bossLevel ? game.obstacles.map((o) => (o.dead ? 0 : 1)) : undefined,
@@ -292,6 +323,9 @@ const Net = (() => {
         state.snaps.length = 0;
         if (cb.onScreen) cb.onScreen(msg);
         break;
+      case 'draft':
+        if (cb.onDraft) cb.onDraft(msg.of || []);
+        break;
     }
   }
 
@@ -302,7 +336,7 @@ const Net = (() => {
         c.send({ t: 'input', in: {
           t: input.turn, d: input.drive,
           f: input.fire ? 1 : 0, g: input.nade ? 1 : 0, b: input.boost ? 1 : 0,
-          m: input.mine ? 1 : 0,
+          m: input.mine ? 1 : 0, v: input.vent ? 1 : 0,
         } });
       } catch (e) {}
     }
@@ -316,7 +350,7 @@ const Net = (() => {
     game.level = msg.level;
     game.score = msg.score;
     game.obstacles = msg.obstacles;
-    game.flags = msg.flags.map((f) => ({ x: f.x, z: f.z, taken: f.taken, spin: f.spin || 0 }));
+    game.flags = msg.flags.map((f) => ({ x: f.x, z: f.z, taken: f.taken, spin: f.spin || 0, cap: 0, contested: false }));
     game.depots = msg.depots || [];
     game.enemies = [];
     game.projectiles = [];
@@ -333,6 +367,9 @@ const Net = (() => {
     game.bossLevel = !game.versus && msg.level >= BOSS_EVERY && msg.level % BOSS_EVERY === 0;
     game.alert = 0;
     game.combo = 0; game.comboT = 0; game.mult = 1;
+    game.pot = 0;
+    game.mutator = msg.mut || null;
+    game.bounty = msg.bounty ? { name: msg.bounty.name, n: msg.bounty.n, prog: 0, paid: false } : null;
     game.mode = 'playing';
   }
 
@@ -351,13 +388,18 @@ const Net = (() => {
     game.players = msg.pl.map((d) => {
       const p = byId[d.id] || { input: { turn: 0, drive: 0, fire: false }, fx: {} };
       p.id = d.id; p.x = d.x; p.z = d.z; p.angle = d.a;
-      p.shields = d.sh; p.maxShields = d.ms; p.ammo = d.am; p.maxAmmo = d.ma;
+      p.shields = d.sh; p.maxShields = d.ms;
+      p.heat = d.ht || 0; p.maxHeat = d.mh || 100;
+      p.venting = d.vt || 0; p.overheatT = d.oh ? 1 : 0;
+      p.superShots = d.ss || 0; p.ventWiden = d.vw || 0;
       p.alive = !!d.al; p.speed = d.sp; p.maxSpeed = d.mp;
+      p.vx = d.vx || 0; p.vz = d.vz || 0;
       p.fx = { overdrive: d.ov, rapid: d.rp };
       p.colorIdx = d.ci;
-      p.boost = d.bo; p.maxBoost = 100; p.boosting = !!d.bs;
-      p.nades = d.nd; p.maxNades = 6;
-      p.mines = d.mn || 0; p.maxMines = 4;
+      p.boost = d.bo; p.maxBoost = d.mb || 100; p.boosting = !!d.bs;
+      p.nades = d.nd; p.maxNades = d.nx || 6;
+      p.mines = d.mn || 0; p.maxMines = d.mx || 4;
+      p.techLvl = d.tl || 0; p.tech01 = d.tx || 0;
       return p;
     });
     game.player = game.players.find((p) => p.id === game.localId) || game.players[0];
@@ -382,11 +424,24 @@ const Net = (() => {
     game.projectiles = msg.pr.map((d) => ({ nid: d.i, x: d.x, y: d.y, z: d.z, angle: d.a, from: d.e ? 'enemy' : 'player', kind: d.k ? 'nade' : undefined }));
     game.powerups = msg.pu.map((d) => ({ type: d.k, x: d.x, z: d.z, spin: d.s, bob: d.b }));
     for (let i = 0; i < game.flags.length && i < msg.fg.length; i++) game.flags[i].taken = !!msg.fg[i];
+    if (msg.fc) {
+      for (let i = 0; i < game.flags.length && i < msg.fc.length; i++) {
+        const f = game.flags[i];
+        f.contested = (msg.fc[i] || 0) > (f.cap || 0);   // rising uplink = being held
+        f.cap = msg.fc[i] || 0;
+      }
+    }
 
     game.alert = msg.al || 0;
     game.combo = msg.cb || 0;
     game.comboT = msg.ct || 0;
     game.mult = msg.mu || 1;
+    game.comboWin = msg.cw || 4;
+    game.pot = msg.pt || 0;
+    if (msg.by && game.bounty) {
+      game.bounty.prog = msg.by.p || 0;
+      game.bounty.paid = !!msg.by.d;
+    }
 
     game.boss = msg.bo ? {
       x: msg.bo.x, z: msg.bo.z, angle: msg.bo.a,
@@ -400,7 +455,7 @@ const Net = (() => {
         dx: BOSS_TURRET_OFFSETS[i][0], dz: BOSS_TURRET_OFFSETS[i][1],
       })),
     } : null;
-    game.rings = (msg.ri || []).map((r) => ({ nid: r.i, x: r.x, z: r.z, r: r.r }));
+    game.rings = (msg.ri || []).map((r) => ({ nid: r.i, x: r.x, z: r.z, r: r.r, from: r.f ? 'player' : 'boss' }));
     if (msg.og) {
       for (let i = 0; i < game.obstacles.length && i < msg.og.length; i++) {
         game.obstacles[i].dead = !msg.og[i];
@@ -464,15 +519,16 @@ const Net = (() => {
       }
     }
 
-    // own tank: newest state + forward dead-reckoning (capped — a stall
-    // should freeze the tank, not launch it through a wall)
+    // own tank: newest state + forward dead-reckoning along the TRUE
+    // velocity (drift makes hull facing lie about direction). Capped — a
+    // stall should freeze the tank, not launch it through a wall.
     const newest = snaps[snaps.length - 1];
     const dl = index(newest.msg.pl, 'id')[game.localId];
     const lp = game.player;
     if (lp && dl && dl.al) {
       const age = Math.min(Math.max(0, now - newest.t), 0.12);
-      lp.x = dl.x + fwdX(dl.a) * dl.sp * age;
-      lp.z = dl.z + fwdZ(dl.a) * dl.sp * age;
+      lp.x = dl.x + (dl.vx || 0) * age;
+      lp.z = dl.z + (dl.vz || 0) * age;
       lp.angle = dl.a;
     }
 
@@ -528,6 +584,7 @@ const Net = (() => {
     libReady: libReady,
     hostCreate: hostCreate, hostStartGame: hostStartGame, hostSetLocalLoadout: hostSetLocalLoadout, hostSetMode: hostSetMode, applyInputs: applyInputs,
     broadcastLevel: broadcastLevel, broadcastState: broadcastState, broadcastScreen: broadcastScreen,
+    sendDraft: sendDraft, sendPick: sendPick,
     clientJoin: clientJoin, clientSetLoadout: clientSetLoadout, sendInput: sendInput,
     applyLevel: applyLevel, applyState: applyState, clientInterpolate: clientInterpolate,
     leave: leave,
