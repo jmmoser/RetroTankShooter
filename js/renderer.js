@@ -10,6 +10,14 @@
  *    and the composite pass adds the bloom back with FXAA + a vignette.
  * The glow pipeline degrades gracefully: if FBOs fail (or GLOW FX is off in
  * settings) everything renders straight to the canvas like before.
+ *
+ * Antialiasing: the context is created with antialias:true, but that only
+ * covers direct-to-canvas rendering — an offscreen FBO gets no MSAA, which
+ * left every wireframe line jagged whenever glow was on. On WebGL2 the scene
+ * pass therefore renders into a multisampled renderbuffer and is resolved
+ * (blitFramebuffer) into the scene texture before post-processing. On WebGL1
+ * there is no multisampled-FBO API, so FXAA in the composite remains the
+ * only smoothing there.
  */
 
 const m4 = {
@@ -243,9 +251,13 @@ void main() {
 class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
-    const gl = canvas.getContext('webgl', { antialias: true, alpha: false });
+    const ctxOpts = { antialias: true, alpha: false };
+    const gl = canvas.getContext('webgl2', ctxOpts) ||
+               canvas.getContext('webgl', ctxOpts);
     if (!gl) throw new Error('WebGL not supported');
     this.gl = gl;
+    this.isWebGL2 = typeof WebGL2RenderingContext !== 'undefined' &&
+                    gl instanceof WebGL2RenderingContext;
 
     this.program = this._buildProgram(VS, FS);
     gl.useProgram(this.program);
@@ -347,6 +359,8 @@ class Renderer {
       ['uScene', 'uBloom', 'uTexel', 'uBloomStrength']);
 
     this.sceneFbo = null;   // allocated lazily in _resizePost
+    this.msaaFbo = null;    // WebGL2 only: multisampled scene target
+    this.msaaBroken = false; // flipped true if MSAA setup fails; don't retry
     this.pingFbo = [null, null];
     this.postW = 0;
     this.postH = 0;
@@ -381,18 +395,56 @@ class Renderer {
     if (!t) return;
     const gl = this.gl;
     gl.deleteFramebuffer(t.fbo);
-    gl.deleteTexture(t.tex);
+    if (t.tex) gl.deleteTexture(t.tex);
     if (t.rb) gl.deleteRenderbuffer(t.rb);
+    if (t.colorRb) gl.deleteRenderbuffer(t.colorRb);
+  }
+
+  /* WebGL2: multisampled color+depth renderbuffer target for the scene pass.
+   * Resolved into the plain scene texture in endFrame via blitFramebuffer. */
+  _makeMsaaTarget(w, h) {
+    const gl = this.gl;
+    const samples = Math.min(4, gl.getParameter(gl.MAX_SAMPLES));
+    if (samples < 2) throw new Error('MSAA unavailable');
+    const colorRb = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, colorRb);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.RGBA8, w, h);
+    const rb = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, rb);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.DEPTH_COMPONENT16, w, h);
+    const fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, colorRb);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rb);
+    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (!ok) {
+      gl.deleteFramebuffer(fbo);
+      gl.deleteRenderbuffer(colorRb);
+      gl.deleteRenderbuffer(rb);
+      throw new Error('MSAA FBO incomplete');
+    }
+    return { fbo, tex: null, rb, colorRb, w, h };
   }
 
   _resizePost() {
     const w = this.canvas.width, h = this.canvas.height;
     if (this.postW === w && this.postH === h && this.sceneFbo) return;
     this._dropTarget(this.sceneFbo);
+    this._dropTarget(this.msaaFbo);
+    this.msaaFbo = null;
     this._dropTarget(this.pingFbo[0]);
     this._dropTarget(this.pingFbo[1]);
     const bw = Math.max(1, w >> 1), bh = Math.max(1, h >> 1);
-    this.sceneFbo = this._makeTarget(w, h, true);
+    if (this.isWebGL2 && !this.msaaBroken) {
+      try {
+        this.msaaFbo = this._makeMsaaTarget(w, h);
+      } catch (e) {
+        this.msaaBroken = true;   // GPU refused: scene texture keeps its own depth
+      }
+    }
+    // with MSAA the depth buffer lives on the multisampled target instead
+    this.sceneFbo = this._makeTarget(w, h, !this.msaaFbo);
     this.pingFbo[0] = this._makeTarget(bw, bh, false);
     this.pingFbo[1] = this._makeTarget(bw, bh, false);
     this.postW = w;
@@ -435,7 +487,8 @@ class Renderer {
         this.glowActive = false;
       }
     }
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.glowActive ? this.sceneFbo.fbo : null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,
+      this.glowActive ? (this.msaaFbo || this.sceneFbo).fbo : null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
@@ -577,6 +630,15 @@ class Renderer {
   endFrame() {
     if (!this.glowActive) return;
     const gl = this.gl;
+
+    // resolve the multisampled scene into the plain texture the post passes read
+    if (this.msaaFbo) {
+      const w = this.sceneFbo.w, h = this.sceneFbo.h;
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.msaaFbo.fbo);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.sceneFbo.fbo);
+      gl.blitFramebuffer(0, 0, w, h, 0, 0, w, h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    }
+
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.CULL_FACE);
 

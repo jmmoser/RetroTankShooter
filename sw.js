@@ -1,7 +1,7 @@
 /* Offline cache: the whole game is static files, so a cache-first worker
  * makes it installable and fully playable with no connection (co-op still
  * needs the network, single-player doesn't). Bump CACHE to ship an update. */
-const CACHE = 'phantom-arena-v6';
+const CACHE = 'phantom-arena-v7';
 const ASSETS = [
   './', 'index.html', 'style.css', 'manifest.webmanifest', 'icon.svg',
   'js/settings.js', 'js/audio.js', 'js/input.js', 'js/geometry.js',
