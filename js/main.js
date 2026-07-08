@@ -85,7 +85,9 @@
     AudioSys.setVolume(Settings.get('volume') / 10);
     AudioSys.setMusicVolume(Settings.get('music') / 10);
     document.getElementById('crt').style.display = Settings.get('crt') ? '' : 'none';
+    document.getElementById('fps').classList.toggle('hidden', !Settings.get('fps'));
     renderer.setGlow(Settings.get('glow'));
+    renderer.setMsaa(Settings.get('quality') >= 1);
   }
   Settings.onChange = () => { applySettings(); renderSettingVals(); };
   applySettings();
@@ -1327,9 +1329,11 @@
     { key: 'music', max: 10 },
     { key: 'shake', max: 10 },
     { key: 'glow', bool: true },
+    { key: 'quality', max: 1, labels: ['LOW', 'HIGH'] },
     { key: 'crt', bool: true },
     { key: 'aimAssist', bool: true },
     { key: 'colorblind', bool: true },
+    { key: 'fps', bool: true },
   ];
 
   function renderSettingVals() {
@@ -1337,7 +1341,7 @@
       const el = document.getElementById('stv-' + d.key);
       if (!el) continue;
       const v = Settings.get(d.key);
-      el.textContent = d.bool ? (v ? 'ON' : 'OFF') : v + '/' + d.max;
+      el.textContent = d.bool ? (v ? 'ON' : 'OFF') : d.labels ? d.labels[v] : v + '/' + d.max;
     }
   }
   renderSettingVals();
@@ -1601,11 +1605,28 @@
   // ---- main loop -------------------------------------------------------------------
   let lastT = performance.now();
 
+  // FPS overlay: frames counted over half-second windows, so the readout is
+  // steady enough to compare before/after a settings change
+  const fpsEl = document.getElementById('fps');
+  let fpsFrames = 0, fpsWindowStart = performance.now();
+
   function frame(now) {
     requestAnimationFrame(frame);
     let dt = (now - lastT) / 1000;
     lastT = now;
     dt = Math.min(dt, 0.05);
+
+    if (Settings.get('fps')) {
+      fpsFrames++;
+      if (now - fpsWindowStart >= 500) {
+        fpsEl.textContent = 'FPS ' + Math.round((fpsFrames * 1000) / (now - fpsWindowStart));
+        fpsFrames = 0;
+        fpsWindowStart = now;
+      }
+    } else {
+      fpsFrames = 0;
+      fpsWindowStart = now;
+    }
 
     Input.pollGamepad();
     // gate matches the HUD's draw condition exactly: no invisible-but-live
@@ -1694,5 +1715,5 @@
   }
 
   // exposed for automated testing / tinkering
-  window.__PA = { game, hud, net: Net, getMode: () => uiMode };
+  window.__PA = { game, hud, renderer, net: Net, getMode: () => uiMode };
 })();
