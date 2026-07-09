@@ -1,18 +1,20 @@
-# PHANTOM ARENA — Retro Tank Shooter
+# PHANTOM ARENA — Retro Tank Stealth
 
-A browser-based homage to the flat-shaded 3D tank arena games of the early
-1990s — rebuilt around a modern momentum-roguelite core. Drive (and drift)
-a hover-tank across a near-black neon grid, ride a **heat cannon's
-redline** and perfect-vent it mid-firefight, hold uplink zones while the
-arena warps in wave after wave to stop you, and spend the tech you earn on
-**3-choice upgrade drafts** that turn your cannon into something absurd by
-mid-run. Between sectors you pick your route through **warp gates** —
-mutated high-risk sectors pay signing bonuses. Speed is armor, grazing
-enemy fire refunds boost, kill variety drives the score multiplier, and
-everything you earn rides an unbanked **pot** until you cash it out at a
-zone. Bouncy walls, boost-ram kills, kamikaze rushers, armored shellbacks,
-shield-warden packs, cloaked phantoms and tanks that shatter into tumbling
-polygon shards.
+A browser-based homage to the flat-shaded 3D tank games of the early
+1990s — rebuilt as a **stealth-hunter roguelite**. This time *you* are the
+phantom: the sector is quiet, its patrols are blind, and every hull out
+there is a stalk-and-kill problem. Run slow and cold and you're a rumor;
+fire the **heat cannon** and its report carries, the hot barrel is a
+beacon, and the grid starts hunting. Hack uplink zones (noisily), spend
+the tech you earn on **3-choice upgrade drafts**, and when the last uplink
+falls the whole sector wakes up and the run ends at a far-side
+**extraction gate** — the getaway is the finale. Between sectors you pick
+your route through **warp gates**; mutated high-risk sectors pay signing
+bonuses. Silent kills pay half again the score, a **boost-ram is the
+assassin's quiet execution**, and everything you earn rides an unbanked
+**pot** until you cash it out. Bouncy walls, kamikaze rushers, armored
+shellbacks, shield-warden packs, long-eyed snipers and tanks that shatter
+into tumbling polygon shards.
 
 Built with **plain WebGL, Canvas 2D and Web Audio** — no build step, no
 assets, no CDNs. Even the **synthwave soundtrack is synthesized live** by a
@@ -37,27 +39,51 @@ game is **installable as a PWA and fully playable offline** (co-op excepted).
 
 ## How to play
 
-Secure **all uplink zones** in the sector to advance. A zone isn't a
-touch-and-go flag: drive into its ring and **hold it** while the uplink
-fills. Starting a capture trips the **zone alarm** — a converge wave warps
-in around you while the bar climbs, so every objective is a set-piece fight.
-Leave, and the progress drains away. Your hull is gone when shields hit zero.
+**You are invisible until the grid finds you.** Every patrol runs a
+sensor: inside its vision cone, with line of sight, it *fills a detection
+meter* — faster the closer and louder you are. At the first threshold it
+breaks off to **investigate**; fill the meter and it **alerts**, radios
+its packmates, and the sector **ALARM** goes up: converge waves warp in
+on your last known position until you break line of sight, run cold, and
+the hunt stands down. The HUD tells you where you stand at all times —
+**UNDETECTED / PATROLS SUSPICIOUS / ALARM**.
 
-The sector never goes quiet. Hostiles keep warping in on a **pressure
-timer that tightens the longer you stay** — camping behind a slab is a
-losing strategy, and most waves lead with rushers that come straight at you.
-Sector 1 opens gently: three zones, a light garrison, a long breather
-before the first pressure wave, and your first capture doesn't trip the
-alarm. The screw turns from sector 2 on.
+Your **SIGNATURE** bar is how loud you read on those sensors: speed is
+noise, the hot cannon is a beacon, boost is a flare. Slow and cold, a
+patrol has to nearly drive into you; redlining at full boost, the whole
+grid sees you coming. Venting isn't just a reload — it's how you **go
+dark**. Sound matters too: the cannon's report, grenade and mine blasts,
+even slamming a slab at speed all pull patrols toward the source — but
+noise only makes them *look*. Only eyes-on makes them shoot.
+
+**Kill them before they know.** A hull that never alerted pays **half
+again the score** as a **SILENT KILL** — and a boost-ram execution is
+quiet enough that only close packmates notice the wreck. A hull that
+*survives* a hit is instantly hostile, so commit: one clean ram, a mine
+under a patrol route, an isolated straggler deleted at range.
+
+Secure **all uplink zones** to open the way out. A zone isn't a
+touch-and-go flag: drive into its ring and **hold it** while the uplink
+fills — and the hack **pulses**, dragging every patrol in earshot over to
+look. The stealth play is clearing the local patrol first; the loud play
+is holding the ring against whatever shows up. Leave, and the progress
+drains away.
+
+When the last uplink falls, there's no mop-up — the grid knows, every
+hull in the sector wakes up, and an **EXTRACTION GATE** opens across the
+arena. The run ends when your tank (your whole squad, in co-op) is inside
+the gate ring. Get there without ever tripping the alarm beforehand and
+the sector pays a **GHOST EXTRACTION** bonus. Your hull is gone when
+shields hit zero.
 
 Getting overwhelmed? **SETTINGS → DIFFICULTY** has three campaign presets:
-**RECRUIT** stretches the pressure timer, trims the alarm waves and softens
-incoming fire while you learn the systems, **STANDARD** is the game as
-designed, and **VETERAN** turns all of it up. Stay unhit for a few seconds
-and your hull **self-repairs** — fully on RECRUIT, to about two-thirds on
-STANDARD, never on VETERAN, where a depot is the only way back. Daily Ops
-always runs STANDARD so the shared leaderboard seed stays a level playing
-field.
+**RECRUIT** slows enemy sensors, shortens the alarm and softens incoming
+fire while you learn the systems, **STANDARD** is the game as designed,
+and **VETERAN** sharpens the sensors and stretches the hunt. Stay unhit
+for a few seconds and your hull **self-repairs** — fully on RECRUIT, to
+about two-thirds on STANDARD, never on VETERAN, where a depot is the only
+way back. Daily Ops always runs STANDARD so the shared leaderboard seed
+stays a level playing field.
 
 ### The heat cannon — ride the redline, nail the vent
 
@@ -68,6 +94,8 @@ don't have. Tap `R` to **vent** manually: a marker sweeps the bar, and a
 second tap inside the highlighted band is a **perfect vent** — instant
 clear plus a burst of supercharged shells. Coolant depots and pickups vent
 for you; the COOLANT LOOP and VENT TUNING upgrades tune the whole system.
+And because heat is *signature*, the vent is double-edged gold: clear the
+bar and you drop off enemy sensors.
 
 ### Momentum is everything
 
@@ -79,7 +107,9 @@ just brakes hard, then backs up). Above ~70% speed the hull sheds a
 third of any hit (**speed is armor**), boost-rams scale with impact speed,
 and an enemy shell that *nearly* clips you is a **graze**: it refunds
 boost, pays a tick of tech and keeps your combo window alive. Experts
-thread fire on purpose.
+thread fire on purpose. The trade is the heart of the game now: speed is
+armor in a fight, but speed is *noise* on the prowl — you're always
+choosing which tank to be.
 
 ### Style pays, greed decides
 
@@ -97,23 +127,25 @@ After each clear you choose the next sector through a **warp gate**:
 STANDARD, or a mutated route that pays a **tech signing bonus** — SWARM
 PROTOCOL (relentless thin-hull waves), BARREN GRID (no depots), ELITE
 SURGE, VOLATILE HULLS (every kill detonates), or the all-elite GAUNTLET.
-Every sector also posts an optional **bounty** (3 ram kills, graze 8
-shots, reach ×4...) that pays the whole squad in tech. Daily Ops seeds the
-gate offers too, so everyone plays the same map.
+Every sector also posts an optional **bounty** (3 silent kills, 3 ram
+kills, graze 8 shots, reach ×4...) that pays the whole squad in tech.
+Daily Ops seeds the gate offers too, so everyone plays the same map.
 
 ### Tech drafts — build your tank mid-run
 
 Kills, captures and salvage pay **TECH**. Each tech level deals a
 **3-choice upgrade draft**: twin cannons, ricochet rounds, piercing cores,
-cluster grenades, shock discharges, ram plating, shield siphons and more —
-sixteen stackable upgrades that compound into a build. Solo, the war waits
-while you choose; in co-op the fight doesn't pause, so you pick under fire
-(press `1 2 3`, tap, or click). By sector 5 no two runs fight alike.
+cluster grenades, shock discharges, ram plating, ghost plating (slower
+enemy sensors), shield siphons and more — nineteen stackable upgrades that
+compound into a build: full assassin, full brawler, or the drift-happy
+something in between. Solo, the war waits while you choose; in co-op the
+fight doesn't pause, so you pick under fire (press `1 2 3`, tap, or
+click). By sector 5 no two runs fight alike.
 
 **Movement is a weapon.** Slam into a hostile at boost speed and it
 shatters — a boost-ram costs a scratch of shields (nothing with RAM
-PLATING) and it's the flashiest way to deal with a rusher bearing down
-on you.
+PLATING), it defuses a rusher bearing down on you, and it's the quietest
+kill in the game.
 
 Sector terrain comes in four flavors so no two runs blur together: the
 classic **scatter** of slabs, long broken **wall corridors** that channel
@@ -122,17 +154,21 @@ firefights down lanes, a central **bastion** with a gate on each side, and
 breach-and-clear. Daily Ops layouts stay identical for everyone — the
 generators all run off the day's seed.
 
-Every zone you secure raises the sector **alert level**: survivors get
-faster and more trigger-happy, and crossing a threshold warps
-**reinforcements** in near the remaining zones — sectors end in a
-crescendo, not a mop-up. When only a couple of zones remain they light up
-with **beacon pillars** (and pin to the radar rim), so the last objective
-is a fight, never a search.
+Every zone you secure makes the grid warier: survivors speed up, and
+crossing a threshold warps **fresh patrols** in near the remaining zones —
+they arrive blind, but the sector keeps getting thicker to sneak through.
+When only a couple of zones remain they light up with **beacon pillars**
+(and pin to the radar rim), so the last objective is a hunt, never a
+search. The radar reads the war back to you: **dim blips are blind
+patrols, half-lit ones are investigating, full-bright ones know** — and
+the same telltale glows on the ground under every hull, amber for
+suspicious, strobing red for alerted.
 
 Kills within a few seconds of each other chain into a **combo multiplier**
 (up to ×5) that also boosts zone captures — but taking a single hit breaks
-the chain. Boost into a cluster and grenade it for big numbers; play sloppy
-and the score dries up.
+the chain. Ghost a patrol chain for silent-kill money, or go loud and
+chain the converge wave for big numbers; play sloppy and the score dries
+up either way.
 
 Every **5th sector** has no zones at all. Instead, a **WARLORD** holds the
 arena: a huge hovercruiser that crushes the very slabs you'd hide behind,
@@ -173,10 +209,10 @@ Every run — campaign, daily, even a doomed one — pays **XP** into a
 shows the XP bar filling and exactly how much is left to the next
 promotion.
 
-Twelve **medals** mark one-time feats: a ×5 combo, a sector cleared without
-taking a hit, three mine kills in one mission, a 3-day daily streak, and
-more. They pop mid-run with a toast and a jingle, and hang on the medal
-wall in the service record.
+Fourteen **medals** mark one-time feats: a ghost extraction, five silent
+kills in one mission, a ×5 combo, a sector cleared without taking a hit,
+a 3-day daily streak, and more. They pop mid-run with a toast and a
+jingle, and hang on the medal wall in the service record.
 
 The **SERVICE RECORD** screen tracks the rest of your career: missions,
 kills, zones secured, warlords downed, best combo and best sector — all in your
@@ -294,8 +330,11 @@ Before deploying, allocate your tank's power — a classic trade-off:
 
 ### Enemies
 
-Each hostile fights its own way, and all of them steer around cover and
-scatter from a grenade in the air instead of sitting under it:
+Every hostile starts out **blind**: patrols amble their routes at half
+speed until something fills their sensor — then they investigate, then
+they hunt. Alerted, each type fights its own way, and all of them steer
+around cover and scatter from a grenade in the air instead of sitting
+under it:
 
 - **Drone** (red) — patroller, guards the zones; shot-up drones break off
   and fall back on the nearest packmate, so wounded stragglers regroup into
@@ -351,8 +390,9 @@ js/renderer.js  WebGL renderer + mat4 helpers: flat-shaded forward pass,
                 FXAA / vignette post-processing chain
 js/hud.js       radar, shield/heat/vent bars, pot & bounty, scoreboard (Canvas 2D)
 js/game.js      arena generation (four terrain layouts), players, per-type
-                enemy AI, projectiles, pickups, seeded daily arenas, versus
-                rules, TECH upgrade drafts, uplink zones, spawn pressure
+                enemy AI with stealth detection states, noise + signature
+                model, sector alarm, projectiles, pickups, seeded daily
+                arenas, versus rules, TECH drafts, uplink zones, extraction
 js/net.js       WebRTC co-op/versus networking (host-authoritative, PeerJS,
                 client-side snapshot interpolation)
 js/main.js      screen flow, camera, scene drawing, main loop
