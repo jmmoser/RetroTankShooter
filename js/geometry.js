@@ -444,37 +444,6 @@ const Geometry = (() => {
     return new Float32Array(verts);
   }
 
-  /* SECTOR NULL floor: the classic Spectre game-board checkerboard, drained
-   * almost to black. It runs far past the arena bounds so the fog swallows
-   * the far squares — the plane should read as a place with no edge, not a
-   * playfield. Two tones only; the pattern is the emptiness. */
-  function checkerboard(half, cell) {
-    const b = new MeshBuilder();
-    const dark = [0.016, 0.018, 0.024];
-    const lite = [0.062, 0.068, 0.082];
-    for (let ix = -half; ix < half; ix += cell) {
-      for (let iz = -half; iz < half; iz += cell) {
-        const odd = ((ix / cell) + (iz / cell)) & 1;
-        b.quad([ix, 0, iz], [ix, 0, iz + cell], [ix + cell, 0, iz + cell], [ix + cell, 0, iz],
-          odd ? dark : lite);
-      }
-    }
-    return b.build();
-  }
-
-  /* Dead relay: a narrow obelisk left standing on the hollow plane. Drawn
-   * near-silhouette; the floating core above it is drawn separately (unlit)
-   * so it can pulse until the relay is silenced. */
-  function obelisk() {
-    const b = new MeshBuilder();
-    const dark = [0.30, 0.32, 0.38];
-    const base = [0.20, 0.21, 0.26];
-    b.box(0, 0.35, 0, 3.0, 0.7, 3.0, base);
-    b.box(0, 3.8, 0, 1.5, 6.4, 1.5, dark);
-    b.pyramid(0, 7.0, 0, 1.5, 1.5, 1.2, dark);
-    return b.build();
-  }
-
   /* Ground: near-black plane + cold grid lines (line list, y slightly raised). */
   function ground(half, step) {
     const b = new MeshBuilder();
@@ -498,5 +467,5 @@ const Geometry = (() => {
     return new Float32Array(verts);
   }
 
-  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, ground, gridLines, checkerboard, obelisk, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring };
+  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring };
 })();

@@ -185,13 +185,6 @@ const AudioSys = (() => {
       notes.forEach((f, i) => tone('square', f, f, 0.16, 0.28, i * 0.11));
       noise(1.2, 0.5, 1000, 40, 0.1);
     },
-    // SECTOR NULL: a relay going silent is a toll, not a fanfare — one low
-    // strike and its dissonant partial, left to die out on their own
-    relay() {
-      tone('sine', 196, 98, 1.4, 0.3);
-      tone('sine', 277, 139, 1.3, 0.14, 0.03);
-      tone('triangle', 587, 587, 0.25, 0.05, 0.02);
-    },
   };
 
   // -- procedural soundtrack -------------------------------------------------
@@ -216,10 +209,6 @@ const AudioSys = (() => {
     menu:   { bars: [45, 41, 43, 40], drums: false, drive: 0 },
     combat: { bars: [45, 41, 43, 40], drums: true,  drive: 1 },
     boss:   { bars: [45, 46, 43, 44], drums: true,  drive: 2 },
-    // SECTOR NULL: drive -1 is not a groove — a subterranean root that beats
-    // slowly against its own detuned twin, and a couple of far-off pings per
-    // loop. Most of it is silence on purpose.
-    hollow: { bars: [33, 33, 32, 29], drums: false, drive: -1 },
   };
   const ARP = [0, 3, 7, 12, 7, 3];   // minor arpeggio, up and back
 
@@ -346,19 +335,6 @@ const AudioSys = (() => {
     const root = mood.bars[bar];
     const inten = musicIntensity;
 
-    if (mood.drive === -1) {
-      // the hollow sector: two low sines a hair apart so the drone slowly
-      // pulses like something breathing under the floor, plus sparse pings
-      // that never land where the ear expects them
-      if (pos === 0) {
-        mOsc('sine', mf(root), t, MSTEP * 15, 0.12, 240);
-        mOsc('sine', mf(root) * 1.007, t, MSTEP * 15, 0.09, 240);
-      }
-      if (bar === 1 && pos === 11) mOsc('sine', mf(root + 31), t, MSTEP * 6, 0.02, 2800);
-      if (bar === 3 && pos === 5) mOsc('triangle', mf(root + 25), t, MSTEP * 8, 0.016, 1600);
-      return;
-    }
-
     if (pos === 0) {
       mPad(root, t, mood.drive === 0 ? 520 : 700 + inten * 500,
         mood.drive === 0 ? 0.07 : 0.05);
@@ -426,56 +402,13 @@ const AudioSys = (() => {
     engineGain.gain.setTargetAtTime(0.05 + speed01 * 0.10, t, 0.1);
   }
 
-  // -- the dread hum ---------------------------------------------------------
-  // SECTOR NULL: the sound of an engine the radar refuses to show. Same
-  // voice family as the player's own hum, pitched lower and swelling with
-  // proximity — the ear learns the truth the instruments won't tell.
-  let dreadOsc = null, dreadOsc2 = null, dreadFilter = null, dreadGain = null;
-
-  function startDread() {
-    if (!ctx || dreadOsc) return;
-    dreadOsc = ctx.createOscillator();
-    dreadOsc.type = 'sawtooth';
-    dreadOsc.frequency.value = 31;
-    dreadOsc2 = ctx.createOscillator();
-    dreadOsc2.type = 'sawtooth';
-    dreadOsc2.frequency.value = 31.6;   // beats slowly against its twin
-    dreadFilter = ctx.createBiquadFilter();
-    dreadFilter.type = 'lowpass';
-    dreadFilter.frequency.value = 90;
-    dreadGain = ctx.createGain();
-    dreadGain.gain.value = 0;
-    dreadOsc.connect(dreadFilter);
-    dreadOsc2.connect(dreadFilter);
-    dreadFilter.connect(dreadGain);
-    dreadGain.connect(master);
-    dreadOsc.start();
-    dreadOsc2.start();
-  }
-
-  /* v: 0..1 — how close the unseen engine is. Swells and fades slowly so it
-   * creeps up on the player rather than announcing itself. */
-  function setDread(v) {
-    if (!ctx) return;
-    v = Math.max(0, Math.min(1, v || 0));
-    if (!dreadOsc) {
-      if (v <= 0) return;
-      startDread();
-    }
-    const t = ctx.currentTime;
-    dreadGain.gain.setTargetAtTime(muted ? 0 : v * v * 0.16, t, 0.5);
-    dreadFilter.frequency.setTargetAtTime(70 + v * 260, t, 0.5);
-    dreadOsc.frequency.setTargetAtTime(29 + v * 14, t, 0.5);
-    dreadOsc2.frequency.setTargetAtTime(29.6 + v * 14, t, 0.5);
-  }
-
   function play(name) {
     if (!ctx || muted) return;
     if (sfx[name]) sfx[name]();
   }
 
   return {
-    resume, play, setEngine, stopEngine, setDread, toggleMuted, isMuted, setVolume,
+    resume, play, setEngine, stopEngine, toggleMuted, isMuted, setVolume,
     setMusicVolume, setMusicMood, setMusicIntensity,
   };
 })();

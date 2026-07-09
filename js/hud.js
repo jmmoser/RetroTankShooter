@@ -5,13 +5,7 @@ const PLAYER_HEX = ['#4fd6bb', '#b07bd6', '#e8c75a', '#6fc7e8'];
 
 /* Radar blip color per enemy type. Everyone gets distinct SHAPES; the
  * colorblind setting additionally splits the hues (deuteranopia-safe). */
-// SECTOR NULL residents all share one washed-out blip: on the hollow plane
-// the dish can't tell a watcher from a husk — or from a contact that does
-// not exist at all. Uniformity is what makes the lie undetectable.
-const HOLLOW_BLIP = '#a8b4b8';
-
 function enemyBlipColor(type) {
-  if (type === 'watcher' || type === 'circler' || type === 'husk') return HOLLOW_BLIP;
   const cb = typeof Settings !== 'undefined' && Settings.get('colorblind');
   if (!cb) {
     if (type === 'rusher') return '#ff7ab0';
@@ -215,32 +209,6 @@ class HUD {
     const font = (px, bold) => `${bold ? 'bold ' : ''}${Math.round(px * s)}px "Courier New", monospace`;
     const topY = (74 * 2 + 18) * s;   // just under the radar dish
     ctx.textAlign = 'center';
-
-    // SECTOR NULL: the contact counter reports what the dish shows — which
-    // counts contacts that do not exist and never counts the one that hums.
-    // "NO CONTACTS" is a statement about the instrument, not the plane.
-    if (game.horror) {
-      const p2 = game.player;
-      let n = 0;
-      for (const e of game.enemies) {
-        if (e.noBlip) continue;
-        if (Math.hypot(e.x - p2.x, e.z - p2.z) < 95) n++;
-      }
-      for (const fb of game.falseBlips || []) {
-        if (Math.hypot(fb.x - p2.x, fb.z - p2.z) < 95) n++;
-      }
-      ctx.font = font(11, true);
-      ctx.fillStyle = n > 0 ? 'rgba(168,180,184,0.85)' : 'rgba(90,101,112,0.8)';
-      ctx.fillText(n === 0 ? 'NO CONTACTS' : n + ' CONTACT' + (n > 1 ? 'S' : ''), W / 2, topY + 14 * s);
-      let silenced = 0;
-      for (const rl of game.relays || []) if (rl.done) silenced++;
-      ctx.font = font(10, true);
-      ctx.fillStyle = 'rgba(122,150,140,0.8)';
-      ctx.fillText(game.exit ? 'REACH THE TERMINUS GATE'
-        : 'RELAYS SILENCED ' + silenced + '/' + (game.relays || []).length,
-        W / 2, topY + 30 * s);
-      return;
-    }
 
     // versus: live scoreboard under the radar
     if (game.versus) {
@@ -469,41 +437,6 @@ class HUD {
       }
     }
 
-    // SECTOR NULL: relays read as steady pale marks, pinned to the rim when
-    // out of range — the one thing on this dish that never lies. The false
-    // contacts are drawn through the exact same code path as real hulls
-    // below, so nothing on the scope can give them away.
-    if (game.horror) {
-      ctx.fillStyle = 'rgba(122,150,140,0.75)';
-      for (const rl of game.relays || []) {
-        if (rl.done) continue;
-        let [bx, by] = toRadar(rl.x, rl.z);
-        const dx = bx - cx, dy = by - cy;
-        const d = Math.hypot(dx, dy);
-        if (d > R - 6 * s) {
-          const nx = dx / d, ny = dy / d;
-          const px2 = cx + nx * (R - 6 * s), py2 = cy + ny * (R - 6 * s);
-          ctx.beginPath();
-          ctx.moveTo(px2 + nx * 5 * s, py2 + ny * 5 * s);
-          ctx.lineTo(px2 - ny * 4 * s, py2 + nx * 4 * s);
-          ctx.lineTo(px2 + ny * 4 * s, py2 - nx * 4 * s);
-          ctx.closePath();
-          ctx.fill();
-          continue;
-        }
-        ctx.fillRect(bx - 2.2 * s, by - 2.2 * s, 4.4 * s, 4.4 * s);
-      }
-      ctx.globalAlpha = 0.42;
-      ctx.fillStyle = HOLLOW_BLIP;
-      for (const fb of game.falseBlips || []) {
-        const [bx, by] = toRadar(fb.x, fb.z);
-        ctx.beginPath();
-        ctx.arc(bx, by, 3.2 * s, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-    }
-
     // extraction gate: an ice-white diamond, pinned to the rim like a beacon
     if (game.exit) {
       let [bx, by] = toRadar(game.exit.x, game.exit.z);
@@ -587,7 +520,6 @@ class HUD {
     // half-lit = investigating, full = it knows you're here
     for (const e of game.enemies) {
       if (e.cloak > 0.6) continue; // cloaked phantoms hide from radar too
-      if (e.noBlip) continue;      // the stalker: the dish will not show it. Ever.
       const [bx, by] = toRadar(e.x, e.z);
       const r = 3.2 * s;
       ctx.globalAlpha = e.alerted ? 1 : ((e.sense || 0) >= 0.4 ? 0.8 : 0.42);
@@ -681,8 +613,7 @@ class HUD {
 
     // SIGNATURE: how loud you read on enemy sensors — speed, heat and boost
     // all feed it. Keep it low and patrols have to nearly touch you.
-    // (Not shown in SECTOR NULL: nothing out there runs a sensor you can game.)
-    if (!game.versus && !game.horror && p.sig != null) {
+    if (!game.versus && p.sig != null) {
       const sg01 = Math.max(0, Math.min(1, p.sig));
       const gy = by - 56 * s, gh = 5 * s;
       const sigCol = sg01 > 0.75 ? '#ff6a5a' : sg01 > 0.45 ? '#ffd24a' : '#4fd6bb';
@@ -797,14 +728,8 @@ class HUD {
       ctx.font = font(16, true);
     }
     ctx.font = font(14, false);
-    ctx.fillText((game.horror ? 'DEPTH ' : 'SECTOR ') + game.level, W - pad, H - pad - 38 * s);
-    if (game.horror) {
-      let silenced = 0;
-      for (const rl of game.relays || []) if (rl.done) silenced++;
-      ctx.fillStyle = 'rgba(168,180,184,0.85)';
-      ctx.fillText(game.exit ? 'TERMINUS ▸' : 'RELAYS ' + silenced + '/' + (game.relays || []).length,
-        W - pad, H - pad - 12 * s);
-    } else if (game.versus) {
+    ctx.fillText('SECTOR ' + game.level, W - pad, H - pad - 38 * s);
+    if (game.versus) {
       const k = (game.killCounts || {})[p.id] || 0;
       ctx.fillStyle = '#ffd24a';
       ctx.fillText('KILLS ' + k + '/' + (game.killTarget || 10), W - pad, H - pad - 12 * s);
@@ -823,7 +748,7 @@ class HUD {
     }
 
     // ---- TECH progress toward the next upgrade draft
-    if (!game.versus && !game.horror && p.techLvl != null) {
+    if (!game.versus && p.techLvl != null) {
       const t01 = Math.max(0, Math.min(1, p.tech01 || 0));
       const tw = 120 * s, th = 5 * s;
       const tx = W - pad - tw, ty = H - pad - 124 * s;

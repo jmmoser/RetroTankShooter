@@ -28,10 +28,6 @@
  *    stacking upgrade draft (UPGRADES) that builds the run's weapon.
  *  - RUSHERS — kamikaze hulls that force movement, and BOOST RAMS that
  *    double as the silent assassination tool.
- *
- * And one mode that inverts all of it: SECTOR NULL (game.horror), a hollow
- * sector with no alarm, no drafts and almost no enemies — the dread is the
- * arena itself. See the SECTOR NULL tuning block below ENEMY_TYPES.
  */
 
 const ARENA_HALF = 175;          // arena is a square, +/- ARENA_HALF
@@ -131,27 +127,7 @@ const ENEMY_TYPES = {
   // counterplay hulls: reading the fight matters more than holding fire
   shellback: { hp: 150, speed: 9,  turn: 1.1, fireRange: 75,  fireCd: 2.6, aggro: 999, score: 350, shotSpeed: 48, dmg: 20, lead: 0.4, sight: 50, frontArmor: true },
   warden:    { hp: 90,  speed: 8,  turn: 1.4, fireRange: 70,  fireCd: 3.0, aggro: 999, score: 500, shotSpeed: 46, dmg: 12, lead: 0.3, sight: 55, aura: 16 },
-  // ---- SECTOR NULL residents (never spawned in the campaign) --------------
-  // Most of what is still out on the hollow plane does not fight. That is
-  // the point: a hostile you can read is company; these are not company.
-  watcher:   { hp: 140, speed: 0,  turn: 0.7, fireRange: 0,   fireCd: 9,   aggro: 999, score: 0,   shotSpeed: 0,  dmg: 0,  lead: 0,   sight: 999 },
-  circler:   { hp: 60,  speed: 6,  turn: 3.0, fireRange: 0,   fireCd: 9,   aggro: 999, score: 50,  shotSpeed: 0,  dmg: 0,  lead: 0,   sight: 0 },
-  husk:      { hp: 70,  speed: 12, turn: 1.7, fireRange: 80,  fireCd: 2.8, aggro: 999, score: 150, shotSpeed: 46, dmg: 16, lead: 0.3, sight: 85 },
-  stalker:   { hp: 150, speed: 10, turn: 2.2, fireRange: 18,  fireCd: 2.4, aggro: 999, score: 400, shotSpeed: 58, dmg: 24, lead: 0.4, sight: 999 },
 };
-
-/* ---- SECTOR NULL tuning --------------------------------------------------
- * The hollow sector: a decommissioned grid, scoured flat. Each depth has
- * three dead relays to silence (touch, not hold — nothing contests them)
- * before the terminus gate opens on the far side of the plane. The dread
- * lives in the game's own retro systems: the radar reports contacts that
- * are not there and stays silent about one that is, the residents do not
- * behave like enemies, and every wreck ever made here stays — persisted
- * across runs, placed exactly where it fell. */
-const HOLLOW_RELAYS = 3;        // dead relays per depth
-const RELAY_RADIUS = 6;         // touch radius
-const WATCH_RING = [105, 145];  // watchers hold the edge of draw distance
-const STALK_HUM_R = 120;        // the unseen engine becomes audible inside this
 
 /* In-run TECH upgrade pool: kills and zone captures pay tech, each tech level
  * deals a 3-choice draft. Stackable up to `max`; effects are applied by
@@ -196,11 +172,6 @@ const DEBRIS_COLORS = {
   shellback: [0.62, 0.68, 0.74],
   warden:    [0.95, 0.76, 0.28],
   player:    [0.25, 1.0, 0.82],
-  // SECTOR NULL residents shatter into the same drained grays they wear
-  watcher:   [0.45, 0.47, 0.54],
-  circler:   [0.42, 0.42, 0.48],
-  husk:      [0.55, 0.40, 0.36],
-  stalker:   [0.36, 0.44, 0.48],
 };
 
 const POWERUP_TYPES = {
@@ -314,16 +285,6 @@ class Game {
     this.puTimer = 0;      // versus: contested powerup respawn timer
     this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0 };
     this.levelUntouched = true; // local player unhit this sector (medal)
-    // ---- SECTOR NULL state (see the tuning block above ENEMY_TYPES) ------
-    this.horror = false;   // the hollow-sector ruleset is active
-    this.relays = [];      // dead relays: { x, z, done, pulse }
-    this.wrecks = [];      // permanent hulls on the plane: { x, z, m, yaw, tilt, sink }
-    this.falseBlips = [];  // radar contacts that do not exist: { x, z, life }
-    this.dread = 0;        // 0..1 — how loud the unseen engine is right now
-    this.blipT = 0;        // countdown to the next false contact
-    this.humT = 0;         // countdown to the next sourceless hum event
-    this.humEvent = 0;     // seconds left of hum-with-no-source
-    this.humDur = 1;       // full length of the current hum event
   }
 
   /* Queue a sound: plays locally and is mirrored to clients by the host. */
@@ -412,8 +373,6 @@ class Game {
     this.level = opts.startLevel || 1;
     this.dailySeed = opts.dailySeed || null;
     this.versus = !!opts.versus;
-    this.horror = !!opts.horror;
-    this.wrecks = [];
     this.killTarget = opts.killTarget || 10;
     this.killCounts = {};
     this.winnerId = null;
@@ -450,7 +409,6 @@ class Game {
   }
 
   startLevel() {
-    if (this.horror) { this._startHollow(); return; }
     const L = this.level;
     this.obstacles = [];
     this.flags = [];
@@ -567,378 +525,6 @@ class Game {
     }
   }
 
-  // ---- SECTOR NULL: the hollow sector -----------------------------------
-  // No uplinks, no alarm, no tech, no pot. Three dead relays, a terminus
-  // gate, and a plane that keeps everything that ever fell on it.
-
-  _startHollow() {
-    const L = this.level;   // DEPTH, on this side of the fence
-    this.obstacles = [];
-    this.flags = [];
-    this.enemies = [];
-    this.projectiles = [];
-    this.powerups = [];
-    this.particles = [];
-    this.flashes = [];
-    this.debris = [];
-    this.depots = [];
-    this.mines = [];
-    this.rings = [];
-    this.pendingSpawns = [];
-    this.boss = null;
-    this.bossLevel = false;
-    this.shake = 0;
-    this.killsThisLevel = 0;
-    this.combo = 0; this.comboT = 0; this.mult = 1;
-    this.alert = 0; this.alertTier = 0;
-    this.levelUntouched = true;
-    this.levelTime = 0;
-    this.noises.length = 0;
-    this.suspicion = false;
-    this.exit = null;
-    this.ghostRun = false;
-    this.alarmT = 0;
-    this.everAlarmed = false;
-    this.bounty = null;
-    this.gates = null;
-    this.mutator = null;
-    this.relays = [];
-    this.falseBlips = [];
-    this.dread = 0;
-    this.blipT = rand(16, 34);
-    this.humT = rand(35, 70);
-    this.humEvent = 0;
-
-    const n = this.players.length;
-    this.players.forEach((p, i) => {
-      p.x = (i - (n - 1) / 2) * 8;
-      p.z = ARENA_HALF - 22;
-      p.angle = 0;
-      p.speed = 0; p.vx = 0; p.vz = 0;
-      p.fx.overdrive = 0; p.fx.rapid = 0;
-      p.boost = p.maxBoost;
-      p.heat = 0; p.venting = 0; p.overheatT = 0;
-      p.alive = true; p.respawnT = 0; p.lowWarned = false;
-      p.input.fire = false; p.input.nade = false; p.input.mine = false;
-      p.depotAcc = 0; p.onDepot = false;
-    });
-
-    // a handful of drained monoliths — the only landmarks out here. The
-    // campaign's saturated slabs would read as company; these don't.
-    const GRAYS = [
-      [0.15, 0.16, 0.20], [0.10, 0.11, 0.14], [0.19, 0.20, 0.24], [0.13, 0.13, 0.17],
-    ];
-    const slabs = 6 + Math.min(L, 5);
-    for (let i = 0; i < slabs; i++) {
-      for (let tries = 0; tries < 30; tries++) {
-        const x = rand(-ARENA_HALF + 16, ARENA_HALF - 16);
-        const z = rand(-ARENA_HALF + 16, ARENA_HALF - 16);
-        const pyramid = RNG() < 0.35;
-        const w = pyramid ? rand(6, 10) : rand(5, 12);
-        if (this._addSlab(x, z, w, pyramid ? w : rand(5, 12),
-            pyramid ? rand(8, 14) : rand(4, 10), pyramid ? 'pyramid' : 'block', 14)) {
-          this.obstacles[this.obstacles.length - 1].color = GRAYS[(RNG() * GRAYS.length) | 0];
-          break;
-        }
-      }
-    }
-
-    // three dead relays, far apart — the walk between them is the game
-    for (let i = 0; i < HOLLOW_RELAYS; i++) {
-      const pos = this._findSpot(5, 90) || this._findSpot(5, 40) || [rand(-100, 100), rand(-100, 100)];
-      this.relays.push({ x: pos[0], z: pos[1], done: false, pulse: rand(0, Math.PI * 2) });
-    }
-
-    // the graveyard: every wreck from every previous visit, put back exactly
-    // where it fell. Nothing in the game explains where they came from.
-    if (L === 1) {
-      this.wrecks = [];
-      if (typeof Graveyard !== 'undefined') {
-        for (const w of Graveyard.all()) {
-          if (this._collidesObstacle(w.x, w.z, 2.5)) continue;
-          if (Math.hypot(w.x - this.player.x, w.z - this.player.z) < 14) continue;
-          this.wrecks.push(this._makeWreck(w.x, w.z, w.m));
-        }
-      }
-    } else {
-      // deeper depths keep the run's wrecks (this.wrecks is never cleared in
-      // the hollow) — and gain a couple no one here remembers making
-      const strays = (RNG() * 3) | 0;
-      for (let i = 0; i < strays; i++) {
-        const pos = this._findSpot(3, 40);
-        if (pos) this.wrecks.push(this._makeWreck(pos[0], pos[1], RNG() < 0.25 ? 'player' : 'husk'));
-      }
-    }
-
-    // the residents
-    const watchers = Math.min(2 + ((L / 2) | 0), 5);
-    for (let i = 0; i < watchers; i++) {
-      const pos = this._findSpotNear(this.player.x, this.player.z,
-        WATCH_RING[0], WATCH_RING[1], 4, 90) || this._findSpot(4, 90);
-      if (pos) this._spawnResident('watcher', pos[0], pos[1]);
-    }
-    const circlers = 1 + (L > 2 ? 1 : 0);
-    for (let i = 0; i < circlers; i++) {
-      const pos = this._findSpot(22, 70);
-      if (pos) this._spawnResident('circler', pos[0], pos[1]);
-    }
-    const husks = L >= 2 ? Math.min(L - 1, 4) : 0;
-    for (let i = 0; i < husks; i++) {
-      const pos = this._findSpot(4, 95);
-      if (pos) this._spawnResident('husk', pos[0], pos[1]);
-    }
-    {
-      const pos = this._findSpot(4, 130) || this._findSpot(4, 80);
-      if (pos) this._spawnResident('stalker', pos[0], pos[1]);
-    }
-
-    this.mode = 'playing';
-    if (L === 1) {
-      this.hud.message('THREE RELAYS ARE STILL TRANSMITTING', '#8a93a0', 3.4);
-      this.hud.message('SILENCE THEM', '#5a6570', 2.6);
-    }
-  }
-
-  _makeWreck(x, z, m) {
-    return {
-      x, z, m: m || 'husk',
-      yaw: rand(0, Math.PI * 2),
-      tilt: rand(-0.14, 0.14),
-      sink: rand(0.25, 0.6),
-    };
-  }
-
-  /* Spawn a hollow-plane resident and decorate it with its private state. */
-  _spawnResident(type, x, z) {
-    this._spawnEnemy(type, x, z);
-    const e = this.enemies[this.enemies.length - 1];
-    if (type === 'watcher') {
-      e.unseenT = 0;
-    } else if (type === 'circler') {
-      e.orbitX = x; e.orbitZ = z;
-      e.orbitR = rand(10, 17);
-      e.orbitA = rand(0, Math.PI * 2);
-      e.x = e.orbitX + Math.cos(e.orbitA) * e.orbitR;
-      e.z = e.orbitZ + Math.sin(e.orbitA) * e.orbitR;
-    } else if (type === 'stalker') {
-      e.noBlip = true;   // the radar will not show this one. Ever.
-    }
-    return e;
-  }
-
-  _updateHollow(dt) {
-    const p = this.player;
-
-    // relays: drive onto one and it goes quiet. Nothing contests it, nothing
-    // converges on it — silencing a relay changes nothing you can see, and
-    // that is worse.
-    let done = 0;
-    for (const r of this.relays) {
-      r.pulse += dt;
-      if (r.done) { done++; continue; }
-      for (const pl of this.players) {
-        if (!pl.alive) continue;
-        if (dist2(pl.x, pl.z, r.x, r.z) < RELAY_RADIUS * RELAY_RADIUS) {
-          r.done = true; done++;
-          this.score += 250 * this.level;
-          this._sfx('relay');
-          this._burst(r.x, 7.5, r.z, 8, [0.35, 0.5, 0.5], 3);
-          const left = HOLLOW_RELAYS - done;
-          this.hud.message(left > 0 ? `RELAY SILENCED — ${left} STILL TRANSMITTING`
-            : 'THE PLANE IS SILENT', '#8a93a0', 2.4);
-          break;
-        }
-      }
-    }
-    if (!this.exit && this.relays.length && done >= this.relays.length) {
-      // the terminus gate opens as far away as the plane allows: the reward
-      // for finishing is the longest walk of the depth
-      let best = null, bd = -1;
-      for (let i = 0; i < 14; i++) {
-        const pos = this._findSpot(6, 40);
-        if (!pos) continue;
-        const d = dist2(pos[0], pos[1], p.x, p.z);
-        if (d > bd) { bd = d; best = pos; }
-      }
-      this.exit = { x: best ? best[0] : 0, z: best ? best[1] : -ARENA_HALF + 30 };
-      this._sfx('cloak');
-      this.hud.message('THE TERMINUS GATE IS OPEN', '#d8f4ff', 3);
-    }
-
-    this._updateResidents(dt);
-    this._updateDeceit(dt);
-    this.noises.length = 0;   // nothing out here investigates noise
-  }
-
-  /* Per-type behavior for what still lives on the plane. None of it uses
-   * the campaign's sense/alarm machinery — the residents already know. */
-  _updateResidents(dt) {
-    const p = this.player && this.player.alive ? this.player : this._nearestPlayer(0, 0);
-    for (const e of this.enemies) {
-      e.hitFlash = Math.max(0, e.hitFlash - dt * 4);
-      if (!p || !p.alive) continue;
-      const d = Math.hypot(p.x - e.x, p.z - e.z);
-      // is the resident roughly inside the player's forward view?
-      const offAxis = Math.abs(wrapAngle(angleTo(e.x - p.x, e.z - p.z) - p.angle));
-      const observed = offAxis < 0.95 && d < 170;
-
-      if (e.type === 'watcher') {
-        // motionless at the edge of draw distance, gun tracking, never
-        // firing. Close on one and look away, and it is somewhere else.
-        const want = angleTo(p.x - e.x, p.z - e.z);
-        const diff = wrapAngle(want - e.angle);
-        const tr = e.turn * dt;
-        e.angle += Math.max(-tr, Math.min(tr, diff));
-        e.unseenT = observed ? 0 : (e.unseenT || 0) + dt;
-        if (d < 42 && e.unseenT > 1.2) {
-          // no warp flash, no sound. Just not there when you look back.
-          for (let tries = 0; tries < 20; tries++) {
-            const a = rand(0, Math.PI * 2);
-            const nx = p.x + Math.cos(a) * rand(WATCH_RING[0], WATCH_RING[1]);
-            const nz = p.z + Math.sin(a) * rand(WATCH_RING[0], WATCH_RING[1]);
-            if (Math.abs(nx) > ARENA_HALF - 12 || Math.abs(nz) > ARENA_HALF - 12) continue;
-            if (this._collidesObstacle(nx, nz, 3)) continue;
-            e.x = nx; e.z = nz;
-            break;
-          }
-          e.unseenT = 0;
-        }
-      } else if (e.type === 'circler') {
-        // a slow perfect circle around a point of nothing. It does not
-        // investigate, does not retaliate, does not stop.
-        e.orbitA += (e.orbitDir * e.speed / e.orbitR) * dt;
-        e.x = e.orbitX + Math.cos(e.orbitA) * e.orbitR;
-        e.z = e.orbitZ + Math.sin(e.orbitA) * e.orbitR;
-        e.angle = angleTo(-Math.sin(e.orbitA) * e.orbitDir, Math.cos(e.orbitA) * e.orbitDir);
-      } else if (e.type === 'husk') {
-        // what is left of the garrison: slow lone pursuit, no radio, no
-        // packmates, no alarm. It fights to the end because it has nothing else.
-        const spec = ENEMY_TYPES.husk;
-        if (d < spec.sight && this._losClear(e.x, e.z, p.x, p.z)) {
-          const desired = this._steerClear(e, angleTo(p.x - e.x, p.z - e.z));
-          const diff = wrapAngle(desired - e.angle);
-          const tr = e.turn * dt;
-          e.angle += Math.max(-tr, Math.min(tr, diff));
-          if (Math.abs(diff) < 1.2 && d > 10) {
-            e.x += fwdX(e.angle) * e.speed * dt;
-            e.z += fwdZ(e.angle) * e.speed * dt;
-          }
-          e.fireCd -= dt;
-          let aimX = p.x, aimZ = p.z;
-          if (e.lead > 0 && Math.hypot(p.vx || 0, p.vz || 0) > 1) {
-            const tFly = d / e.shotSpeed;
-            aimX += (p.vx || 0) * tFly * e.lead;
-            aimZ += (p.vz || 0) * tFly * e.lead;
-          }
-          const aimDiff = Math.abs(wrapAngle(angleTo(aimX - e.x, aimZ - e.z) - e.angle));
-          if (d < e.fireRange && e.fireCd <= 0 && aimDiff < 0.12 &&
-              this._losClear(e.x, e.z, p.x, p.z)) {
-            e.fireCd = e.fireDelay;
-            this.projectiles.push({
-              x: e.x + fwdX(e.angle) * 3.2, z: e.z + fwdZ(e.angle) * 3.2,
-              y: 1.6, angle: e.angle,
-              speed: e.shotSpeed, from: 'enemy', dmg: e.dmg, life: 4,
-            });
-            this._sfx('enemyFire');
-          }
-        } else {
-          // amble the old patrol route it no longer has
-          e.wanderT -= dt;
-          if (e.wanderT <= 0 || Math.hypot(e.wanderX - e.x, e.wanderZ - e.z) < 6) {
-            e.wanderX = rand(-ARENA_HALF + 15, ARENA_HALF - 15);
-            e.wanderZ = rand(-ARENA_HALF + 15, ARENA_HALF - 15);
-            e.wanderT = rand(5, 11);
-          }
-          const desired = this._steerClear(e, angleTo(e.wanderX - e.x, e.wanderZ - e.z));
-          const diff = wrapAngle(desired - e.angle);
-          const tr = e.turn * dt;
-          e.angle += Math.max(-tr, Math.min(tr, diff));
-          if (Math.abs(diff) < 1.2) {
-            e.x += fwdX(e.angle) * e.speed * 0.5 * dt;
-            e.z += fwdZ(e.angle) * e.speed * 0.5 * dt;
-          }
-        }
-        this._collideTank(e, 1.9);
-      } else if (e.type === 'stalker') {
-        // the hum with no blip. It closes the distance only while you are
-        // not looking at it; watched, it just sits there, engine idling.
-        // Plainly visible in the world — the radar simply refuses to agree.
-        if (!observed && d > 9) {
-          const desired = this._steerClear(e, angleTo(p.x - e.x, p.z - e.z));
-          const diff = wrapAngle(desired - e.angle);
-          const tr = e.turn * dt;
-          e.angle += Math.max(-tr, Math.min(tr, diff));
-          if (Math.abs(diff) < 1.3) {
-            e.x += fwdX(e.angle) * e.speed * dt;
-            e.z += fwdZ(e.angle) * e.speed * dt;
-          }
-        } else {
-          const want = angleTo(p.x - e.x, p.z - e.z);
-          const diff = wrapAngle(want - e.angle);
-          const tr = e.turn * 0.4 * dt;
-          e.angle += Math.max(-tr, Math.min(tr, diff));
-        }
-        e.fireCd -= dt;
-        if (d < e.fireRange && e.fireCd <= 0 && this._losClear(e.x, e.z, p.x, p.z)) {
-          e.fireCd = e.fireDelay;
-          const a = angleTo(p.x - e.x, p.z - e.z);
-          this.projectiles.push({
-            x: e.x + fwdX(a) * 3.2, z: e.z + fwdZ(a) * 3.2,
-            y: 1.6, angle: a,
-            speed: e.shotSpeed, from: 'enemy', dmg: e.dmg, life: 4,
-          });
-          this._sfx('enemyFire');
-        }
-        this._collideTank(e, 1.9);
-      }
-    }
-  }
-
-  /* The instruments. A contact behind you that is not there when you turn;
-   * an engine getting closer that no instrument acknowledges. The player's
-   * only sensor teaches them to distrust it — that is the design. */
-  _updateDeceit(dt) {
-    const p = this.player;
-    if (!p) return;
-
-    // false contacts: always spawned behind the hull, erased the moment the
-    // player swings the nose toward them
-    this.blipT -= dt;
-    if (this.blipT <= 0) {
-      this.blipT = rand(24, 50);
-      const a = p.angle + Math.PI + rand(-0.9, 0.9);
-      const d = rand(28, 72);
-      this.falseBlips.push({ x: p.x + fwdX(a) * d, z: p.z + fwdZ(a) * d, life: rand(7, 15) });
-    }
-    for (let i = this.falseBlips.length - 1; i >= 0; i--) {
-      const b = this.falseBlips[i];
-      b.life -= dt;
-      const bear = Math.abs(wrapAngle(angleTo(b.x - p.x, b.z - p.z) - p.angle));
-      if (b.life <= 0 || bear < 0.85) this.falseBlips.splice(i, 1);
-    }
-
-    // the dread hum: real when the stalker is close — and sometimes real
-    // about nothing at all, so proximity can never be fully trusted either
-    let dread = 0;
-    for (const e of this.enemies) {
-      if (e.type !== 'stalker') continue;
-      const d = Math.hypot(p.x - e.x, p.z - e.z);
-      dread = Math.max(dread, 1 - d / STALK_HUM_R);
-    }
-    this.humT -= dt;
-    if (this.humT <= 0) {
-      this.humT = rand(55, 100);
-      this.humDur = rand(9, 16);
-      this.humEvent = this.humDur;
-    }
-    if (this.humEvent > 0) {
-      this.humEvent -= dt;
-      const k = Math.sin(Math.PI * Math.max(0, 1 - this.humEvent / this.humDur));
-      dread = Math.max(dread, k * 0.7);
-    }
-    this.dread = Math.max(0, Math.min(1, dread));
-  }
-
   /* Where tanks deploy: the home corridor in the campaign, spread corners in
    * versus. Also used to keep obstacle generation clear of deploy zones. */
   _spawnPoints() {
@@ -957,7 +543,7 @@ class Game {
    * seed stays a level playing field, and versus is player-vs-player. In
    * co-op the host simulates, so the host's setting is the squad's. */
   _diff() {
-    if (this.versus || this.dailySeed || this.horror) return DIFFICULTY[1];
+    if (this.versus || this.dailySeed) return DIFFICULTY[1];
     const d = typeof Settings !== 'undefined' ? Settings.get('difficulty') : 1;
     return DIFFICULTY[d] || DIFFICULTY[1];
   }
@@ -1154,7 +740,7 @@ class Game {
     // meaner and worth half again the score. They strobe white-hot in the
     // arena and wear a ring on the radar. ELITE SURGE triples the odds;
     // the GAUNTLET is nothing but.
-    let eliteP = !this.bossLevel && !this.horror && L >= 3 ? Math.min(0.06 + L * 0.02, 0.3) : 0;
+    let eliteP = !this.bossLevel && L >= 3 ? Math.min(0.06 + L * 0.02, 0.3) : 0;
     if (this.mutator === 'elite') eliteP = Math.min(eliteP * 3, 0.75);
     const elite = this.mutator === 'gauntlet' || RNG() < eliteP;
     const hpMul = (elite ? 1.6 : 1) * (this.mutator === 'swarm' ? 0.7 : 1);
@@ -1240,10 +826,7 @@ class Game {
     }
 
     for (const p of this.players) this._updatePlayer(p, dt);
-    if (this.horror) {
-      this.levelTime += dt;
-      this._updateHollow(dt);
-    } else if (!this.versus) {
+    if (!this.versus) {
       this.levelTime += dt;
       this._updatePressure(dt);
       this._updateZones(dt);
@@ -1481,7 +1064,7 @@ class Game {
   }
 
   _awardTech(p, pts) {
-    if (this.versus || this.horror || !p || !p.up) return;   // no drafts in the hollow
+    if (this.versus || !p || !p.up) return;
     p.tech += pts;
     while (p.tech >= p.techNext) {
       p.tech -= p.techNext;
@@ -1642,17 +1225,6 @@ class Game {
   // Kills chain into a score multiplier; taking any damage breaks it.
 
   _awardKill(baseScore, ownerId, via) {
-    // SECTOR NULL: no combo, no pot, no tech — a kill out here is just a
-    // number, and some of them are worth nothing at all
-    if (this.horror) {
-      this.runStats.kills++;
-      this.score += baseScore;
-      if (baseScore > 0 && ownerId === this.localId) {
-        this.runStats.localKills++;
-        this.hud.scorePop('+' + baseScore);
-      }
-      return baseScore;
-    }
     // STYLE ENGINE: variety keeps the chain white-hot. Repeating the same
     // kill method pays less and less; mixing cannon → ram → nade → mine →
     // shock is what climbs the multiplier.
@@ -2723,9 +2295,8 @@ class Game {
     e.hitFlash = 1;
     if (ENEMY_TYPES[e.type].cloaks) e.decloakT = Math.max(e.decloakT, 1.2);
     this._burst(e.x, 1.5, e.z, 10, [1, 0.6, 0.3], 8);
-    if (e.hp > 0 && !e.alerted && !this.versus && !this.horror) {
-      // a hull that survives a hit is instantly hostile — commit to kills.
-      // (Not in SECTOR NULL: shoot a circler and it keeps circling.)
+    if (e.hp > 0 && !e.alerted && !this.versus) {
+      // a hull that survives a hit is instantly hostile — commit to kills
       const a = this._playerById(ownerId);
       this._alertEnemy(e, a ? a.x : e.x, a ? a.z : e.z);
     }
@@ -2739,13 +2310,7 @@ class Game {
     this.killsThisLevel++;
     // SILENT KILL: it never saw you coming — half again the score, and a
     // boost-ram execution is quiet enough that only close packmates notice
-    const silent = !this.versus && !this.horror && !e.alerted;
-    // SECTOR NULL: the wreck stays. Forever. Written to the graveyard so the
-    // next run finds it exactly where it fell.
-    if (this.horror) {
-      this.wrecks.push(this._makeWreck(e.x, e.z, e.type));
-      if (typeof Graveyard !== 'undefined') Graveyard.add({ x: e.x, z: e.z, m: e.type });
-    }
+    const silent = !this.versus && !e.alerted;
     this._awardKill(silent ? Math.round(e.score * 1.5) : e.score, ownerId, via);
     this._noise(e.x, e.z, via === 'ram' ? NOISE_RAM : NOISE_WRECK, 0.6);
     if (silent) {
@@ -2798,8 +2363,8 @@ class Game {
         if (dist2(e.x, e.z, o.x, o.z) < 36) this._hurtEnemy(j, 30, ownerId, via);
       }
     }
-    // chance to drop a pickup (nothing resupplies you in the hollow)
-    if (!this.horror && RNG() < 0.35) {
+    // chance to drop a pickup
+    if (RNG() < 0.35) {
       const keys = Object.keys(POWERUP_TYPES);
       this._spawnPowerup(e.x, e.z, keys[(RNG() * keys.length) | 0]);
     }
@@ -2832,12 +2397,6 @@ class Game {
       this._burst(p.x, 2.5, p.z, 30, [1, 0.9, 0.6], 12);
       this._spawnShards(p.x, p.z, DEBRIS_COLORS.player);
       this._sfx('bigExplosion');
-      // SECTOR NULL: your hull joins the graveyard where it fell. Next run,
-      // it will already be out there — and it will be your tank model.
-      if (this.horror) {
-        this.wrecks.push(this._makeWreck(p.x, p.z, 'player'));
-        if (typeof Graveyard !== 'undefined') Graveyard.add({ x: p.x, z: p.z, m: 'player' });
-      }
       if (isLocal) this.shake = 2;
       // versus: credit the killer
       if (this.versus && attackerId && attackerId !== p.id) {
@@ -3298,15 +2857,6 @@ class Game {
   }
 
   _levelClear() {
-    if (this.horror) {
-      // no fanfare down here — the gate closes behind you, that's all
-      this.levelBonus = 400 * this.level;
-      this.score += this.levelBonus;
-      this.gates = null;
-      this.mode = 'levelclear';
-      this._sfx('cloak');
-      return;
-    }
     let sh = 0;
     for (const p of this.players) sh += Math.max(0, p.shields);
     this.levelBonus = this.level * 250 +
