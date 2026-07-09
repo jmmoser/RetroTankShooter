@@ -11,7 +11,7 @@
  *    drifts across the screen mid-maneuver.
  *  - The stick is view-relative: push where you want to go. Forward arcs
  *    drive+steer, sideways pivots in place, and the whole back half
- *    reverses — steered so the tank backs toward the thumb.
+ *    reverses — the stick's side always sets the hull's turn direction.
  *  - The right side of the screen is hold-to-fire; on-screen buttons cover
  *    grenade, boost, camera and pause.
  *  - Pointer Events with per-pointer ownership: each control is owned by the
@@ -347,17 +347,16 @@ const Input = (() => {
    * The camera yaw always equals the hull yaw, so "up" on the stick is the
    * tank's forward: forward arcs drive and steer toward the thumb, sideways
    * pivots in place, and the whole back half reverses. Reverse steering
-   * measures deflection from straight-down with the sign flipped: the sim
-   * rotates the hull the same way for a given turn in both drive
-   * directions, so backing TOWARD the thumb needs the opposite hull
-   * rotation from driving toward it. The tank always moves toward the
-   * thumb, and reverse is steerable with no dead wedge between "pivot"
-   * and "reverse". Both halves saturate past 0.7 rad. */
+   * measures deflection from straight-down (mirroring the forward arc) and
+   * keeps the stick's side: left deflection always rotates the hull left,
+   * forward or reverse — matching the keys, and the camera never swings
+   * against the thumb. Both halves saturate past 0.7 rad, so turn is
+   * continuous through the sideways pivot. */
   function stickAxes() {
     const s = touch.stick;
     if (s.id === null || s.mag <= 0) return null;
     const rel = s.rel, a = Math.abs(rel);
-    const steer = a <= Math.PI / 2 ? rel : -Math.sign(rel) * (Math.PI - a);
+    const steer = a <= Math.PI / 2 ? rel : Math.sign(rel) * (Math.PI - a);
     const turn = -Math.max(-1, Math.min(1, steer / 0.7)) * (0.45 + 0.55 * s.mag);
     const drive = s.mag * Math.cos(rel);   // >0 forward, 0 sideways, <0 reverse
     return { turn, drive };
