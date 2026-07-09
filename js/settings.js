@@ -186,6 +186,36 @@ const Progress = (() => {
   };
 })();
 
+/* SECTOR NULL graveyard (pa_graveyard): every hull that falls on the hollow
+ * plane — enemy or yours — is written here with its exact position, and every
+ * later run scatters them back where they fell. The arena remembers what
+ * happened in it across sessions; the player is not told this anywhere. */
+const Graveyard = (() => {
+  let list = [];
+  try {
+    const raw = JSON.parse(localStorage.getItem('pa_graveyard') || '[]');
+    if (Array.isArray(raw)) {
+      list = raw.filter((w) => w && typeof w.x === 'number' && typeof w.z === 'number');
+    }
+  } catch (e) {}
+  const CAP = 160;   // oldest wrecks finally sink once the plane is crowded
+
+  function save() {
+    try { localStorage.setItem('pa_graveyard', JSON.stringify(list)); } catch (e) {}
+  }
+
+  return {
+    /* w: { x, z, m } — m is the hull model key ('player' for your own). */
+    add(w) {
+      list.push({ x: Math.round(w.x * 10) / 10, z: Math.round(w.z * 10) / 10, m: w.m || 'husk' });
+      if (list.length > CAP) list.splice(0, list.length - CAP);
+      save();
+    },
+    all: () => list.slice(),
+    count: () => list.length,
+  };
+})();
+
 /* One-time medals: award() persists and reports first-time earns; recent
  * earns queue up so the game-over screen can celebrate them. */
 const Medals = (() => {
