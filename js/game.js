@@ -1409,9 +1409,11 @@ class Game {
     if (p.speed < target) p.speed = Math.min(target, p.speed + rate * dt);
     else if (p.speed > target) p.speed = Math.max(target, p.speed - rate * dt);
 
-    // steering scales down slightly at top speed for weight
+    // steering scales down slightly at top speed for weight. Tracks steer
+    // the hull directly, so a given turn input rotates the same way in
+    // forward and reverse — no car-style flip while backing up.
     const steerScale = 1 - 0.25 * Math.min(1, Math.abs(p.speed) / maxSpd);
-    p.angle += input.turn * p.turnRate * steerScale * dt * (p.speed < -0.5 ? -1 : 1);
+    p.angle += input.turn * p.turnRate * steerScale * dt;
 
     const grip = (p.boosting || handbrake) ? 2.1 : 9;
     const gk = Math.min(1, grip * dt);

@@ -11,7 +11,7 @@
  *    drifts across the screen mid-maneuver.
  *  - The stick is view-relative: push where you want to go. Forward arcs
  *    drive+steer, sideways pivots in place, and the whole back half
- *    reverses — steered so the tank backs toward the thumb.
+ *    reverses — the stick's side always sets the hull's turn direction.
  *  - The right side of the screen is hold-to-fire; on-screen buttons cover
  *    grenade, boost, camera and pause.
  *  - Pointer Events with per-pointer ownership: each control is owned by the
@@ -347,11 +347,11 @@ const Input = (() => {
    * The camera yaw always equals the hull yaw, so "up" on the stick is the
    * tank's forward: forward arcs drive and steer toward the thumb, sideways
    * pivots in place, and the whole back half reverses. Reverse steering
-   * measures deflection from straight-down (mirroring the forward arc);
-   * the sim flips the turn sign while backing up, so the two mirrors cancel
-   * and the tank always backs toward the thumb — no dead wedge between
-   * "pivot" and "reverse", and reverse is steerable. Both halves saturate
-   * past 0.7 rad, so turn is continuous through the sideways pivot. */
+   * measures deflection from straight-down (mirroring the forward arc) and
+   * keeps the stick's side: left deflection always rotates the hull left,
+   * forward or reverse — matching the keys, and the camera never swings
+   * against the thumb. Both halves saturate past 0.7 rad, so turn is
+   * continuous through the sideways pivot. */
   function stickAxes() {
     const s = touch.stick;
     if (s.id === null || s.mag <= 0) return null;
