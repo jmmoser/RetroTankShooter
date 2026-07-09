@@ -347,16 +347,17 @@ const Input = (() => {
    * The camera yaw always equals the hull yaw, so "up" on the stick is the
    * tank's forward: forward arcs drive and steer toward the thumb, sideways
    * pivots in place, and the whole back half reverses. Reverse steering
-   * measures deflection from straight-down (mirroring the forward arc);
-   * the sim flips the turn sign while backing up, so the two mirrors cancel
-   * and the tank always backs toward the thumb — no dead wedge between
-   * "pivot" and "reverse", and reverse is steerable. Both halves saturate
-   * past 0.7 rad, so turn is continuous through the sideways pivot. */
+   * measures deflection from straight-down with the sign flipped: the sim
+   * rotates the hull the same way for a given turn in both drive
+   * directions, so backing TOWARD the thumb needs the opposite hull
+   * rotation from driving toward it. The tank always moves toward the
+   * thumb, and reverse is steerable with no dead wedge between "pivot"
+   * and "reverse". Both halves saturate past 0.7 rad. */
   function stickAxes() {
     const s = touch.stick;
     if (s.id === null || s.mag <= 0) return null;
     const rel = s.rel, a = Math.abs(rel);
-    const steer = a <= Math.PI / 2 ? rel : Math.sign(rel) * (Math.PI - a);
+    const steer = a <= Math.PI / 2 ? rel : -Math.sign(rel) * (Math.PI - a);
     const turn = -Math.max(-1, Math.min(1, steer / 0.7)) * (0.45 + 0.55 * s.mag);
     const drive = s.mag * Math.cos(rel);   // >0 forward, 0 sideways, <0 reverse
     return { turn, drive };
