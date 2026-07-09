@@ -515,6 +515,18 @@ body.touch-ui .mbtn { padding: 10px 20px; }
   color: rgba(79, 214, 187, 0.75);
 }
 .mbtn.ghost:hover, .mbtn.ghost.focus { color: var(--teal-bright); }
+/* SECTOR NULL: the one menu entry that doesn't glow */
+#bt-hollow {
+  border-color: rgba(138, 147, 160, 0.30);
+  background: rgba(14, 16, 20, 0.72);
+  color: #8a93a0;
+}
+#bt-hollow .mkey { border-color: rgba(138, 147, 160, 0.30); color: rgba(138, 147, 160, 0.7); }
+#bt-hollow:hover, #bt-hollow.focus {
+  border-color: #a8b1bd;
+  background: rgba(42, 46, 56, 0.4);
+  box-shadow: 0 0 14px rgba(138, 147, 160, 0.25);
+}
 .mbtn.danger:hover, .mbtn.danger.focus {
   border-color: #ff5a4e;
   color: #ff5a4e;

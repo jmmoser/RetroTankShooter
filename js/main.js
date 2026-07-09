@@ -55,12 +55,25 @@
     mountains: renderer.createMesh(Geometry.mountains(600)),
     stars: renderer.createMesh(Geometry.stars(640, 110), renderer.gl.POINTS),
     eclipse: renderer.createMesh(Geometry.eclipse(630)),
+    // SECTOR NULL: the checkerboard runs out past the fog line; the relay
+    // obelisks are the only things left standing on it
+    checker: renderer.createMesh(Geometry.checkerboard(512, 16)),
+    relay: renderer.createMesh(Geometry.obelisk()),
   };
   const TANK_MESH = {
     drone: M.tankDrone, hunter: M.tankHunter, sniper: M.tankSniper,
     phantom: M.tankPhantom, rusher: M.tankRusher,
     shellback: M.tankShellback, warden: M.tankWarden,
+    // SECTOR NULL residents reuse the campaign hulls; a heavy desaturating
+    // tint at draw time drains them to the plane's palette
+    watcher: M.tankSniper, circler: M.tankDrone,
+    husk: M.tankDrone, stalker: M.tankPhantom,
   };
+  // what a fallen hull looks like where it fell — model key from the graveyard
+  function wreckMeshFor(m) {
+    if (m === 'player') return M.tankPlayer;
+    return TANK_MESH[m] || M.tankDrone;
+  }
 
   // deuteranopia-safe hull palette, baked as a second mesh set and swapped
   // live by the COLORBLIND HULLS setting
@@ -77,7 +90,9 @@
   for (const k in CB_HULLS) TANK_MESH_CB[k] = renderer.createMesh(Geometry.tankSolid(CB_HULLS[k]));
   function tankMeshFor(type) {
     const set = Settings.get('colorblind') ? TANK_MESH_CB : TANK_MESH;
-    return set[type] || TANK_MESH.drone;
+    // the CB set only re-colors campaign hulls; hollow residents keep their
+    // drained tints (they're distinguished by silhouette + behavior anyway)
+    return set[type] || TANK_MESH[type] || TANK_MESH.drone;
   }
 
   // ---- live settings ---------------------------------------------------------
@@ -217,7 +232,8 @@
   function armRecordChase() {
     recordBeaten = false;
     const daily = game.dailySeed ? Progress.dailyBest() : null;
-    recordRef = game.versus ? 0 : (game.dailySeed ? (daily ? daily.score : 0) : highScore);
+    // SECTOR NULL runs chase nothing — no gold score, no fanfare down there
+    recordRef = (game.versus || game.horror) ? 0 : (game.dailySeed ? (daily ? daily.score : 0) : highScore);
     hud.recordScore = recordRef;
     if (typeof Medals !== 'undefined') Medals.drainRecent(); // stale earns from an aborted run
   }
@@ -332,6 +348,20 @@
     hud.message('DAILY OPS ' + Progress.todayKey() + ' — SNEAK, STRIKE, EXTRACT', '#ffd24a', 3);
   }
 
+  // SECTOR NULL: one tank, standard hull, no squad, no drafts, no alarm.
+  // The arena is the antagonist; everything else is deliberately absent.
+  function startHollow() {
+    mobileImmersive();
+    closeDraft();
+    runRecorded = false;
+    game.newRun(1, null, { horror: true });
+    armRecordChase();
+    uiMode = 'playing';
+    showScreen(null);
+    AudioSys.play('deploy');
+    hud.message('SECTOR NULL — DEPTH 1', '#8a93a0', 3);
+  }
+
   /* Career-stat medals: checked whenever the record advances. Awards are
    * idempotent, so re-checking is free. */
   function checkCareerMedals() {
@@ -418,6 +448,26 @@
     closeDraft();
     uiMode = 'gameover';
     const res = recordRunEnd();
+    // the hollow sector keeps its own books: no high score, no near-miss —
+    // just the depth you reached and how much of you is out there now
+    const overHead = document.querySelector('#screen-over .panel-head');
+    overHead.textContent = game.horror ? 'SIGNAL LOST' : 'TANK DESTROYED';
+    if (game.horror) {
+      let html =
+        `FINAL SCORE <span class="gold">${game.score}</span><br>` +
+        `DEPTH REACHED ${game.level}`;
+      if (typeof Graveyard !== 'undefined') {
+        html += `<br>WRECKS ON THE PLANE ${Graveyard.count()}`;
+      }
+      html += '<br><span style="color:#5a6570">THE PLANE KEEPS WHAT FALLS ON IT</span>';
+      const extras = buildOverExtras(res);
+      html += extras.html;
+      document.getElementById('over-stats').innerHTML = html;
+      document.getElementById('bt-share').classList.add('hidden');
+      configureOverButtons();
+      showScreen('over');
+      return;
+    }
     const isHigh = recordHighScore();
     let earned = res.marauder || isHigh;
     let html =
@@ -748,6 +798,23 @@
   }
 
   function showClearStats() {
+    const clearHead = document.querySelector('#screen-clear .panel-head');
+    const btContinue = document.getElementById('bt-continue');
+    if (game.horror) {
+      // no gate choices, no warlord tease — the only way is down
+      clearHead.textContent = 'DEPTH ' + game.level + ' SILENT';
+      btContinue.innerHTML = 'DESCEND<span class="mkey">ENTER</span>';
+      document.getElementById('clear-stats').innerHTML =
+        `BONUS <span class="gold">+${game.levelBonus}</span><br>` +
+        `SCORE ${game.score}<br>` +
+        '<span style="color:#5a6570">THE NEXT PLANE IS QUIETER</span>';
+      document.getElementById('gate-choices').innerHTML = '';
+      btContinue.classList.remove('hidden');
+      document.getElementById('clear-wait').classList.add('hidden');
+      return;
+    }
+    clearHead.textContent = 'SECTOR CLEARED';
+    btContinue.innerHTML = 'NEXT SECTOR<span class="mkey">ENTER</span>';
     // tease what's next: a WARLORD sector ahead is a reason to press ENTER
     const next = game.level + 1;
     const bossNext = next % BOSS_EVERY === 0;
@@ -782,8 +849,12 @@
     game.nextLevel(gateId || 'standard');
     uiMode = 'playing';
     showScreen(null);
-    hud.message('SECTOR ' + game.level, game.bossLevel ? '#ff4a3c' : '#4fd6bb', 2.5);
-    if (!game.bossLevel) AudioSys.play('sectorStart'); // boss sectors get the alarm instead
+    if (game.horror) {
+      hud.message('DEPTH ' + game.level, '#8a93a0', 2.5);   // no jingle down here
+    } else {
+      hud.message('SECTOR ' + game.level, game.bossLevel ? '#ff4a3c' : '#4fd6bb', 2.5);
+      if (!game.bossLevel) AudioSys.play('sectorStart'); // boss sectors get the alarm instead
+    }
     if (Net.role === 'host') { Net.broadcastLevel(game); netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = []; }
   }
 
@@ -996,6 +1067,8 @@
       showScreen('clear');
     } else if (msg.s === 'over') {
       closeDraft();
+      // co-op deaths always use the campaign framing, whatever ran last
+      document.querySelector('#screen-over .panel-head').textContent = 'TANK DESTROYED';
       game.score = msg.score; game.level = msg.level;
       const res = recordRunEnd();
       const isHigh = recordHighScore();
@@ -1115,6 +1188,11 @@
     if (src.exit) {
       lights.push({ x: src.exit.x, y: 4, z: src.exit.z, radius: 22, r: 0.6, g: 0.8, b: 1.0 });
     }
+    // SECTOR NULL: each live relay core pools a little pale light on the board
+    for (const r of (src.relays || [])) {
+      if (r.done) continue;
+      lights.push({ x: r.x, y: 8.5, z: r.z, radius: 17, r: 0.10, g: 0.24, b: 0.18 });
+    }
     lights.sort((a, c) =>
       (Math.hypot(a.x - cam.x, a.z - cam.z) / a.radius) -
       (Math.hypot(c.x - cam.x, c.z - cam.z) / c.radius));
@@ -1141,7 +1219,55 @@
     renderer.draw(M.mountains, model, { unlit: true, nofog: true, nodepth: true, tint: [g, g, g] });
   }
 
+  // SECTOR NULL: no ember horizon, no ridgelines, no dead sun — just sparse
+  // cold stars over a checkerboard that runs out past the fog. The boundary
+  // wall is drawn drained so it reads as a dark seam at the edge of vision,
+  // not a wall. Wrecks are permanent scenery here, sunken and off-level.
+  function drawHollowArena(src) {
+    const skyModel = m4.translation(cam.x, 0, cam.z);
+    renderer.draw(M.stars, skyModel, { unlit: true, nofog: true, nodepth: true, points: true });
+    renderer.draw(M.checker, m4.identity());
+
+    const step = 8, lim = ARENA_HALF + 1.5;
+    const wallTint = [0.32, 0.32, 0.40];
+    for (let v = -ARENA_HALF; v <= ARENA_HALF; v += step) {
+      renderer.draw(M.wall, m4.trs(v, 0, -lim, 0, step, 1, 3), { tint: wallTint });
+      renderer.draw(M.wall, m4.trs(v, 0, lim, 0, step, 1, 3), { tint: wallTint });
+      renderer.draw(M.wall, m4.trs(-lim, 0, v, 0, 3, 1, step), { tint: wallTint });
+      renderer.draw(M.wall, m4.trs(lim, 0, v, 0, 3, 1, step), { tint: wallTint });
+    }
+
+    for (const o of src.obstacles) {
+      if (o.dead) continue;
+      const mesh = o.type === 'pyramid' ? M.pyramid : M.block;
+      renderer.draw(mesh, m4.trs(o.x, 0, o.z, 0, o.w, o.h, o.d), { tint: o.color });
+    }
+
+    const t = performance.now() / 1000;
+    for (const r of src.relays || []) {
+      renderer.draw(M.relay, m4.trs(r.x, 0, r.z, 0, 1, 1, 1),
+        { tint: r.done ? [0.55, 0.55, 0.6] : null });
+      if (!r.done) {
+        // the live core: a slow pale pulse, and an honest touch ring
+        const pu = 0.30 + 0.22 * (0.5 + 0.5 * Math.sin(t * 1.3 + r.pulse));
+        renderer.draw(M.powerup, m4.trs(r.x, 8.7, r.z, t * 0.5, 0.55, 0.55, 0.55),
+          { tint: [0.35 * pu, 0.85 * pu, 0.65 * pu], unlit: true });
+        renderer.draw(M.ring, m4.trs(r.x, 0.25, r.z, 0, RELAY_RADIUS, 1, RELAY_RADIUS),
+          { tint: [0.10 * pu, 0.30 * pu, 0.22 * pu], unlit: true, additive: true });
+      }
+    }
+
+    for (const w of src.wrecks || []) {
+      const model = m4.multiply(
+        m4.trs(w.x, -w.sink, w.z, w.yaw, 1, 1, 1),
+        m4.rotationX(w.tilt));
+      renderer.draw(wreckMeshFor(w.m), model,
+        { tint: w.m === 'player' ? [0.30, 0.40, 0.38] : [0.26, 0.27, 0.31] });
+    }
+  }
+
   function drawArena(src) {
+    if (src.horror) { drawHollowArena(src); return; }
     drawSky();
     renderer.draw(M.ground, m4.identity());
     renderer.draw(M.grid, m4.identity(), { unlit: true });
@@ -1277,6 +1403,12 @@
         // elites strobe white-hot so they read across the arena
         const pu = 1 + 0.25 * (0.5 + 0.5 * Math.sin(now / 150));
         tint = [pu, pu, pu];
+      } else if (game.horror && !tint) {
+        // hollow residents: the campaign hulls drained of their colors —
+        // nothing out here strobes, glows or asks to be looked at
+        tint = e.type === 'husk' ? [0.62, 0.48, 0.44]
+          : e.type === 'stalker' ? [0.40, 0.50, 0.52]
+          : [0.46, 0.48, 0.55];
       }
       const sc = (e.elite ? 1.18 : 1) *
         (e.type === 'rusher' ? 0.82 : e.type === 'shellback' ? 1.22 : 1);
@@ -1454,6 +1586,7 @@
         if (Input.consume('KeyH')) { enterLobbyAsHost(); break; }
         if (Input.consume('KeyJ')) { enterJoin(); break; }
         if (Input.consume('KeyD')) { startDaily(); break; }
+        if (Input.consume('KeyN')) { startHollow(); break; }
         menuKeys('title');
         break;
 
@@ -1549,7 +1682,12 @@
   bind('bt-lobby-leave', leaveToTitle);
   bind('bt-lobby-launch', () => { if (Net.role === 'host') startHostRun(); });
   bind('bt-continue', advanceLevel);
-  bind('bt-retry', () => { if (game.dailySeed) startDaily(); else startRun(); });
+  bind('bt-retry', () => {
+    if (game.horror) startHollow();
+    else if (game.dailySeed) startDaily();
+    else startRun();
+  });
+  bind('bt-hollow', startHollow);
   bind('bt-again', () => { if (Net.role === 'host') startHostRun(); });
   bind('bt-vs-again', () => { if (Net.role === 'host') startHostRun(); });
   bind('bt-vs-leave', leaveToTitle);
@@ -1592,6 +1730,9 @@
     } else {
       AudioSys.setEngine(0);
     }
+    // SECTOR NULL: the other engine — the one the radar refuses to show
+    AudioSys.setDread(uiMode === 'playing' && game.horror && game.mode === 'playing'
+      ? game.dread : 0);
   }
 
   // soundtrack mood follows the screen: brooding loop under the menus, the
@@ -1602,7 +1743,11 @@
     let mood = 'menu';
     // a solo TECH draft pauses the sim but shouldn't drop the combat groove
     if ((uiMode === 'playing' || uiMode === 'draft') && (game.mode === 'playing' || game.mode === 'dying')) {
-      if (game.bossLevel && game.boss && !game.boss.dead) {
+      if (game.horror) {
+        // SECTOR NULL: the drone. No escalation — nothing here escalates.
+        mood = 'hollow';
+        AudioSys.setMusicIntensity(0);
+      } else if (game.bossLevel && game.boss && !game.boss.dead) {
         mood = 'boss';
         AudioSys.setMusicIntensity(1);
       } else {
