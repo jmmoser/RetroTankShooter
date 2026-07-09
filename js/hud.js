@@ -264,19 +264,24 @@ class HUD {
       return;
     }
 
-    if (game.alert > 0 && game.flagsLeft() > 0) {
-      const aw = 110 * s, ah = 5 * s;
-      const ax = W / 2 - aw / 2, ay = topY + 16 * s;
-      const a01 = Math.min(1, game.alert);
-      const r = Math.round(120 + a01 * 135), g = Math.round(200 - a01 * 130);
-      ctx.font = font(10, true);
-      ctx.fillStyle = `rgba(${r},${g},80,0.9)`;
-      ctx.fillText('ALERT', W / 2, ay - 7 * s);
-      ctx.strokeStyle = `rgba(${r},${g},80,0.6)`;
-      ctx.lineWidth = Math.max(1, s);
-      ctx.strokeRect(ax, ay, aw, ah);
-      ctx.fillStyle = `rgb(${r},${g},80)`;
-      ctx.fillRect(ax + s, ay + s, (aw - 2 * s) * a01, ah - 2 * s);
+    // stealth status under the dish: the whole pivot in one line — are you
+    // a ghost, a rumor, or the thing every hull in the sector is hunting
+    {
+      const t2 = performance.now() / 1000;
+      let label, col;
+      if ((game.alarmT || 0) > 0) {
+        label = game.exit ? 'GET TO THE GATE' : 'ALARM — GRID HUNTING';
+        col = Math.sin(t2 * 9) > -0.2 ? '#ff4a3c' : '#8a2a20';
+      } else if (game.suspicion) {
+        label = 'PATROLS SUSPICIOUS';
+        col = '#ffd24a';
+      } else {
+        label = 'UNDETECTED';
+        col = 'rgba(79,214,187,0.75)';
+      }
+      ctx.font = font(11, true);
+      ctx.fillStyle = col;
+      ctx.fillText(label, W / 2, topY + 14 * s);
     }
 
     // sector bounty, live under the dish
@@ -286,7 +291,7 @@ class HUD {
       ctx.fillStyle = b.paid ? '#3cff78' : '#e8c75a';
       ctx.fillText(
         b.paid ? '✓ BOUNTY PAID' : 'BOUNTY: ' + b.name + '  ' + b.prog + '/' + b.n,
-        W / 2, topY + 34 * s);
+        W / 2, topY + 30 * s);
     }
   }
 
@@ -432,6 +437,26 @@ class HUD {
       }
     }
 
+    // extraction gate: an ice-white diamond, pinned to the rim like a beacon
+    if (game.exit) {
+      let [bx, by] = toRadar(game.exit.x, game.exit.z);
+      const dx = bx - cx, dy = by - cy;
+      const d = Math.hypot(dx, dy);
+      if (d > R - 7 * s) {
+        bx = cx + (dx / d) * (R - 7 * s);
+        by = cy + (dy / d) * (R - 7 * s);
+      }
+      const er = (4.5 + Math.sin(t * 7) * 1.1) * s;
+      ctx.fillStyle = '#d8f4ff';
+      ctx.beginPath();
+      ctx.moveTo(bx, by - er);
+      ctx.lineTo(bx + er, by);
+      ctx.lineTo(bx, by + er);
+      ctx.lineTo(bx - er, by);
+      ctx.closePath();
+      ctx.fill();
+    }
+
     // the WARLORD: a big pulsing diamond, pinned to the rim when out of range
     if (game.boss && !game.boss.dead) {
       const b = game.boss;
@@ -490,11 +515,14 @@ class HUD {
       ctx.fill();
     }
 
-    // hostiles: one shape per type so silhouettes carry the info, not just hue
+    // hostiles: one shape per type so silhouettes carry the info, not just
+    // hue — and awareness carries in brightness: dim = blind patrol,
+    // half-lit = investigating, full = it knows you're here
     for (const e of game.enemies) {
       if (e.cloak > 0.6) continue; // cloaked phantoms hide from radar too
       const [bx, by] = toRadar(e.x, e.z);
       const r = 3.2 * s;
+      ctx.globalAlpha = e.alerted ? 1 : ((e.sense || 0) >= 0.4 ? 0.8 : 0.42);
       ctx.fillStyle = enemyBlipColor(e.type);
       ctx.beginPath();
       if (e.type === 'hunter') {
@@ -535,6 +563,7 @@ class HUD {
         ctx.stroke();
       }
     }
+    ctx.globalAlpha = 1;
 
     // player wedge at center
     ctx.fillStyle = '#4fd6bb';
@@ -582,9 +611,24 @@ class HUD {
       ctx.fillRect(bx + s, gy + s, (bw * 0.7 - 2 * s) * bo01, gh - 2 * s);
     }
 
+    // SIGNATURE: how loud you read on enemy sensors — speed, heat and boost
+    // all feed it. Keep it low and patrols have to nearly touch you.
+    if (!game.versus && p.sig != null) {
+      const sg01 = Math.max(0, Math.min(1, p.sig));
+      const gy = by - 56 * s, gh = 5 * s;
+      const sigCol = sg01 > 0.75 ? '#ff6a5a' : sg01 > 0.45 ? '#ffd24a' : '#4fd6bb';
+      ctx.font = font(10, true);
+      ctx.fillStyle = sigCol;
+      ctx.fillText('SIGNATURE', bx, gy - 7 * s);
+      ctx.strokeStyle = 'rgba(79,214,187,0.5)';
+      ctx.strokeRect(bx, gy, bw * 0.7, gh);
+      ctx.fillStyle = sigCol;
+      ctx.fillRect(bx + s, gy + s, (bw * 0.7 - 2 * s) * sg01, gh - 2 * s);
+    }
+
     // heat gauge: the cannon's whole economy in one bar — redline ticks at
     // 55/85, a sweeping marker plus perfect-window band while venting
-    const ay = by - 68 * s;
+    const ay = by - 84 * s;
     const heat01 = Math.max(0, Math.min(1, (p.heat || 0) / (p.maxHeat || 100)));
     const overheated = (p.overheatT || 0) > 0;
     const heatCol = overheated ? '#ff4a3c' : heat01 > 0.85 ? '#ff6a3c' : heat01 > 0.55 ? '#ffd24a' : '#4fd6bb';
@@ -693,6 +737,10 @@ class HUD {
       const bossUp = game.boss && !game.boss.dead;
       ctx.fillStyle = bossUp ? '#ff4a3c' : '#e8c75a';
       ctx.fillText(bossUp ? 'TARGET WARLORD' : 'TARGET DOWN', W - pad, H - pad - 12 * s);
+    } else if (game.exit) {
+      const pp = Math.sin(performance.now() / 160) > -0.3;
+      ctx.fillStyle = pp ? '#d8f4ff' : '#7fb4c9';
+      ctx.fillText('EXTRACT ▸', W - pad, H - pad - 12 * s);
     } else {
       const fl = game.flagsLeft();
       ctx.fillStyle = fl > 0 ? '#3cff78' : '#e8c75a';

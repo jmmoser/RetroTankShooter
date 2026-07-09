@@ -314,7 +314,7 @@
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message('SECTOR ' + game.level + ' — SECURE ALL ZONES',
+    hud.message('SECTOR ' + game.level + (game.bossLevel ? ' — DESTROY THE WARLORD' : ' — SECURE THE UPLINKS, THEN EXTRACT'),
       game.bossLevel ? '#ff4a3c' : '#4fd6bb', 3);
   }
 
@@ -329,7 +329,7 @@
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message('DAILY OPS ' + Progress.todayKey() + ' — SECURE ALL ZONES', '#ffd24a', 3);
+    hud.message('DAILY OPS ' + Progress.todayKey() + ' — SNEAK, STRIKE, EXTRACT', '#ffd24a', 3);
   }
 
   /* Career-stat medals: checked whenever the record advances. Awards are
@@ -685,7 +685,7 @@
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message(versus ? 'VERSUS — FIRST TO 10 KILLS' : 'SECTOR 1 — SECURE ALL ZONES',
+    hud.message(versus ? 'VERSUS — FIRST TO 10 KILLS' : 'SECTOR 1 — SECURE THE UPLINKS, THEN EXTRACT',
       versus ? '#ffd24a' : '#4fd6bb', 3);
     Net.broadcastLevel(game);               // ship the arena to clients
     netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = [];
@@ -704,10 +704,11 @@
     game.flashes = []; game.debris = []; game.depots = []; game.mines = [];
     game.boss = null; game.rings = []; game.pendingSpawns = [];
     game.bossLevel = false; game.alert = 0;
+    game.alarmT = 0; game.suspicion = false; game.exit = null; game.noises = [];
     game.combo = 0; game.comboT = 0; game.mult = 1;
     game.versus = versus; game.killCounts = {}; game.killTarget = 10;
     game.winnerId = null; game.dailySeed = null;
-    game.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0 };
+    game.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0, silentKills: 0 };
     game.mode = 'playing';
     game._prevSh = null; game._prevAlive = null;  // reset damage-feedback tracking
     closeDraft();
@@ -716,7 +717,7 @@
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message(versus ? 'VERSUS — FIRST TO 10 KILLS' : 'CO-OP DEPLOYED — SECURE ALL ZONES',
+    hud.message(versus ? 'VERSUS — FIRST TO 10 KILLS' : 'CO-OP DEPLOYED — SNEAK, STRIKE, EXTRACT',
       versus ? '#ffd24a' : '#4fd6bb', 3);
   }
 
@@ -752,6 +753,7 @@
     const bossNext = next % BOSS_EVERY === 0;
     document.getElementById('clear-stats').innerHTML =
       `SECTOR ${game.level} SECURE<br>` +
+      (game.ghostRun && !game.bossLevel ? '<span class="gold">&#9733; GHOST EXTRACTION — NEVER DETECTED &#9733;</span><br>' : '') +
       `BONUS <span class="gold">+${game.levelBonus}</span><br>` +
       `SCORE ${game.score}` +
       (bossNext ? `<br><span class="red">WARLORD SIGNATURE IN SECTOR ${next}</span>` : '');
@@ -931,7 +933,7 @@
     showScreen('clear');
     if (Net.role === 'host') {
       Net.broadcastState(game);
-      Net.broadcastScreen({ s: 'clear', level: game.level, levelBonus: game.levelBonus, score: game.score });
+      Net.broadcastScreen({ s: 'clear', level: game.level, levelBonus: game.levelBonus, score: game.score, ghost: game.ghostRun ? 1 : 0 });
     }
   }
 
@@ -988,6 +990,7 @@
   Net.cb.onScreen = (msg) => {
     if (msg.s === 'clear') {
       game.level = msg.level; game.levelBonus = msg.levelBonus; game.score = msg.score;
+      game.ghostRun = !!msg.ghost;
       uiMode = 'levelclear';
       showClearStats();
       showScreen('clear');
@@ -1109,6 +1112,9 @@
         ? { x: b.x, y: 5, z: b.z, radius: 28, r: 1.3, g: 0.3, b: 0.5 }
         : { x: b.x, y: 5, z: b.z, radius: 24, r: 0.25, g: 0.5, b: 1.0 });
     }
+    if (src.exit) {
+      lights.push({ x: src.exit.x, y: 4, z: src.exit.z, radius: 22, r: 0.6, g: 0.8, b: 1.0 });
+    }
     lights.sort((a, c) =>
       (Math.hypot(a.x - cam.x, a.z - cam.z) / a.radius) -
       (Math.hypot(c.x - cam.x, c.z - cam.z) / c.radius));
@@ -1202,6 +1208,21 @@
       }
     }
 
+    // extraction gate: an ice-white pillar and ring — the way out of a
+    // sector that is now wide awake
+    if (game.exit) {
+      const ex = game.exit;
+      const pulse = 0.6 + 0.4 * Math.sin(now / 160);
+      renderer.draw(M.beacon, m4.trs(ex.x, 0, ex.z, 0, 1.5, 1.3, 1.5),
+        { tint: [0.85 * pulse, 0.95 * pulse, 1.05 * pulse], unlit: true, nofog: true, additive: true });
+      renderer.draw(M.ring, m4.trs(ex.x, 0.4, ex.z, 0, EXIT_RADIUS, 1, EXIT_RADIUS),
+        { tint: [0.55 * pulse, 0.85 * pulse, 1.0 * pulse], unlit: true, additive: true });
+      // a ring collapsing into the gate reads as "come here" from any distance
+      const k = 1 - ((now / 1100) % 1);
+      renderer.draw(M.ring, m4.trs(ex.x, 0.9, ex.z, 0, EXIT_RADIUS * (0.3 + k * 2.2), 1, EXIT_RADIUS * (0.3 + k * 2.2)),
+        { tint: [0.3 * pulse * k, 0.5 * pulse * k, 0.6 * pulse * k], unlit: true, additive: true });
+    }
+
     // the WARLORD: hull, live turrets (own aim), and its core
     const b = game.boss;
     if (b && !b.dead) {
@@ -1260,6 +1281,17 @@
       const sc = (e.elite ? 1.18 : 1) *
         (e.type === 'rusher' ? 0.82 : e.type === 'shellback' ? 1.22 : 1);
       renderer.draw(tankMeshFor(e.type), m4.trs(e.x, 0, e.z, e.angle, sc, sc, sc), { tint });
+      // awareness telltale on the ground: amber = investigating, strobing
+      // red = it knows — readable at a glance across the whole arena
+      const aware = e.alerted ? 2 : ((e.sense || 0) >= 0.4 ? 1 : 0);
+      if (aware && e.cloak < 0.6) {
+        const ap = aware === 2 ? 0.5 + 0.4 * Math.sin(now / 90) : 0.28 + 0.14 * Math.sin(now / 230);
+        const at = aware === 2
+          ? [1.0 * ap, 0.22 * ap, 0.16 * ap]
+          : [1.0 * ap, 0.78 * ap, 0.2 * ap];
+        renderer.draw(M.ring, m4.trs(e.x, 0.3, e.z, 0, 4.4, 1, 4.4),
+          { tint: at, unlit: true, additive: true });
+      }
       // warden: the cannon-proof umbrella reads as a slow golden ring
       if (e.type === 'warden') {
         const wp = 0.45 + 0.2 * Math.sin(now / 260);
@@ -1564,7 +1596,8 @@
 
   // soundtrack mood follows the screen: brooding loop under the menus, the
   // combat groove in the arena, the boss mix while a WARLORD is alive. The
-  // intensity knob rides the alert level and combo heat.
+  // intensity knob is the stealth state now — near-silent prowl while you're
+  // a ghost, the full groove only once the grid is hunting.
   function updateMusic() {
     let mood = 'menu';
     // a solo TECH draft pauses the sim but shouldn't drop the combat groove
@@ -1574,7 +1607,8 @@
         AudioSys.setMusicIntensity(1);
       } else {
         mood = 'combat';
-        AudioSys.setMusicIntensity(Math.max(game.alert || 0, Math.min(1, (game.combo || 0) / 6)));
+        AudioSys.setMusicIntensity((game.alarmT || 0) > 0 ? 1
+          : Math.min(0.45, (game.suspicion ? 0.3 : 0.08) + Math.min(0.25, (game.combo || 0) / 10)));
       }
     }
     AudioSys.setMusicMood(mood);

@@ -8,8 +8,8 @@
  */
 const Net = (() => {
   const ENEMY_ORDER = ['drone', 'hunter', 'sniper', 'phantom', 'rusher', 'shellback', 'warden'];
-  const ID_PREFIX = 'phantom-arena-v2-';   // namespaces our ids on the shared broker
-                                           // (v2: zones/tech-draft protocol)
+  const ID_PREFIX = 'phantom-arena-v3-';   // namespaces our ids on the shared broker
+                                           // (v3: stealth/extraction protocol)
   const MAX_PLAYERS = 4;
 
   // Interpolation: clients render remote entities this far in the past so
@@ -222,6 +222,7 @@ const Net = (() => {
         mn: p.mines || 0, mb: p.maxBoost || 100,
         nx: p.maxNades || 6, mx: p.maxMines || 4,
         tl: p.techLvl || 0, tx: Math.round((p.tech01 || 0) * 100) / 100,
+        sg: Math.round((p.sig || 0) * 100) / 100,
       })),
       en: game.enemies.map((e) => {
         if (!e._nid) e._nid = netSeq++;
@@ -230,6 +231,8 @@ const Net = (() => {
           k: ENEMY_ORDER.indexOf(e.type), x: e.x, z: e.z, a: e.angle, h: e.hitFlash,
           c: e.cloak ? Math.round(e.cloak * 100) / 100 : 0,
           el: e.elite ? 1 : 0,
+          // awareness for the client's radar/rings: 0 patrol, 1 sus, 2 alerted
+          aw: e.alerted ? 2 : ((e.sense || 0) >= SENSE_SUS ? 1 : 0),
         };
       }),
       mi: game.mines.map((m) => ({ x: m.x, z: m.z, a: m.arm <= 0 ? 1 : 0 })),
@@ -246,6 +249,9 @@ const Net = (() => {
       fg: game.flags.map((f) => (f.taken ? 1 : 0)),
       fc: game.flags.map((f) => Math.round((f.cap || 0) * 100) / 100),
       al: game.alert,
+      alm: game.alarmT > 0 ? 1 : 0,
+      sus: game.suspicion ? 1 : 0,
+      ex: game.exit ? { x: game.exit.x, z: game.exit.z } : null,
       cb: game.combo, ct: game.comboT, mu: game.mult, cw: game.comboWin,
       pt: game.pot || 0,
       by: game.bounty ? { p: game.bounty.prog, d: game.bounty.paid ? 1 : 0 } : undefined,
@@ -366,6 +372,9 @@ const Net = (() => {
     game.killCounts = {};
     game.bossLevel = !game.versus && msg.level >= BOSS_EVERY && msg.level % BOSS_EVERY === 0;
     game.alert = 0;
+    game.alarmT = 0;
+    game.suspicion = false;
+    game.exit = null;
     game.combo = 0; game.comboT = 0; game.mult = 1;
     game.pot = 0;
     game.mutator = msg.mut || null;
@@ -400,6 +409,7 @@ const Net = (() => {
       p.nades = d.nd; p.maxNades = d.nx || 6;
       p.mines = d.mn || 0; p.maxMines = d.mx || 4;
       p.techLvl = d.tl || 0; p.tech01 = d.tx || 0;
+      p.sig = d.sg || 0;
       return p;
     });
     game.player = game.players.find((p) => p.id === game.localId) || game.players[0];
@@ -418,7 +428,13 @@ const Net = (() => {
       game._prevAlive = lp.alive;
     }
 
-    game.enemies = msg.en.map((d) => ({ nid: d.i, type: ENEMY_ORDER[d.k] || 'drone', x: d.x, z: d.z, angle: d.a, hitFlash: d.h, cloak: d.c || 0, elite: !!d.el }));
+    // awareness decoded back into alerted/sense so the HUD and renderer can
+    // read the same fields on host and client alike
+    game.enemies = msg.en.map((d) => ({
+      nid: d.i, type: ENEMY_ORDER[d.k] || 'drone', x: d.x, z: d.z, angle: d.a,
+      hitFlash: d.h, cloak: d.c || 0, elite: !!d.el,
+      alerted: d.aw === 2, sense: d.aw === 2 ? 1 : d.aw === 1 ? 0.6 : 0,
+    }));
     game.mines = (msg.mi || []).map((d) => ({ x: d.x, z: d.z, arm: d.a ? 0 : 1, life: 60, owner: null }));
     if (msg.vk) game.killCounts = msg.vk;
     game.projectiles = msg.pr.map((d) => ({ nid: d.i, x: d.x, y: d.y, z: d.z, angle: d.a, from: d.e ? 'enemy' : 'player', kind: d.k ? 'nade' : undefined }));
@@ -433,6 +449,13 @@ const Net = (() => {
     }
 
     game.alert = msg.al || 0;
+    game.alarmT = msg.alm ? 1 : 0;   // clients only need on/off for HUD + music
+    game.suspicion = !!msg.sus;
+    const hadExit = !!game.exit;
+    game.exit = msg.ex ? { x: msg.ex.x, z: msg.ex.z } : null;
+    if (!hadExit && game.exit) {
+      game.hud.message('UPLINK COMPLETE — REACH THE EXTRACTION GATE', '#4fd6bb', 3.2);
+    }
     game.combo = msg.cb || 0;
     game.comboT = msg.ct || 0;
     game.mult = msg.mu || 1;
@@ -469,7 +492,7 @@ const Net = (() => {
         AudioSys.play(s);
         // clients don't run the sim — mirror the host's event banners off
         // the sounds that always accompany them
-        if (s === 'alarm') game.hud.message('REINFORCEMENTS INBOUND', '#ff4a3c', 2.4);
+        if (s === 'alarm') game.hud.message('ALARM — THE GRID IS HUNTING', '#ff4a3c', 2.4);
         else if (s === 'coreExposed') game.hud.message('CORE EXPOSED — ATTACK', '#ffd24a', 3);
         else if (s === 'bossDown') game.hud.message('WARLORD DESTROYED', '#3cff78', 3);
         else if (s === 'comboBreak') game.hud.message('COMBO BROKEN', '#ff4a3c', 1.5);

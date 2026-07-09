@@ -57,6 +57,8 @@ const MEDALS = [
   { id: 'demolition',  name: 'DEMOLITION MAN', how: '3 GRENADE KILLS IN ONE MISSION' },
   { id: 'trapper',     name: 'TRAPPER',        how: '3 MINE KILLS IN ONE MISSION' },
   { id: 'giantkiller', name: 'GIANT KILLER',   how: 'DESTROY A WARLORD' },
+  { id: 'ghost',       name: 'GHOST',          how: 'EXTRACT WITHOUT EVER RAISING THE ALARM' },
+  { id: 'assassin',    name: 'ASSASSIN',       how: '5 SILENT KILLS IN ONE MISSION' },
   { id: 'deepstrike',  name: 'DEEP STRIKE',    how: 'REACH SECTOR 8' },
   { id: 'streak3',     name: 'DAILY REGULAR',  how: '3-DAY DAILY OPS STREAK' },
   { id: 'veteran',     name: 'VETERAN',        how: 'FLY 25 MISSIONS' },

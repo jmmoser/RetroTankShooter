@@ -15,15 +15,19 @@
  * date drives arena generation, so everyone fights the same layout) and a
  * VERSUS deathmatch where the co-op squad turns on itself.
  *
- * The engagement core:
+ * The engagement core — YOU are the phantom:
+ *  - STEALTH — enemies patrol unaware; each hull fills a detection meter
+ *    when it sees or hears you. Firing, boosting and a hot cannon raise
+ *    your SIGNATURE; slow and cold you're near-invisible.
+ *  - ALARM — get spotted and the grid hunts you: converge waves warp in
+ *    until you break contact and the alarm decays. Quiet is the default,
+ *    the old everything-hunts-you game is the punishment for sloppy play.
+ *  - EXTRACTION — the last uplink wakes the whole sector; the run ends at
+ *    a far-side extraction gate, not on a mop-up.
  *  - TECH drafts — kills/captures pay tech; each level deals a 3-choice
  *    stacking upgrade draft (UPGRADES) that builds the run's weapon.
- *  - SPAWN PRESSURE — hostiles keep warping in on a tightening timer, so
- *    the arena hunts the player instead of waiting to be cleared.
- *  - UPLINK ZONES — objectives are captured by holding ground while a
- *    converge wave answers the zone alarm.
  *  - RUSHERS — kamikaze hulls that force movement, and BOOST RAMS that
- *    make movement itself a weapon.
+ *    double as the silent assassination tool.
  */
 
 const ARENA_HALF = 175;          // arena is a square, +/- ARENA_HALF
@@ -43,17 +47,32 @@ const OVERHEAT_LOCK = 2.6;       // forced cooldown after redlining past max
 const GRAZE_R = 4.2;             // enemy shots passing this close (but not
                                  // hitting) refund boost and pay tech
 
+/* Stealth model — the player is the phantom. Patrols fill a detection
+ * meter (e.sense) when they see or hear a tank; at SENSE_SUS they break
+ * off to investigate, at 1 they alert and the sector alarm rises. Loud
+ * actions register NOISE events that pull patrols to the spot. */
+const SENSE_SUS = 0.4;     // detection meter: patrol -> investigating
+const SIGHT_CONE = 1.05;   // half-angle of a patrolling hull's vision cone
+const NOISE_SHOT = 60;     // cannon report radius
+const NOISE_BOOM = 70;     // grenade / mine / rusher blast radius
+const NOISE_WRECK = 45;    // a packmate shattering nearby is a tell
+const NOISE_RAM = 22;      // boost-ram kill: the assassin's quiet tool
+const ALERT_RADIUS = 45;   // an alerted hull radios packmates this close
+const EXIT_RADIUS = 10;    // extraction gate: park inside to warp out
+
 /* Campaign difficulty presets (SETTINGS → DIFFICULTY). dmg scales what
  * enemies do to the squad, pressure stretches/shrinks the spawn-pressure
  * timer, potSpill is the pot fraction KEPT after a hit, waves trims the
  * alarm/alert reinforcement counts (never below 1). regen is the
  * out-of-combat shield trickle (per second, after REGEN_DELAY unhit) and
  * regenTo the fraction of max it can restore — chip damage stops being a
- * death spiral, while depots and pickups still own the full top-up. */
+ * death spiral, while depots and pickups still own the full top-up.
+ * detect scales how fast enemy sensors fill; alarm is how many seconds the
+ * grid keeps hunting after it loses contact with you. */
 const DIFFICULTY = [
-  { dmg: 0.5,  pressure: 1.8,  potSpill: 0.9,  waves: -1, regen: 8, regenTo: 1    },  // RECRUIT — learn the systems
-  { dmg: 1,    pressure: 1,    potSpill: 0.7,  waves: 0,  regen: 5, regenTo: 0.65 },  // STANDARD — as designed
-  { dmg: 1.2,  pressure: 0.85, potSpill: 0.6,  waves: 0,  regen: 0, regenTo: 0    },  // VETERAN — the arena bites back
+  { dmg: 0.5,  pressure: 1.8,  potSpill: 0.9,  waves: -1, regen: 8, regenTo: 1,    detect: 0.6,  alarm: 9  },  // RECRUIT — learn the systems
+  { dmg: 1,    pressure: 1,    potSpill: 0.7,  waves: 0,  regen: 5, regenTo: 0.65, detect: 1,    alarm: 14 },  // STANDARD — as designed
+  { dmg: 1.2,  pressure: 0.85, potSpill: 0.6,  waves: 0,  regen: 0, regenTo: 0,    detect: 1.35, alarm: 20 },  // VETERAN — the arena bites back
 ];
 const REGEN_DELAY = 5;   // seconds without taking a hit before the trickle starts
 
@@ -69,11 +88,12 @@ const MUTATORS = [
 
 /* Per-sector optional bounties: auto-tracked, pay tech to the whole squad. */
 const BOUNTIES = [
-  { id: 'ram',   name: '3 RAM KILLS',      n: 3 },
-  { id: 'nade',  name: '3 GRENADE KILLS',  n: 3 },
-  { id: 'mine',  name: '2 MINE KILLS',     n: 2 },
-  { id: 'graze', name: 'GRAZE 8 SHOTS',    n: 8 },
-  { id: 'mult',  name: 'REACH COMBO ×4',   n: 1 },
+  { id: 'ram',    name: '3 RAM KILLS',      n: 3 },
+  { id: 'nade',   name: '3 GRENADE KILLS',  n: 3 },
+  { id: 'mine',   name: '2 MINE KILLS',     n: 2 },
+  { id: 'graze',  name: 'GRAZE 8 SHOTS',    n: 8 },
+  { id: 'mult',   name: 'REACH COMBO ×4',   n: 1 },
+  { id: 'silent', name: '3 SILENT KILLS',   n: 3 },
 ];
 
 // Boss turret mounts in hull-local space (model faces -Z). Shared with the
@@ -95,15 +115,18 @@ const LOADOUTS = [
   { name: 'MARAUDER',   speed: 4, armor: 4, ammo: 2, nades: 4, mines: 3 },
 ];
 
+// sight: how far the hull can spot a FULL-signature tank inside its vision
+// cone; a slow, cold tank shrinks that to ~a third. Snipers are the
+// long-range eyes of the grid — cross their lane hot and the map knows.
 const ENEMY_TYPES = {
-  drone:     { hp: 60,  speed: 14, turn: 1.6, fireRange: 95,  fireCd: 2.2, aggro: 160, score: 150, shotSpeed: 50, dmg: 14, lead: 0 },
-  rusher:    { hp: 22,  speed: 26, turn: 3.4, fireRange: 0,   fireCd: 9,   aggro: 999, score: 100, shotSpeed: 0,  dmg: 30, lead: 0 },
-  hunter:    { hp: 85,  speed: 22, turn: 2.4, fireRange: 70,  fireCd: 1.5, aggro: 999, score: 300, shotSpeed: 58, dmg: 18, lead: 0.8 },
-  sniper:    { hp: 75,  speed: 7,  turn: 1.2, fireRange: 160, fireCd: 3.2, aggro: 200, score: 400, shotSpeed: 85, dmg: 26, lead: 0.9 },
-  phantom:   { hp: 110, speed: 19, turn: 2.2, fireRange: 100, fireCd: 2.3, aggro: 999, score: 600, shotSpeed: 66, dmg: 22, lead: 0.8, cloaks: true },
+  drone:     { hp: 60,  speed: 14, turn: 1.6, fireRange: 95,  fireCd: 2.2, aggro: 999, score: 150, shotSpeed: 50, dmg: 14, lead: 0,   sight: 55 },
+  rusher:    { hp: 22,  speed: 26, turn: 3.4, fireRange: 0,   fireCd: 9,   aggro: 999, score: 100, shotSpeed: 0,  dmg: 30, lead: 0,   sight: 45 },
+  hunter:    { hp: 85,  speed: 22, turn: 2.4, fireRange: 70,  fireCd: 1.5, aggro: 999, score: 300, shotSpeed: 58, dmg: 18, lead: 0.8, sight: 70 },
+  sniper:    { hp: 75,  speed: 7,  turn: 1.2, fireRange: 160, fireCd: 3.2, aggro: 999, score: 400, shotSpeed: 85, dmg: 26, lead: 0.9, sight: 150 },
+  phantom:   { hp: 110, speed: 19, turn: 2.2, fireRange: 100, fireCd: 2.3, aggro: 999, score: 600, shotSpeed: 66, dmg: 22, lead: 0.8, sight: 85, cloaks: true },
   // counterplay hulls: reading the fight matters more than holding fire
-  shellback: { hp: 150, speed: 9,  turn: 1.1, fireRange: 75,  fireCd: 2.6, aggro: 170, score: 350, shotSpeed: 48, dmg: 20, lead: 0.4, frontArmor: true },
-  warden:    { hp: 90,  speed: 8,  turn: 1.4, fireRange: 70,  fireCd: 3.0, aggro: 160, score: 500, shotSpeed: 46, dmg: 12, lead: 0.3, aura: 16 },
+  shellback: { hp: 150, speed: 9,  turn: 1.1, fireRange: 75,  fireCd: 2.6, aggro: 999, score: 350, shotSpeed: 48, dmg: 20, lead: 0.4, sight: 50, frontArmor: true },
+  warden:    { hp: 90,  speed: 8,  turn: 1.4, fireRange: 70,  fireCd: 3.0, aggro: 999, score: 500, shotSpeed: 46, dmg: 12, lead: 0.3, sight: 55, aura: 16 },
 };
 
 /* In-run TECH upgrade pool: kills and zone captures pay tech, each tech level
@@ -129,6 +152,7 @@ const UPGRADES = [
   { id: 'uplink',     name: 'UPLINK SPIKE',     desc: 'capture zones 30% faster',              max: 2 },
   { id: 'magnet',     name: 'SALVAGE MAGNET',   desc: 'pickups are drawn to you',              max: 1 },
   { id: 'overcharge', name: 'BOOST OVERCHARGE', desc: '+35 boost capacity, faster regen',      max: 2 },
+  { id: 'ghost',      name: 'GHOST PLATING',    desc: 'enemy sensors fill 20% slower',         max: 2 },
 ];
 
 // Spectre-style solid slabs: saturated flat-shaded colors that pop
@@ -240,6 +264,14 @@ class Game {
     this.bounty = null;    // this sector's optional bounty { id, name, n, prog, paid }
     this.alert = 0;        // 0..1 — fraction of flags secured this sector
     this.alertTier = 0;    // reinforcement waves already triggered
+    this.noises = [];      // one-frame noise events: { x, z, r, mag }
+    this.alarmT = 0;       // >0: the grid is hunting (seconds of hunt left)
+    this.suspicion = false; // any patrol currently investigating (HUD tell)
+    this.everAlarmed = false; // the alarm went off at least once this sector
+    this.ghostRun = false; // extraction reached with the alarm never raised
+    this.exit = null;      // extraction gate { x, z } once the uplinks fall
+    this.lastKnownX = 0;   // where the grid last had contact with the squad
+    this.lastKnownZ = 0;
     this.pendingSpawns = []; // warp-in telegraphs: { x, z, type, t, tick }
     this.boss = null;      // WARLORD state on boss sectors
     this.bossLevel = false;
@@ -327,6 +359,7 @@ class Game {
       ramCd: 0,            // per-ram cooldown so one pass = one hit
       boostHeld: 0,        // seconds the current boost has been engaged
       sinceHit: 0,         // seconds since last damage, for shield recovery
+      sig: 0.15,           // SIGNATURE 0..1 — how loud this hull reads on sensors
     };
     p.shields = p.maxShields;
     return p;
@@ -347,11 +380,12 @@ class Game {
     this.pot = 0;
     this.mutator = null;
     this.gates = null;
-    this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0 };
+    this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0, silentKills: 0 };
     // one-shot coaching lines: zones are HELD, not touched — say so the
     // first time the local tank starts (and abandons) a capture this run
     this._hintHold = false;
     this._hintDrain = false;
+    this._hintSpotted = false;
     this.players = defs.map((d, i) => this._makePlayer(d, i));
     for (const p of this.players) this.killCounts[p.id] = 0;
     this.localId = localId != null ? localId : this.players[0].id;
@@ -396,10 +430,16 @@ class Game {
     this.boss = null;
     this.bossLevel = !this.versus && L >= BOSS_EVERY && L % BOSS_EVERY === 0;
     this.levelUntouched = true;
-    this.levelTime = 0;      // drives the continuous spawn-pressure ramp
-    // opening breather before the first pressure wave — long in the early
-    // sectors so new players can learn a fight before the arena starts hunting
-    this.pressureT = Math.max(7, 15 - L * 2.5);
+    this.levelTime = 0;
+    this.noises.length = 0;
+    this.suspicion = false;
+    this.exit = null;
+    this.ghostRun = false;
+    // boss sectors are set-piece fights: the WARLORD's grid is already
+    // awake, there is no sneaking up on a hovercruiser
+    this.alarmT = this.bossLevel ? 1e9 : 0;
+    this.everAlarmed = this.bossLevel;
+    this.pressureT = 4;      // converge-wave cadence once the alarm is up
     if (!this.versus && L >= 8) this._medal('deepstrike');
 
     // daily runs: the date + sector seeds generation, so every player in the
@@ -470,8 +510,10 @@ class Game {
     }
     RNG = Math.random;   // seeded window ends with generation
     this.mode = 'playing';
-    // first sector of a fresh campaign: spell out the capture rule up front
+    // first sector of a fresh campaign: spell out the two rules that changed
+    // everything — you are invisible until seen, and zones are held
     if (!this.versus && !this.bossLevel && L === 1) {
+      this.hud.message('YOU ARE THE PHANTOM — STAY SLOW AND COLD, STRIKE FIRST', '#4fd6bb', 4);
       this.hud.message('DRIVE INTO A ZONE RING AND HOLD IT TO CAPTURE', '#8ecbff', 3.4);
     }
     if (this.mutator) {
@@ -674,7 +716,7 @@ class Game {
       if (pos) {
         this.flags.push({
           x: pos[0], z: pos[1], taken: false, spin: rand(0, Math.PI * 2),
-          cap: 0, contested: false, alarmed: false,   // uplink zone state
+          cap: 0, contested: false, pulseT: 0,   // uplink zone state
         });
       }
     }
@@ -689,7 +731,8 @@ class Game {
     }
   }
 
-  _spawnEnemy(type, x, z) {
+  /* alerted: warp in already hunting (alarm converge waves, boss escorts). */
+  _spawnEnemy(type, x, z, alerted) {
     const L = this.level;
     const spec = ENEMY_TYPES[type];
     const diff = 1 + (L - 1) * 0.085;
@@ -716,13 +759,20 @@ class Game {
       aggro: spec.aggro,
       score: elite ? Math.round(spec.score * 1.5) : spec.score,
       shotSpeed: spec.shotSpeed,
-      dmg: spec.dmg * (elite ? 1.25 : 1),
+      // fewer hulls on the field now, so each one hits harder — being
+      // caught is supposed to be scary
+      dmg: spec.dmg * 1.3 * (elite ? 1.25 : 1),
       lead: spec.lead || 0,
       cloak: spec.cloaks ? 1 : 0,
       decloakT: 0,
       wanderX: x, wanderZ: z,
       wanderT: 0,
       hitFlash: 0,
+      // stealth: patrols start blind; sense fills as they see/hear you
+      sense: alerted || this.bossLevel ? 1 : 0,
+      alerted: !!alerted || this.bossLevel,
+      seenT: 999,                 // seconds since this hull last had contact
+      invX: x, invZ: z, invT: 0,  // investigation point + time left searching
       // per-type maneuver state: hunters weave between flanking arcs and
       // lunges, snipers relocate after every shot, drones regroup when hurt
       orbitDir: RNG() < 0.5 ? 1 : -1,
@@ -733,9 +783,10 @@ class Game {
   }
 
   _genEnemies() {
-    // lighter opening garrison — spawn pressure keeps the field fed after
+    // a handful of patrols, not a swarm: every hull is a stalk-and-kill
+    // problem, and alarm converge waves feed the field if you get loud
     const L = this.level;
-    let total = Math.min(2 + Math.floor(L * 1.4), 12);
+    let total = Math.min(3 + Math.floor(L * 0.9), 9);
     if (this.mutator === 'swarm') total += 3;        // thin hulls, more of them
     if (this.mutator === 'gauntlet') total -= 2;     // all elites — fewer, harder
     for (let i = 0; i < total; i++) {
@@ -800,7 +851,7 @@ class Game {
 
     const objectiveDone = this.bossLevel
       ? (this.boss && this.boss.dead && this.boss.deathT <= 0)
-      : this.flagsLeft() === 0;
+      : (this.exit && this._allAtExit());
     if (this._anyAlive() && objectiveDone) {
       this._levelClear();
     } else if (!this._anyAlive()) {
@@ -833,10 +884,11 @@ class Game {
     }
   }
 
-  // ---- spawn pressure ---------------------------------------------------------
-  // The sector never goes quiet: hostiles keep warping in on a timer that
-  // tightens the longer you stay, so disengaging and hiding is a losing
-  // strategy. Rushers lead most waves — the pressure comes TO you.
+  // ---- alarm pressure ---------------------------------------------------------
+  // The inversion at the heart of the pivot: the sector is QUIET by default.
+  // Converge waves only warp in while the alarm is up — get spotted and the
+  // grid hunts you until you break contact and go cold. Rushers lead most
+  // waves; during the extraction getaway the cadence never lets up.
 
   _updatePressure(dt) {
     if (this.bossLevel) {
@@ -848,33 +900,24 @@ class Game {
         if (this.enemies.length + this.pendingSpawns.length < 5) {
           const p = this._nearestPlayer(this.boss.x, this.boss.z) || this.player;
           const pos = this._findSpotNear(p.x, p.z, 45, 80, 4, 40);
-          if (pos) this.pendingSpawns.push({ x: pos[0], z: pos[1], type: RNG() < 0.6 ? 'rusher' : 'hunter', t: 1.8, tick: 0 });
+          if (pos) this.pendingSpawns.push({ x: pos[0], z: pos[1], type: RNG() < 0.6 ? 'rusher' : 'hunter', t: 1.8, tick: 0, al: 1 });
         }
       }
       return;
     }
+    if (this.alarmT <= 0) { this.pressureT = Math.min(this.pressureT, 4); return; }
     this.pressureT -= dt;
     if (this.pressureT > 0) return;
-    const heat = Math.min(1, this.levelTime / 90);   // dawdling tightens the screw
-    this.pressureT = Math.max(3.5, (11.5 - this.level * 0.5) * (1 - heat * 0.55)) *
-      (this.mutator === 'swarm' ? 0.55 : 1) * this._diff().pressure;
-    const cap = Math.min(9 + this.level * 2, 18);
+    this.pressureT = Math.max(4, 10 - this.level * 0.5) *
+      (this.mutator === 'swarm' ? 0.55 : 1) * this._diff().pressure *
+      (this.exit ? 0.7 : 1);   // the getaway keeps the screws on
+    const cap = Math.min(6 + this.level, 13);
     if (this.enemies.length + this.pendingSpawns.length >= cap) return;
-    // double waves are a mid-game threat — sectors 1-2 always send one tank
-    const n = 1 + ((this.level > 4 || (this.level >= 3 && heat > 0.5)) ? 1 : 0);
+    const n = 1 + (this.level > 3 ? 1 : 0);
     for (let i = 0; i < n; i++) {
-      // half the waves converge on the squad, half guard the objectives
-      let cx, cz;
-      const live = this.flags.filter((f) => !f.taken);
-      if (live.length && RNG() < 0.5) {
-        const f = live[(RNG() * live.length) | 0];
-        cx = f.x; cz = f.z;
-      } else {
-        const p = this.players[(RNG() * this.players.length) | 0];
-        cx = p.x; cz = p.z;
-      }
-      const pos = this._findSpotNear(cx, cz, 40, 75, 4, 38);
-      if (pos) this.pendingSpawns.push({ x: pos[0], z: pos[1], type: this._pressureType(), t: 1.8, tick: 0 });
+      // waves converge on the grid's last contact with the squad
+      const pos = this._findSpotNear(this.lastKnownX, this.lastKnownZ, 40, 75, 4, 38);
+      if (pos) this.pendingSpawns.push({ x: pos[0], z: pos[1], type: this._pressureType(), t: 1.8, tick: 0, al: 1 });
     }
   }
 
@@ -886,8 +929,9 @@ class Game {
 
   // ---- uplink zones -------------------------------------------------------------
   // Objectives are held, not touched: stand in the zone while its uplink
-  // fills. Starting a capture trips the zone alarm and a wave converges on
-  // you — every objective is a set-piece fight, not a waypoint.
+  // fills. Hacking an uplink is NOISY — it pulses and nearby patrols come
+  // looking. The stealth play is clearing the local patrol first; the loud
+  // play is holding the ring against whatever the pulses drag in.
 
   _updateZones(dt) {
     for (const f of this.flags) {
@@ -918,11 +962,11 @@ class Game {
       for (const h of holders) spike = Math.max(spike, h.up ? (h.up.uplink || 0) : 0);
       const rate = (1 + 0.35 * (holders.length - 1)) * (1 + 0.3 * spike);
       f.cap = (f.cap || 0) + (dt / CAP_TIME) * rate;
-      if (!f.alarmed && f.cap > 0.1) {
-        f.alarmed = true;
-        // the first zone of sector 1 is the tutorial: no converge wave —
-        // learn what holding the ring means before the alarm bites
-        if (this.level > 1 || this.runStats.flags > 0) this._zoneAlarm(f);
+      // the hack pulses: every beat, patrols in earshot turn to investigate
+      f.pulseT = (f.pulseT || 0) - dt;
+      if (f.pulseT <= 0) {
+        f.pulseT = 1.6;
+        this._noise(f.x, f.z, 55, 0.55);
       }
       if (f.cap >= 1) {
         f.cap = 1;
@@ -933,7 +977,7 @@ class Game {
         this._bankPot();   // the capture is the cash-out
         this._burst(f.x, 2.5, f.z, 18, [0.3, 1, 0.5], 8);
         this._sfx('flag');
-        for (const h of holders) this._awardTech(h, 25);
+        for (const h of holders) this._awardTech(h, 40);
         const isLocal = holders.some((h) => h.id === this.localId);
         if (isLocal) {
           this.hud.pickup();
@@ -946,21 +990,67 @@ class Game {
     }
   }
 
-  /* Starting a capture trips the alarm: a converge wave warps in around the
-   * zone while the uplink fills — hold the ground or lose the progress. */
-  _zoneAlarm(f) {
-    const n = Math.max(1, 1 + Math.min(2, Math.floor(this.level / 3)) + this._diff().waves);
-    let queued = 0;
-    for (let i = 0; i < n; i++) {
-      if (this.enemies.length + this.pendingSpawns.length >= 18) break;
-      const pos = this._findSpotNear(f.x, f.z, 25, 45, 4, 22);
-      if (!pos) continue;
-      this.pendingSpawns.push({ x: pos[0], z: pos[1], type: this._pressureType(), t: 1.6, tick: 0 });
-      queued++;
+  // ---- stealth core -------------------------------------------------------------
+  // Noise events, per-hull detection, the sector alarm and the stand-down.
+  // The grid is deaf and blind until you give it something to work with.
+
+  /* Register a one-frame noise event: patrols inside r turn to investigate.
+   * mag is how far it pushes their detection meter (capped below alert —
+   * noise makes them LOOK, only eyes-on makes them SHOOT). */
+  _noise(x, z, r, mag) {
+    if (this.versus) return;
+    this.noises.push({ x, z, r, mag });
+  }
+
+  /* A hull got eyes on the squad: it opens fire, radios its packmates, and
+   * the sector alarm goes up. */
+  _alertEnemy(e, x, z) {
+    if (e.alerted) return;
+    e.alerted = true;
+    e.sense = 1;
+    e.seenT = 0;
+    this._burst(e.x, 3.4, e.z, 8, [1, 0.25, 0.2], 6);
+    for (const o of this.enemies) {
+      if (o === e || o.alerted) continue;
+      if (dist2(e.x, e.z, o.x, o.z) < ALERT_RADIUS * ALERT_RADIUS) {
+        o.alerted = true; o.sense = 1; o.seenT = 0;
+      }
     }
-    if (queued > 0) {
-      this._sfx('alarm');
-      this.hud.message('ZONE ALARM — HOSTILES CONVERGING', '#ff4a3c', 2);
+    this._raiseAlarm(x, z);
+  }
+
+  _raiseAlarm(x, z) {
+    this.lastKnownX = x; this.lastKnownZ = z;
+    const was = this.alarmT > 0;
+    this.alarmT = Math.max(this.alarmT, this._diff().alarm);
+    if (was) return;
+    this.everAlarmed = true;
+    this.pressureT = Math.min(this.pressureT, 2.5);
+    this._sfx('alarm');
+    this.hud.message('SPOTTED — THE GRID IS HUNTING', '#ff4a3c', 2.4);
+    if (!this._hintSpotted) {
+      this._hintSpotted = true;
+      this.hud.message('BREAK LINE OF SIGHT AND RUN COLD TO SHAKE THEM', '#ffd24a', 3.2);
+    }
+  }
+
+  /* The alarm ran out: hunters fall back to searching the last known
+   * position, and the sector goes quiet again. */
+  _standDown() {
+    this.alarmT = 0;
+    let any = false;
+    for (const e of this.enemies) {
+      if (!e.alerted) continue;
+      any = true;
+      e.alerted = false;
+      e.sense = SENSE_SUS + 0.2;
+      e.invX = this.lastKnownX + rand(-14, 14);
+      e.invZ = this.lastKnownZ + rand(-14, 14);
+      e.invT = rand(6, 10);
+    }
+    if (any) {
+      this._sfx('cloak');
+      this.hud.message('CONTACT LOST — YOU ARE A GHOST AGAIN', '#4fd6bb', 2.4);
     }
   }
 
@@ -1030,8 +1120,11 @@ class Game {
   }
 
   // ---- alert escalation -----------------------------------------------------
-  // Securing flags raises the sector alert: survivors get faster and meaner,
-  // and crossing a threshold warps reinforcements in near the objective.
+  // Securing uplinks makes the grid suspicious: survivors get faster, and
+  // crossing a threshold warps FRESH PATROLS in near the remaining zones.
+  // They arrive blind — thicker patrol coverage, not a converge wave (unless
+  // the alarm is already up, in which case they warp in hunting). The last
+  // uplink opens the extraction gate and wakes the whole sector.
 
   _onFlagSecured() {
     const total = this.flags.length;
@@ -1040,26 +1133,61 @@ class Game {
     for (const f of this.flags) if (f.taken) taken++;
     this.alert = taken / total;
 
+    if (this.flagsLeft() === 0) { this._openExtraction(); return; }
+
     const thresholds = [0.45, 0.75, 0.92];
     while (this.alertTier < thresholds.length && this.alert >= thresholds[this.alertTier]) {
       this.alertTier++;
-      if (this.flagsLeft() === 0) break;   // sector's done — no pointless wave
-      const wave = Math.max(1, Math.min(4, 1 + Math.floor((this.level + this.alertTier) / 3)) + this._diff().waves);
+      const wave = Math.max(1, Math.min(3, 1 + Math.floor((this.level + this.alertTier) / 4)) + this._diff().waves);
       let queued = 0;
       for (let i = 0; i < wave; i++) {
-        if (this.enemies.length + this.pendingSpawns.length >= 18) break;
+        if (this.enemies.length + this.pendingSpawns.length >= 14) break;
         const live = this.flags.filter((f) => !f.taken);
         const f = live[(RNG() * live.length) | 0];
         const pos = this._findSpotNear(f.x, f.z, 12, 30, 4, 45);
         if (!pos) continue;
-        this.pendingSpawns.push({ x: pos[0], z: pos[1], type: this._reinforcementType(), t: 1.8, tick: 0 });
+        this.pendingSpawns.push({ x: pos[0], z: pos[1], type: this._reinforcementType(), t: 1.8, tick: 0, al: this.alarmT > 0 ? 1 : 0 });
         queued++;
       }
       if (queued > 0) {
-        this._sfx('alarm');
-        this.hud.message('ALERT LEVEL ' + this.alertTier + ' — REINFORCEMENTS INBOUND', '#ff4a3c', 2.4);
+        this._sfx('warp');
+        this.hud.message('GRID SUSPICION RISING — FRESH PATROLS INBOUND', '#ffd24a', 2.2);
       }
     }
+  }
+
+  /* The last uplink fell: the grid knows, and knows WHERE. An extraction
+   * gate opens across the arena — the run ends there, through a sector
+   * that is wide awake. The getaway is the finale, not a mop-up. */
+  _openExtraction() {
+    let best = null, bd = -1;
+    for (let i = 0; i < 14; i++) {
+      const pos = this._findSpot(6, 30);
+      if (!pos) continue;
+      const d = dist2(pos[0], pos[1], this.player.x, this.player.z);
+      if (d > bd) { bd = d; best = pos; }
+    }
+    if (!best) best = [0, -ARENA_HALF + 30];
+    this.exit = { x: best[0], z: best[1] };
+    this.ghostRun = !this.everAlarmed;   // the sneak is judged before the getaway
+    this.everAlarmed = true;
+    this.alarmT = 1e9;                   // no going dark on the way out
+    this.lastKnownX = this.player.x; this.lastKnownZ = this.player.z;
+    this.pressureT = Math.min(this.pressureT, 2);
+    for (const e of this.enemies) { e.alerted = true; e.sense = 1; e.seenT = 0; }
+    this._sfx('alarm');
+    this.hud.message('UPLINK COMPLETE — REACH THE EXTRACTION GATE', '#4fd6bb', 3.2);
+  }
+
+  /* Sector clear condition: every living tank inside the gate ring. */
+  _allAtExit() {
+    let n = 0;
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      if (dist2(p.x, p.z, this.exit.x, this.exit.z) > EXIT_RADIUS * EXIT_RADIUS) return false;
+      n++;
+    }
+    return n > 0;
   }
 
   _reinforcementType() {
@@ -1086,7 +1214,7 @@ class Game {
       }
       if (s.t <= 0) {
         this.pendingSpawns.splice(i, 1);
-        this._spawnEnemy(s.type, s.x, s.z);
+        this._spawnEnemy(s.type, s.x, s.z, !!s.al);
         this._burst(s.x, 1.5, s.z, 22, [1, 0.3, 0.6], 11);
         this._sfx('warp');
       }
@@ -1227,6 +1355,17 @@ class Game {
       if (p.shields < cap) p.shields = Math.min(cap, p.shields + dr.regen * dt);
     }
 
+    // ---- SIGNATURE: how loud this hull reads on enemy sensors -----------
+    // Speed is noise, heat is a beacon, boost is a flare. Slow and cold a
+    // patrol has to nearly drive into you; redlining at full boost the
+    // whole grid sees you coming. The vent isn't just a DPS trick anymore —
+    // it's how you go dark.
+    {
+      const spd01 = Math.min(1, Math.hypot(p.vx || 0, p.vz || 0) / p.maxSpeed);
+      p.sig = Math.min(1, 0.15 + spd01 * 0.45 +
+        ((p.heat || 0) / (p.maxHeat || 100)) * 0.4 + (p.boosting ? 0.3 : 0));
+    }
+
     const input = p.input;
     const isLocal = p.id === this.localId;
 
@@ -1290,6 +1429,7 @@ class Game {
       p.vz = fwdZ(p.angle) * p.speed;
       p.boosting = false;
       this._sfx('bounce');
+      this._noise(p.x, p.z, 26, 0.35);   // slamming a slab rings out
       this._burst(p.x + fwdX(p.angle) * 2.5, 1.2, p.z + fwdZ(p.angle) * 2.5, 8, [0.9, 0.9, 0.7], 6);
       if (isLocal) this.shake = Math.min(this.shake + 0.45, 1.2);
     } else if (hit) {
@@ -1386,6 +1526,7 @@ class Game {
         const bz = p.z + fwdZ(shotAngle) * 3.2;
         this._burst(bx, 1.6, bz, superShot ? 8 : 4, superShot ? [0.5, 1, 0.9] : [1, 0.9, 0.5], 5);
         this._sfx('fire');
+        this._noise(p.x, p.z, NOISE_SHOT, 0.55);   // the report carries
         if (isLocal) this.shake = Math.min(this.shake + 0.12, 0.5);
       } else {
         p.fireCd = 0.25;
@@ -1560,26 +1701,88 @@ class Game {
     return desired + Math.PI * 0.8;   // boxed in: swing around and back out
   }
 
+  /* Per-hull stealth senses. Unaware hulls fill e.sense from SIGHT (vision
+   * cone + line of sight, range scaled by the target's signature) and
+   * HEARING (close range, any direction); noise events yank them toward
+   * the source but never fully alert them — noise makes a patrol LOOK,
+   * only eyes-on makes it SHOOT. Alerted hulls track contact so the sector
+   * alarm can decay once everyone has lost you. */
+  _senseUpdate(e, dt) {
+    const spec = ENEMY_TYPES[e.type];
+    if (e.alerted) {
+      let seen = false;
+      for (const pl of this.players) {
+        if (!pl.alive) continue;
+        const r = spec.sight * 1.3;
+        if (dist2(e.x, e.z, pl.x, pl.z) < r * r && this._losClear(e.x, e.z, pl.x, pl.z)) {
+          seen = true;
+          this.lastKnownX = pl.x; this.lastKnownZ = pl.z;
+          break;
+        }
+      }
+      if (seen) {
+        e.seenT = 0;
+        this.alarmT = Math.max(this.alarmT, this._diff().alarm);   // fresh contact
+      } else {
+        e.seenT += dt;
+      }
+      return;
+    }
+    for (const n of this.noises) {
+      if (dist2(e.x, e.z, n.x, n.z) < n.r * n.r) {
+        e.sense = Math.min(0.99, e.sense + n.mag);
+        e.invX = n.x; e.invZ = n.z; e.invT = rand(5, 9);
+      }
+    }
+    let fill = 0, sx = 0, sz = 0;
+    for (const pl of this.players) {
+      if (!pl.alive) continue;
+      const d = Math.hypot(pl.x - e.x, pl.z - e.z);
+      const sig = pl.sig != null ? pl.sig : 1;
+      const sightR = spec.sight * (0.35 + 0.65 * sig);
+      if (d > sightR) continue;
+      const bearing = Math.abs(wrapAngle(angleTo(pl.x - e.x, pl.z - e.z) - e.angle));
+      if (bearing > SIGHT_CONE && d > 9 + sig * 16) continue;   // behind it, and too far to hear
+      if (!this._losClear(e.x, e.z, pl.x, pl.z)) continue;
+      const f = (0.7 + 2.4 * (1 - d / sightR)) * this._diff().detect *
+        (1 - 0.2 * ((pl.up && pl.up.ghost) || 0));
+      if (f > fill) { fill = f; sx = pl.x; sz = pl.z; }
+    }
+    if (fill > 0) {
+      e.sense += fill * dt;
+      e.invX = sx; e.invZ = sz; e.invT = 6;
+      if (e.sense >= 1) { this._alertEnemy(e, sx, sz); return; }
+    } else {
+      e.sense = Math.max(0, e.sense - dt * 0.22);
+    }
+    if (e.sense >= SENSE_SUS) this.suspicion = true;
+  }
+
   _updateEnemies(dt) {
     // sector alert makes survivors faster and more trigger-happy
     const alertMul = 1 + this.alert * 0.4;
+    this.suspicion = false;
     for (const e of this.enemies) {
       e.hitFlash = Math.max(0, e.hitFlash - dt * 4);
       const p = this._nearestPlayer(e.x, e.z);
       const distP = p ? Math.hypot(p.x - e.x, p.z - e.z) : Infinity;
-      const hunting = !!p && distP < e.aggro;
+      // a patrol only fights what its sensors actually found
+      if (!this.bossLevel) this._senseUpdate(e, dt);
+      const hunting = !!p && e.alerted && distP < e.aggro;
+      // unaware patrols roll slow; an investigating hull picks up the pace
+      let moveMul = e.alerted ? 1 : (e.invT > 0 ? 0.8 : 0.55);
 
-      // phantoms shimmer out of visibility while stalking, decloak to fire
+      // phantoms shimmer out of visibility once the hunt is on, decloak to fire
       if (ENEMY_TYPES[e.type].cloaks) {
         e.decloakT = Math.max(0, e.decloakT - dt);
-        const target = (e.decloakT > 0 || e.hitFlash > 0) ? 0 : 1;
+        const target = (!e.alerted || e.decloakT > 0 || e.hitFlash > 0) ? 0 : 1;
         e.cloak += (target - e.cloak) * Math.min(1, dt * 2.5);
       }
 
-      // rushers are living grenades: they beeline and detonate on contact.
-      // A boost-speed target flips the exchange — the rusher is ram-killed
-      // instead (score, no blast). Booms resolve after the loop.
-      if (e.type === 'rusher' && p && distP < 4.6) {
+      // rushers are living grenades: once alerted they beeline and detonate
+      // on contact. A boost-speed target flips the exchange — the rusher is
+      // ram-killed instead (score, no blast). Booms resolve after the loop.
+      if (e.type === 'rusher' && e.alerted && p && distP < 4.6) {
         const ramming = p.boosting && Math.hypot(p.vx || 0, p.vz || 0) > p.maxSpeed * 1.15;
         e._boom = ramming ? 'ram' : 'det';
         e._boomBy = p.id;
@@ -1596,6 +1799,18 @@ class Game {
         tx = e.x + ((e.x - threat.x) / d) * 24;
         tz = e.z + ((e.z - threat.z) / d) * 24;
         forceMove = true;
+        moveMul = 1;
+      } else if (!e.alerted && e.invT > 0) {
+        // suspicious: roll to the investigation point, then sweep on station —
+        // chasing an offset that circles the hull keeps it turning in place
+        e.invT -= dt;
+        if (dist2(e.x, e.z, e.invX, e.invZ) > 49) {
+          tx = e.invX; tz = e.invZ;
+          forceMove = true;
+        } else {
+          tx = e.x + fwdX(e.angle + 1.3) * 12;
+          tz = e.z + fwdZ(e.angle + 1.3) * 12;
+        }
       } else if (hunting && e.type === 'rusher') {
         // suicidal commitment: straight at the target, no maneuvering
         tx = p.x; tz = p.z;
@@ -1687,8 +1902,8 @@ class Game {
       const wantStop = e.type === 'sniper' && hunting && !forceMove &&
         e.relocT <= 0 && distP < e.fireRange * 0.8;
       if (!wantStop && (forceMove || (Math.abs(diff) < 1.2 && !(hunting && distP < 9)))) {
-        e.x += fwdX(e.angle) * e.speed * alertMul * dt;
-        e.z += fwdZ(e.angle) * e.speed * alertMul * dt;
+        e.x += fwdX(e.angle) * e.speed * alertMul * moveMul * dt;
+        e.z += fwdZ(e.angle) * e.speed * alertMul * moveMul * dt;
       }
       this._collideTank(e, 1.9);
 
@@ -1755,6 +1970,15 @@ class Game {
         this._rusherBoom(e);
       }
     }
+
+    this.noises.length = 0;   // every patrol has had its chance to hear
+    // alarm decay: contact refreshes it in _senseUpdate, so once every
+    // hunter has lost you this counts down to the stand-down. Extraction
+    // (and boss sectors) pin it high — there's no going dark on the way out.
+    if (!this.bossLevel && this.alarmT > 0 && this.alarmT < 1e8) {
+      this.alarmT -= dt;
+      if (this.alarmT <= 0) this._standDown();
+    }
   }
 
   /* A rusher reached its target: splash damage to anyone near the blast. */
@@ -1764,6 +1988,7 @@ class Game {
     this._burst(e.x, 2.0, e.z, 12, [1, 0.85, 0.6], 8);
     this._spawnShards(e.x, e.z, DEBRIS_COLORS.rusher);
     this._sfx('nadeBoom');
+    this._noise(e.x, e.z, NOISE_BOOM, 0.7);
     this.shake = Math.min(this.shake + 0.4, 1.2);
     for (const pl of this.players) {
       if (!pl.alive) continue;
@@ -1856,6 +2081,9 @@ class Game {
               dead = true;
               this._burst(pr.x, 1.6, pr.z, 6, [0.7, 0.8, 1.0], 5);
               this._sfx('deflect');
+              // a shell just rang off its faceplate — it knows
+              const a = this._playerById(pr.owner);
+              this._alertEnemy(e, a ? a.x : pr.x, a ? a.z : pr.z);
               break;
             }
             this._hurtEnemy(j, pr.dmg, pr.owner, 'cannon');
@@ -1929,6 +2157,7 @@ class Game {
     this._burst(pr.x, 1.2, pr.z, pr.child ? 24 : 40, [1, 0.7, 0.25], pr.child ? 11 : 16);
     this._burst(pr.x, 2.2, pr.z, pr.child ? 10 : 18, [1, 0.95, 0.7], pr.child ? 7 : 10);
     this._sfx('nadeBoom');
+    this._noise(pr.x, pr.z, NOISE_BOOM, 0.7);
     this.shake = Math.min(this.shake + 0.5, 1.2);
     // CLUSTER CHARGES: the shell splits into three arcing bomblets
     if (!pr.child) {
@@ -2011,6 +2240,7 @@ class Game {
     this._burst(m.x, 1.0, m.z, 34, [1, 0.45, 0.6], 15);
     this._burst(m.x, 2.0, m.z, 14, [1, 0.9, 0.7], 9);
     this._sfx('nadeBoom');
+    this._noise(m.x, m.z, NOISE_BOOM, 0.7);
     this.shake = Math.min(this.shake + 0.4, 1.2);
     const falloff = (d) => DMG * (d < 3 ? 1 : 1 - (d - 3) / (R - 3) * 0.75);
     if (this.versus) {
@@ -2050,6 +2280,11 @@ class Game {
         if (dist2(w.x, w.z, e.x, e.z) < 16 * 16) {
           this._burst(e.x, 1.8, e.z, 6, [1, 0.85, 0.3], 5);
           this._sfx('deflect');
+          // the umbrella flared: the pack knows it's under fire
+          if (!this.versus) {
+            const a = this._playerById(ownerId);
+            this._alertEnemy(e, a ? a.x : e.x, a ? a.z : e.z);
+          }
           return;
         }
       }
@@ -2058,6 +2293,11 @@ class Game {
     e.hitFlash = 1;
     if (ENEMY_TYPES[e.type].cloaks) e.decloakT = Math.max(e.decloakT, 1.2);
     this._burst(e.x, 1.5, e.z, 10, [1, 0.6, 0.3], 8);
+    if (e.hp > 0 && !e.alerted && !this.versus) {
+      // a hull that survives a hit is instantly hostile — commit to kills
+      const a = this._playerById(ownerId);
+      this._alertEnemy(e, a ? a.x : e.x, a ? a.z : e.z);
+    }
     if (e.hp <= 0) this._killEnemy(index, ownerId, via);
     else this._sfx('hitEnemy');
   }
@@ -2066,7 +2306,19 @@ class Game {
     const e = this.enemies[index];
     this.enemies.splice(index, 1);
     this.killsThisLevel++;
-    this._awardKill(e.score, ownerId, via);
+    // SILENT KILL: it never saw you coming — half again the score, and a
+    // boost-ram execution is quiet enough that only close packmates notice
+    const silent = !this.versus && !e.alerted;
+    this._awardKill(silent ? Math.round(e.score * 1.5) : e.score, ownerId, via);
+    this._noise(e.x, e.z, via === 'ram' ? NOISE_RAM : NOISE_WRECK, 0.6);
+    if (silent) {
+      this.runStats.silentKills++;
+      this._bountyTick('silent');
+      if (ownerId === this.localId) {
+        this.hud.message('SILENT KILL', '#4fd6bb', 1.1);
+        if (this.runStats.silentKills >= 5) this._medal('assassin');
+      }
+    }
     if (via === 'ram' || via === 'nade' || via === 'mine') this._bountyTick(via);
     if (!this.versus && ownerId === this.localId) {
       const rs = this.runStats;
@@ -2489,6 +2741,7 @@ class Game {
       dmg, hit: {}, hitE: null,
     });
     this._sfx('shock');
+    if (opts.from === 'player') this._noise(x, z, 55, 0.6);
     this._burst(x, 0.8, z, 26, opts.from === 'player' ? [0.3, 0.95, 0.8] : [1, 0.55, 0.2], 12);
   }
 
@@ -2608,6 +2861,12 @@ class Game {
       Math.round(sh) * 3 +
       this.killsThisLevel * 50 +
       this.pot;                    // whatever's still riding banks with the clear
+    // GHOST EXTRACTION: the alarm never went off before the gate opened —
+    // the purest way to play the sector, paid accordingly
+    if (this.ghostRun && !this.bossLevel) {
+      this.levelBonus += 500 * this.level;
+      this._medal('ghost');
+    }
     this.score += this.levelBonus;
     this.pot = 0;
     if (this.levelUntouched) this._medal('untouchable');
@@ -2665,6 +2924,7 @@ class Game {
     this.frameSounds.length = 0;
     this.frameBursts.length = 0;
     this.frameDebris.length = 0;
+    this.noises.length = 0;   // no patrols left to hear anything
     this.deathTimer -= dt;
     this.shake = Math.max(0, this.shake - dt * 1.2);
     this._updateParticles(dt);
