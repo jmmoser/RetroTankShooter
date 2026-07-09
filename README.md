@@ -202,43 +202,6 @@ Finishing a daily keeps your **streak** alive: consecutive days stack up on
 the title screen and the share card, and the DAILY OPS button reminds you
 when today's run would keep the chain going.
 
-### SECTOR NULL
-
-The third button on the title screen is the one that doesn't glow. **SECTOR
-NULL** (`N`) is a decommissioned grid — same tank, same physics, same
-flat-shaded polygons, and none of the war. A vast checkerboard plane under a
-starfield with no horizon, a handful of drained gray monoliths, and three
-**dead relays** per depth: drive onto each one to silence it, then reach the
-**terminus gate** and descend. No uplinks, no alarm, no tech drafts, no
-pickups. Nothing contests a relay. Nothing converges. That's the problem.
-
-The dread lives in the game's own instruments and rules, not in jump scares
-(there are none — no gore either):
-
-- **The radar lies.** It shows contacts behind you that are not there when
-  you turn, and it will never — under any circumstances — show the one
-  resident whose engine you can plainly hear getting closer. The status
-  line reads `NO CONTACTS` in the same breath. Sometimes the hum itself
-  belongs to nothing at all. Your only sensor teaches you to distrust it;
-  the relays are the one honest thing on the dish.
-- **The residents don't behave like enemies.** *Watchers* hold the edge of
-  draw distance, motionless, gun tracking you, never firing — close in and
-  look away and they simply aren't there anymore. *Circlers* drive slow,
-  perfect circles around points of nothing and keep circling even while you
-  shoot them. *Husks* — what's left of the garrison — hunt alone, without
-  radio, from depth 2. And the *stalker* only closes the distance while you
-  aren't looking at it.
-- **The plane keeps what falls on it.** Every wreck is permanent — through
-  the current depth, the next one, and **every future run**: the graveyard
-  persists in your browser and each visit scatters the old hulls back
-  exactly where they fell. Some wrecks you won't remember making.
-  Occasionally one of them is your tank model. It's where you died.
-
-Your shields still regenerate and the husks can genuinely kill you, but
-SECTOR NULL keeps its own books — no high score, no combo, no record pace.
-The game-over screen just tells you how deep you got and how many wrecks
-are out on the plane now.
-
 ### Rank, medals, career & checkpoints
 
 Every run — campaign, daily, even a doomed one — pays **XP** into a
