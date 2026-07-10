@@ -24,10 +24,10 @@ const m4 = {
   identity() {
     return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
   },
-  perspective(fovY, aspect, near, far) {
+  perspective(fovY, aspect, near, far, out) {
     const f = 1 / Math.tan(fovY / 2);
     const nf = 1 / (near - far);
-    const out = new Float32Array(16);
+    out = out ? out.fill(0) : new Float32Array(16);
     out[0] = f / aspect;
     out[5] = f;
     out[10] = (far + near) * nf;
@@ -56,9 +56,12 @@ const m4 = {
     m[12] = x; m[13] = y; m[14] = z;
     return m;
   },
-  rotationY(a) {
+  rotationY(a, out) {
     const c = Math.cos(a), s = Math.sin(a);
-    return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]);
+    const m = out || new Float32Array(16);
+    m.set(m4._I);
+    m[0] = c; m[2] = -s; m[8] = s; m[10] = c;
+    return m;
   },
   rotationX(a, out) {
     const c = Math.cos(a), s = Math.sin(a);
@@ -67,9 +70,12 @@ const m4 = {
     m[5] = c; m[6] = s; m[9] = -s; m[10] = c;
     return m;
   },
-  rotationZ(a) {
+  rotationZ(a, out) {
     const c = Math.cos(a), s = Math.sin(a);
-    return new Float32Array([c,s,0,0, -s,c,0,0, 0,0,1,0, 0,0,0,1]);
+    const m = out || new Float32Array(16);
+    m.set(m4._I);
+    m[0] = c; m[1] = s; m[4] = -s; m[5] = c;
+    return m;
   },
   scaling(x, y, z) {
     return new Float32Array([x,0,0,0, 0,y,0,0, 0,0,z,0, 0,0,0,1]);
@@ -86,6 +92,13 @@ const m4 = {
   },
 };
 m4._I = m4.identity();
+
+// beginFrame scratch — the camera matrices are rebuilt every frame, so give
+// them fixed storage like every other per-frame matrix in the codebase
+const CAM_PROJ = new Float32Array(16);
+const CAM_A = new Float32Array(16);
+const CAM_B = new Float32Array(16);
+const CAM_C = new Float32Array(16);
 
 const MAX_LIGHTS = 12;
 
@@ -404,7 +417,12 @@ class Renderer {
     }
     const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    if (!ok) throw new Error('FBO incomplete');
+    if (!ok) {
+      gl.deleteFramebuffer(fbo);
+      gl.deleteTexture(tex);
+      if (rb) gl.deleteRenderbuffer(rb);
+      throw new Error('FBO incomplete');
+    }
     return { fbo, tex, rb, w, h };
   }
 
@@ -448,10 +466,13 @@ class Renderer {
     const w = this.canvas.width, h = this.canvas.height;
     if (this.postW === w && this.postH === h && this.sceneFbo) return;
     this._dropTarget(this.sceneFbo);
+    this.sceneFbo = null;
     this._dropTarget(this.msaaFbo);
     this.msaaFbo = null;
     this._dropTarget(this.pingFbo[0]);
+    this.pingFbo[0] = null;
     this._dropTarget(this.pingFbo[1]);
+    this.pingFbo[1] = null;
     const bw = Math.max(1, w >> 1), bh = Math.max(1, h >> 1);
     if (this.isWebGL2 && this.msaaEnabled && !this.msaaBroken) {
       try {
@@ -514,6 +535,18 @@ class Renderer {
       } catch (e) {
         this.glowSupported = false;   // GPU refused: fall back for good
         this.glowActive = false;
+        // free whatever a partial rebuild managed to allocate — this device
+        // just proved memory-constrained, don't sit on orphaned targets
+        this._dropTarget(this.sceneFbo);
+        this.sceneFbo = null;
+        this._dropTarget(this.msaaFbo);
+        this.msaaFbo = null;
+        this._dropTarget(this.pingFbo[0]);
+        this.pingFbo[0] = null;
+        this._dropTarget(this.pingFbo[1]);
+        this.pingFbo[1] = null;
+        this.postW = 0;
+        this.postH = 0;
       }
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER,
@@ -522,10 +555,11 @@ class Renderer {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     const aspect = this.canvas.width / Math.max(this.canvas.height, 1);
-    const proj = m4.perspective(camera.fov || 1.22, aspect, 0.1, 800);
-    let view = m4.multiply(m4.rotationY(-camera.yaw), m4.translation(-camera.x, -camera.y, -camera.z));
-    view = m4.multiply(m4.rotationX(-(camera.pitch || 0)), view);
-    if (camera.roll) view = m4.multiply(m4.rotationZ(-camera.roll), view);
+    const proj = m4.perspective(camera.fov || 1.22, aspect, 0.1, 800, CAM_PROJ);
+    let view = m4.multiply(m4.rotationY(-camera.yaw, CAM_A),
+      m4.translation(-camera.x, -camera.y, -camera.z, CAM_B), CAM_C);
+    view = m4.multiply(m4.rotationX(-(camera.pitch || 0), CAM_A), view, CAM_B);
+    if (camera.roll) view = m4.multiply(m4.rotationZ(-camera.roll, CAM_A), view, CAM_C);
 
     gl.uniformMatrix4fv(this.uniforms.uProj, false, proj);
     gl.uniformMatrix4fv(this.uniforms.uView, false, view);

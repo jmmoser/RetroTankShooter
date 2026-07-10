@@ -19,6 +19,15 @@
     throw err;
   }
 
+  // A reclaimed GPU (long mobile PWA sessions, driver resets) turns every gl
+  // call into a silent no-op — the loop would keep running over a frozen
+  // black canvas with no way back. Reload instead: the service worker serves
+  // everything from cache, so recovery is instant even offline.
+  glCanvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    location.reload();
+  });
+
   const hud = new HUD(hudCanvas);
   const game = new Game(hud);
 
@@ -455,7 +464,7 @@
     earned = earned || extras.earned;
     html += extras.html;
     // let the gameOver sting finish before celebrating the gold-text lines
-    if (earned) setTimeout(() => AudioSys.play('unlock'), 1100);
+    if (earned) playUnlockSoon();
     document.getElementById('over-stats').innerHTML = html;
     document.getElementById('bt-share').classList.toggle('hidden', !game.dailySeed);
     shareBtn.textContent = 'COPY RESULT';
@@ -666,6 +675,13 @@
     if (v.length >= 4 && uiMode === 'join') submitJoin();
   });
 
+  /* Delayed unlock fanfare (lets the gameOver sting finish first). Checked at
+   * fire time instead of tracked and cleared: an Enter-mashed RETRY or a quick
+   * Escape used to land the sting a second into the fresh run / title screen. */
+  function playUnlockSoon() {
+    setTimeout(() => { if (uiMode === 'gameover') AudioSys.play('unlock'); }, 1100);
+  }
+
   function leaveToTitle() {
     closeDraft();
     recordRunEnd();
@@ -832,6 +848,10 @@
     resetAbort();
     showScreen('pause');
     AudioSys.setEngine(0);
+    // set the mood directly: the auto-pause path runs with the tab hidden,
+    // where no frame (and thus no updateMusic) will run to drop the combat
+    // groove — the sequencer itself keeps ticking in the background
+    AudioSys.setMusicMood('menu');
     AudioSys.play('pause');
   }
 
@@ -848,8 +868,16 @@
   // coarse timer instead (see startHiddenSim).
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-      if (uiMode === 'playing' && Net.role === 'solo') pauseGame();
+      // game.mode check: no pausing mid-death-cam, same invariant as the
+      // manual pause key
+      if (uiMode === 'playing' && Net.role === 'solo') { if (game.mode === 'playing') pauseGame(); }
       else if (uiMode === 'playing' && Net.role === 'host') startHiddenSim();
+      else if (uiMode === 'playing' && Net.role === 'client') {
+        // rAF stops in hidden tabs, so this is the last packet the host gets
+        // until we're back — zero it, or the host keeps applying whatever we
+        // were holding and the tank drives/fires unmanned the whole time
+        Net.sendInput({ turn: 0, drive: 0, fire: false, nade: false, boost: false, mine: false, vent: false });
+      }
     } else {
       stopHiddenSim();
     }
@@ -890,6 +918,8 @@
     });
   }
 
+  let draftChoiceNodes = [];   // draftKeys runs per frame; don't re-query the DOM there
+
   function buildDraft(offers) {
     draftOpenedAt = performance.now();   // banked follow-up drafts re-arm the settle gate too
     draftChoicesEl.innerHTML = '';
@@ -904,6 +934,7 @@
       el.addEventListener('click', () => { AudioSys.resume(); draftPick(o.id); });
       draftChoicesEl.appendChild(el);
     });
+    draftChoiceNodes = Array.from(draftChoicesEl.children);
     menus.draft.reset();
   }
 
@@ -933,7 +964,7 @@
    * so a pad player firing the moment the draft appeared used to spend the
    * pick without ever seeing the options. */
   function draftKeys(modal) {
-    const list = Array.from(draftChoicesEl.querySelectorAll('.draft-choice'));
+    const list = draftChoiceNodes;
     for (let i = 0; i < list.length; i++) {
       if (Input.consume('Digit' + (i + 1))) { list[i].click(); return; }
     }
@@ -1044,9 +1075,7 @@
         (isHigh ? '<br><span class="gold">&#9733; NEW HIGH SCORE &#9733;</span>' : '');
       const extras = buildOverExtras(res);
       html += extras.html;
-      if (isHigh || extras.earned || res.marauder) {
-        setTimeout(() => AudioSys.play('unlock'), 1100);
-      }
+      if (isHigh || extras.earned || res.marauder) playUnlockSoon();
       document.getElementById('over-stats').innerHTML = html;
       document.getElementById('bt-share').classList.add('hidden');
       uiMode = 'gameover';
@@ -1078,7 +1107,10 @@
   const cam = { x: 0, y: 2.3, z: 0, yaw: 0, pitch: 0, roll: 0, fov: 1.22 };
 
   function inMenu() {
-    return uiMode === 'title' || uiMode === 'setup' || uiMode === 'lobby' || uiMode === 'join';
+    return uiMode === 'title' || uiMode === 'setup' || uiMode === 'lobby' || uiMode === 'join' ||
+      uiMode === 'settings' || uiMode === 'records';   // reachable only from the
+      // title screen — keep the demo battlefield (not a stale, shake-jittering
+      // camera on the last run's corpse) behind those panels too
   }
 
   function updateCamera(dt) {

@@ -125,8 +125,16 @@ const Net = (() => {
     if (cb.onPeerLeft) cb.onPeerLeft(id);
   }
 
+  // Remote peers can send anything — a stray NaN written into the sim never
+  // heals (it spreads through physics into every snapshot), so numbers from
+  // the wire get coerced and clamped before they touch authoritative state.
+  function finite01(v, lim) {
+    v = +v;
+    return v === v ? Math.max(-lim, Math.min(lim, v)) : 0;
+  }
+
   function hostHandle(conn, msg) {
-    if (!msg) return;
+    if (!msg || state.role !== 'host') return;
     if (msg.t === 'join') {
       if (state.started || state.roster.length >= MAX_PLAYERS) {
         // rejected joiners must not stay subscribed to the game feed —
@@ -140,7 +148,7 @@ const Net = (() => {
       if (!state.roster.some((r) => r.id === conn.peer)) {
         state.roster.push({
           id: conn.peer,
-          name: (msg.name || ('PLAYER ' + (state.roster.length + 1))).slice(0, 14),
+          name: ((typeof msg.name === 'string' && msg.name) || ('PLAYER ' + (state.roster.length + 1))).slice(0, 14),
           loadoutIndex: msg.loadoutIndex || 0,
         });
       }
@@ -150,7 +158,14 @@ const Net = (() => {
       const r = state.roster.find((x) => x.id === conn.peer);
       if (r) { r.loadoutIndex = msg.loadoutIndex | 0; if (cb.onRoster) cb.onRoster(state.roster); broadcast({ t: 'roster', roster: state.roster, mode: state.mode }); }
     } else if (msg.t === 'input') {
-      state.inputs[conn.peer] = msg.in;
+      const i = msg.in;
+      if (i && typeof i === 'object') {
+        state.inputs[conn.peer] = {
+          t: finite01(i.t, 1), d: finite01(i.d, 1),
+          f: i.f ? 1 : 0, g: i.g ? 1 : 0, b: i.b ? 1 : 0,
+          m: i.m ? 1 : 0, v: i.v ? 1 : 0,
+        };
+      }
     } else if (msg.t === 'pick') {
       // client answered a TECH draft — the host's sim validates and applies
       if (cb.onPick) cb.onPick(conn.peer, msg.u);
@@ -327,13 +342,24 @@ const Net = (() => {
   }
 
   function clientSetLoadout(idx) {
-    if (state.hostConn) { try { state.hostConn.send({ t: 'loadout', loadoutIndex: idx | 0 }); } catch (e) {} }
+    const c = state.hostConn;
+    if (!c) return;
+    const msg = { t: 'loadout', loadoutIndex: idx | 0 };
+    // picks made during the connect window used to be silently swallowed by
+    // the try/catch — queue them behind the 'join' the open handler sends
+    if (c.open) { try { c.send(msg); } catch (e) {} }
+    else c.on('open', () => { try { c.send(msg); } catch (e) {} });
   }
 
   function clientHandle(msg) {
-    if (!msg || state.rejected) return;
+    // role check: leave() can't unhook an already-queued data event, and a
+    // buffered 'start'/'lv' landing after LEAVE would yank the ex-client
+    // into a connectionless phantom run
+    if (!msg || state.rejected || state.role !== 'client') return;
     switch (msg.t) {
-      case 'roster': state.roster = msg.roster; state.mode = msg.mode || 'coop'; if (cb.onRoster) cb.onRoster(msg.roster); break;
+      case 'roster':
+        if (!Array.isArray(msg.roster)) break;
+        state.roster = msg.roster; state.mode = msg.mode || 'coop'; if (cb.onRoster) cb.onRoster(msg.roster); break;
       case 'full':
         // we're not in this game — stop listening before the host's next
         // 'start'/'lv'/'s' broadcast drags us into a broken spectator view
@@ -341,12 +367,17 @@ const Net = (() => {
         if (cb.onError) cb.onError('Game is full or already in progress.');
         try { if (state.hostConn) state.hostConn.close(); } catch (e) {}
         break;
-      case 'start':  state.started = true; state.mode = msg.mode || 'coop'; if (cb.onStart) cb.onStart(msg.defs, state.id, state.mode); break;
+      case 'start':
+        if (!Array.isArray(msg.defs)) break;
+        state.started = true; state.mode = msg.mode || 'coop'; if (cb.onStart) cb.onStart(msg.defs, state.id, state.mode); break;
       case 'lv':
+        if (!Array.isArray(msg.obstacles) || !Array.isArray(msg.flags)) break;
         state.snaps.length = 0;   // new arena: stale history would tween across it
         if (cb.onLevel) cb.onLevel(msg);
         break;
       case 's':
+        if (!Array.isArray(msg.pl) || !Array.isArray(msg.en) || !Array.isArray(msg.pr) ||
+            !Array.isArray(msg.pu) || !Array.isArray(msg.fg)) break;
         state.snaps.push({
           t: performance.now() / 1000, msg,
           idx: {
@@ -498,7 +529,7 @@ const Net = (() => {
       game.bounty.paid = !!msg.by.d;
     }
 
-    game.boss = msg.bo ? {
+    game.boss = (msg.bo && Array.isArray(msg.bo.tu)) ? {
       x: msg.bo.x, z: msg.bo.z, angle: msg.bo.a,
       coreHp: msg.bo.ch, coreMax: msg.bo.cm,
       vulnerable: !!msg.bo.vu,

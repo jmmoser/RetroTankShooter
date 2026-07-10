@@ -195,6 +195,17 @@ function dist2(ax, az, bx, bz) {
   const dx = ax - bx, dz = az - bz;
   return dx * dx + dz * dz;
 }
+/* Squared distance from point (cx,cz) to segment (x0,z0)->(x1,z1). Swept
+ * projectile hit test: at the engine's 0.05 dt clamp (weak devices, the
+ * hidden-tab host sim) a sniper shell moves 4.25 u per step against a 2.4 u
+ * hit disc — point sampling let it tunnel straight through tanks. */
+function segDist2(x0, z0, x1, z1, cx, cz) {
+  const dx = x1 - x0, dz = z1 - z0;
+  const len2 = dx * dx + dz * dz;
+  let t = len2 > 0 ? ((cx - x0) * dx + (cz - z0) * dz) / len2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return dist2(x0 + dx * t, z0 + dz * t, cx, cz);
+}
 /* All in-sim randomness flows through RNG so a daily run can swap in a
  * seeded generator during arena generation (and back out for combat). */
 let RNG = Math.random;
@@ -582,7 +593,13 @@ class Game {
     for (let tries = 0; tries < 60; tries++) {
       const x = rand(-ARENA_HALF + 12, ARENA_HALF - 12);
       const z = rand(-ARENA_HALF + 12, ARENA_HALF - 12);
-      if (Math.hypot(x - this.player.x, z - this.player.z) < minPlayerDist) continue;
+      // keep distance from EVERY tank, not just the local one — versus
+      // powerups/depots used to materialize on top of remote players
+      let nearPlayer = false;
+      for (const p of this.players) {
+        if (p.alive && Math.hypot(x - p.x, z - p.z) < minPlayerDist) { nearPlayer = true; break; }
+      }
+      if (nearPlayer) continue;
       if (this._collidesObstacle(x, z, clearR)) continue;
       return [x, z];
     }
@@ -1992,7 +2009,11 @@ class Game {
       }
     }
 
-    // resolve rusher contacts queued during the loop
+    this.noises.length = 0;   // every patrol has had its chance to hear
+
+    // resolve rusher contacts queued during the loop — AFTER the noise flush,
+    // so the blast/ram noises these emit survive to next frame's sense pass
+    // (they used to be wiped in the same tick, deaf to every patrol)
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
       if (!e._boom) continue;
@@ -2003,8 +2024,6 @@ class Game {
         this._rusherBoom(e);
       }
     }
-
-    this.noises.length = 0;   // every patrol has had its chance to hear
     // alarm decay: contact refreshes it in _senseUpdate, so once every
     // hunter has lost you this counts down to the stand-down. Extraction
     // (and boss sectors) pin it high — there's no going dark on the way out.
@@ -2034,6 +2053,8 @@ class Game {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const pr = this.projectiles[i];
       pr.life -= dt;
+      // start of this step's travel — tank hit tests sweep the whole segment
+      let sx = pr.x, sz = pr.z;
       pr.x += fwdX(pr.angle) * pr.speed * dt;
       pr.z += fwdZ(pr.angle) * pr.speed * dt;
 
@@ -2066,6 +2087,7 @@ class Game {
           pr.bounce--;
           if (Math.abs(pr.x) > ARENA_HALF) { pr.angle = -pr.angle; pr.x = Math.sign(pr.x) * ARENA_HALF; }
           if (Math.abs(pr.z) > ARENA_HALF) { pr.angle = Math.PI - pr.angle; pr.z = Math.sign(pr.z) * ARENA_HALF; }
+          sx = pr.x; sz = pr.z;   // the pre-bounce segment crosses the wall
           this._burst(pr.x, pr.y, pr.z, 5, [1, 0.9, 0.5], 5);
         } else {
           dead = true;
@@ -2082,6 +2104,7 @@ class Game {
             const pz = o.d / 2 + 0.4 - Math.abs(pr.z - o.z);
             if (px < pz) { pr.angle = -pr.angle; pr.x = o.x + Math.sign(pr.x - o.x) * (o.w / 2 + 0.5); }
             else { pr.angle = Math.PI - pr.angle; pr.z = o.z + Math.sign(pr.z - o.z) * (o.d / 2 + 0.5); }
+            sx = pr.x; sz = pr.z;   // the pre-bounce segment crosses the slab
             this._burst(pr.x, pr.y, pr.z, 5, [1, 0.9, 0.5], 5);
           } else {
             dead = true;
@@ -2096,7 +2119,7 @@ class Game {
         if (this.versus) {
           for (const pl of this.players) {
             if (!pl.alive || pl.id === pr.owner) continue;
-            if (dist2(pr.x, pr.z, pl.x, pl.z) < 2.4 * 2.4) {
+            if (segDist2(sx, sz, pr.x, pr.z, pl.x, pl.z) < 2.4 * 2.4) {
               dead = true;
               this._damagePlayer(pl, pr.dmg, pr.owner);
               break;
@@ -2106,7 +2129,7 @@ class Game {
         if (!dead) for (let j = this.enemies.length - 1; j >= 0; j--) {
           const e = this.enemies[j];
           if (pr.hitList && pr.hitList.indexOf(e) >= 0) continue;   // already pierced
-          if (dist2(pr.x, pr.z, e.x, e.z) < 2.4 * 2.4) {
+          if (segDist2(sx, sz, pr.x, pr.z, e.x, e.z) < 2.4 * 2.4) {
             // SHELLBACK: the frontal plate deflects shells — flank the arc,
             // lob over it, or ram straight through it
             if (e.type === 'shellback' &&
@@ -2141,13 +2164,13 @@ class Game {
           for (const tu of b.turrets) {
             if (tu.hp <= 0) continue;
             const [wx, wz] = bossTurretWorld(b, tu);
-            if (dist2(pr.x, pr.z, wx, wz) < 2.6 * 2.6) {
+            if (segDist2(sx, sz, pr.x, pr.z, wx, wz) < 2.6 * 2.6) {
               dead = true;
               this._hurtBossTurret(tu, pr.dmg, pr.owner);
               break;
             }
           }
-          if (!dead && dist2(pr.x, pr.z, b.x, b.z) < b.radius * b.radius) {
+          if (!dead && segDist2(sx, sz, pr.x, pr.z, b.x, b.z) < b.radius * b.radius) {
             dead = true;
             if (b.vulnerable) {
               this._hurtBossCore(pr.dmg, pr.owner);
@@ -2160,7 +2183,7 @@ class Game {
       } else if (!dead && pr.from === 'enemy') {
         for (const pl of this.players) {
           if (!pl.alive) continue;
-          if (dist2(pr.x, pr.z, pl.x, pl.z) < 2.4 * 2.4) {
+          if (segDist2(sx, sz, pr.x, pr.z, pl.x, pl.z) < 2.4 * 2.4) {
             dead = true;
             this._damagePlayer(pl, pr.dmg);
             break;
@@ -2173,6 +2196,10 @@ class Game {
           for (const pl of this.players) {
             if (!pl.alive || (pr.grz && pr.grz[pl.id])) continue;
             if (dist2(pr.x, pr.z, pl.x, pl.z) < GRAZE_R * GRAZE_R) {
+              // pay only once the shell is past its closest approach — paying
+              // on the way IN credited every shot that was about to land as a
+              // "graze" (free boost/tech for standing there getting hit)
+              if (fwdX(pr.angle) * (pl.x - pr.x) + fwdZ(pr.angle) * (pl.z - pr.z) > 0) continue;
               (pr.grz || (pr.grz = {}))[pl.id] = 1;
               const razor = (pl.up && pl.up.razor) || 0;
               pl.boost = Math.min(pl.maxBoost, pl.boost + 5 + razor * 3);

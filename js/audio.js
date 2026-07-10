@@ -413,6 +413,7 @@ const AudioSys = (() => {
   /* speed01: 0..1 of max speed. Zero really means silent — the old floor of
    * 0.05 (and the lazy startEngine here) left a permanent sawtooth hum under
    * every menu, since main.js silences the engine by calling setEngine(0). */
+  let engineStopTimer = null;
   function setEngine(speed01) {
     if (!ctx) return;
     if (!engineOsc) {
@@ -423,6 +424,17 @@ const AudioSys = (() => {
     engineOsc.frequency.setTargetAtTime(38 + speed01 * 55, t, 0.08);
     engineFilter.frequency.setTargetAtTime(180 + speed01 * 500, t, 0.08);
     engineGain.gain.setTargetAtTime(speed01 <= 0 ? 0 : 0.05 + speed01 * 0.10, t, 0.1);
+    // once the fade-out ramp has landed, tear the oscillator down entirely —
+    // an inaudible sawtooth+filter otherwise keeps processing for the rest of
+    // the session. startEngine() lazily reboots it on the next drive.
+    if (speed01 <= 0) {
+      if (!engineStopTimer) {
+        engineStopTimer = setTimeout(() => { engineStopTimer = null; stopEngine(); }, 500);
+      }
+    } else if (engineStopTimer) {
+      clearTimeout(engineStopTimer);
+      engineStopTimer = null;
+    }
   }
 
   function play(name) {

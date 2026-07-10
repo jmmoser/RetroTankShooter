@@ -14,8 +14,13 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (e) => {
+  // cache:'reload' bypasses the HTTP cache — otherwise a version bump can
+  // repopulate the new cache with stale files the browser still considers
+  // fresh (updateViaCache:'none' only covers sw.js itself, not addAll)
   e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      .then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
   );
 });
 
