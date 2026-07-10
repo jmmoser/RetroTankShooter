@@ -7,6 +7,7 @@ importScripts('js/version.js');
 const CACHE = 'phantom-arena-' + GAME_VERSION;
 const ASSETS = [
   './', 'index.html', 'style.css', 'manifest.webmanifest', 'icon.svg',
+  'icon-180.png', 'icon-192.png', 'icon-512.png',
   'js/version.js', 'js/settings.js', 'js/audio.js', 'js/input.js', 'js/geometry.js',
   'js/renderer.js', 'js/hud.js', 'js/game.js', 'js/net.js', 'js/main.js',
   'js/vendor/peerjs.min.js',
