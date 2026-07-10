@@ -874,13 +874,20 @@ class Game {
         if (pos) this._spawnPowerup(pos[0], pos[1], keys[(RNG() * keys.length) | 0]);
       }
     }
+    // win check: the champion must hold a UNIQUE best at/over the target —
+    // two players hitting it in the same tick used to hand the win to
+    // whoever sat first in roster order (always the host). A tie plays on
+    // as sudden death until someone pulls ahead.
+    let best = null, bestK = -1, tied = false;
     for (const p of this.players) {
-      if ((this.killCounts[p.id] || 0) >= this.killTarget) {
-        this.winnerId = p.id;
-        this.mode = 'versusover';
-        this._sfx('levelClear');
-        break;
-      }
+      const k = this.killCounts[p.id] || 0;
+      if (k > bestK) { bestK = k; best = p; tied = false; }
+      else if (k === bestK) tied = true;
+    }
+    if (best && !tied && bestK >= this.killTarget) {
+      this.winnerId = best.id;
+      this.mode = 'versusover';
+      this._sfx('levelClear');
     }
   }
 
@@ -1107,7 +1114,9 @@ class Game {
     }
     p.pendingOffers = null;
     p.offersSent = false;
-    if (p.pendingLevels > 0) {
+    // drain banked levels; a maxed build leaves pendingOffers null (the roll
+    // pays score instead), so loop until a draft opens or the bank is empty
+    while (p.pendingLevels > 0 && !p.pendingOffers) {
       p.pendingLevels--;
       this._rollOffers(p);
     }
@@ -1809,8 +1818,8 @@ class Game {
       }
 
       // pick a destination; forceMove keeps a maneuvering tank rolling even
-      // when its hull isn't pointed at the player
-      let tx, tz, forceMove = false;
+      // when its hull isn't pointed at the player; hold parks the hull
+      let tx, tz, forceMove = false, hold = false;
       const threat = e.type === 'rusher' ? null : this._nearestThreat(e.x, e.z);
       if (threat) {
         // grenade inbound — scatter straight away from the shell
@@ -1847,7 +1856,11 @@ class Game {
           tx = ally.x; tz = ally.z;
           forceMove = true;
         } else if (ally) {
-          tx = e.x; tz = e.z;      // umbrella in place
+          // umbrella in place: park. (tx = e.x used to feed angleTo(0,0),
+          // which is -PI — the warden would face south and drive off.)
+          hold = true;
+          tx = e.x + fwdX(e.angle) * 12;
+          tz = e.z + fwdZ(e.angle) * 12;
         } else if (hunting) {
           tx = p.x; tz = p.z;
         } else {

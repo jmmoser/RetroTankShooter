@@ -250,6 +250,15 @@ const AudioSys = (() => {
     musicTimer = setInterval(scheduleMusic, 90);
   }
 
+  // top up the schedule the moment the tab hides: the last visible tick only
+  // covered 0.28 s, and the first throttled hidden tick is >=1 s away — the
+  // gap would go silent and then smear into a bunched catch-up burst
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) scheduleMusic();
+    });
+  }
+
   function scheduleMusic() {
     if (!ctx || !musicBus) return;
     // hidden tabs clamp setInterval to >=1s while the AudioContext keeps

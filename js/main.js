@@ -679,7 +679,15 @@
   function startHostRun() {
     const versus = Net.state.mode === 'versus';
     if (versus && Net.state.roster.length < 2) {
-      lobbyHintEl.textContent = 'VERSUS NEEDS AT LEAST 2 TANKS';
+      const msg = 'VERSUS NEEDS AT LEAST 2 TANKS';
+      lobbyHintEl.textContent = msg;
+      // the AGAIN button on the vs-over screen hits this too (opponent left
+      // mid-match) — surface the reason where the user actually is
+      if (uiMode === 'versusover') {
+        const w = document.getElementById('vs-wait');
+        w.textContent = msg;
+        w.classList.remove('hidden');
+      }
       return;
     }
     mobileImmersive();
@@ -851,6 +859,7 @@
   const draftEl = document.getElementById('screen-draft');
   const draftChoicesEl = document.getElementById('draft-choices');
   let draftOpen = false;
+  let draftOpenedAt = 0;   // nonmodal Enter-picks need a settle delay (see draftKeys)
 
   function draftPick(id) {
     if (!draftOpen) return;
@@ -895,6 +904,7 @@
 
   function openDraft(offers) {
     draftOpen = true;
+    draftOpenedAt = performance.now();
     buildDraft(normalizeOffers(offers));
     if (Net.role === 'solo') {
       uiMode = 'draft';               // the war waits while you fit the new part
@@ -913,7 +923,11 @@
   }
 
   /* modal = solo (sim paused): Space may confirm. In co-op Space is the fire
-   * key, so only digits / arrows+Enter / click / tap pick there. */
+   * key, so only digits / arrows+Enter / click / tap pick there — and Enter
+   * needs the overlay to have been visible for a beat first: the gamepad
+   * synthesizes Enter edges from the A button, which is ALSO the fire button,
+   * so a pad player firing the moment the draft appeared used to spend the
+   * pick without ever seeing the options. */
   function draftKeys(modal) {
     const list = Array.from(draftChoicesEl.querySelectorAll('.draft-choice'));
     for (let i = 0; i < list.length; i++) {
@@ -922,7 +936,10 @@
     const m = menus.draft;
     if (Input.consume('ArrowUp')) m.move(-1);
     if (Input.consume('ArrowDown')) m.move(1);
-    if (Input.consume('Enter') || Input.consume('NumpadEnter') || (modal && Input.consume('Space'))) m.activate();
+    const settled = modal || performance.now() - draftOpenedAt > 800;
+    if (Input.consume('Enter') || Input.consume('NumpadEnter') || (modal && Input.consume('Space'))) {
+      if (settled) m.activate();
+    }
   }
 
   /* Host/solo, after each sim step: surface the local player's waiting draft
@@ -973,10 +990,16 @@
       if (Net.role === 'client') leaveToTitle();
     }
   };
-  // A teammate dropped: stop their now-frozen tank from driving/firing forever.
+  // A teammate dropped: stop their now-frozen tank from driving/firing forever
+  // — including grenades/mines/boost/vent, which used to keep their last held
+  // value and let a leaver's tank lob grenades (and score kills) posthumously.
   Net.cb.onPeerLeft = (id) => {
     const p = game.players && game.players.find((pp) => pp.id === id);
-    if (p && p.input) { p.input.turn = 0; p.input.drive = 0; p.input.fire = false; }
+    if (p && p.input) {
+      p.input.turn = 0; p.input.drive = 0;
+      p.input.fire = false; p.input.nade = false; p.input.boost = false;
+      p.input.mine = false; p.input.vent = false;
+    }
   };
   Net.cb.onStart = (defs, localId, mode) => startClientRun(defs, localId, mode);
   Net.cb.onLevel = (msg) => {
@@ -1520,6 +1543,10 @@
         if (draftOpen) draftKeys(false);   // co-op: pick under fire
         if (Input.consume('cam')) { chaseCam = !chaseCam; chaseCamUserSet = true; }
         if (Input.consume('pause') || Input.consume('Escape')) {
+          // no pausing mid-death-cam: the gamepad synthesizes Escape from B
+          // once the playfield deactivates, so mashing grenade while dying
+          // used to yank solo players onto the pause screen
+          if (game.mode !== 'playing') break;
           if (Net.role === 'solo') pauseGame();
           else hud.message('PAUSE UNAVAILABLE IN CO-OP', '#ffd24a', 1.6);
         }
@@ -1601,7 +1628,9 @@
   function updateEngine() {
     const lp = game.player;
     if (uiMode === 'playing' && lp && lp.alive && typeof lp.maxSpeed === 'number') {
-      AudioSys.setEngine(Math.min(1, Math.abs(lp.speed || 0) / lp.maxSpeed));
+      // small floor keeps the idle hum audible in-game; zero means silent
+      // (menus/pause), so a stationary tank still sounds alive here
+      AudioSys.setEngine(Math.max(0.02, Math.min(1, Math.abs(lp.speed || 0) / lp.maxSpeed)));
     } else {
       AudioSys.setEngine(0);
     }
@@ -1652,11 +1681,10 @@
 
   /* Host: immediate snapshot at a mode transition, carrying whatever
    * sounds/bursts were buffered since the last 30 Hz tick (broadcasting the
-   * bare game here used to silently drop them). */
+   * bare game here used to silently drop them). Callers run after
+   * hostNetTick, which already drained this frame's game.frame* buffers into
+   * netState — draining them again here would double-send them. */
   function hostFlushState() {
-    if (game.frameSounds.length) for (const s of game.frameSounds) netState.snd.push(s);
-    if (game.frameBursts.length) for (const b of game.frameBursts) netState.bu.push(b);
-    if (game.frameDebris.length) for (const d of game.frameDebris) netState.de.push(d);
     Net.broadcastState(game, netState.snd, netState.bu, netState.de);
     netState.timer = 0;
     netState.snd = []; netState.bu = []; netState.de = [];
