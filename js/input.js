@@ -59,9 +59,13 @@ const Input = (() => {
   });
 
   window.addEventListener('keyup', (e) => {
-    if (typingInField(e)) return;
+    // always clear held state — swallowing keyup while a text field had focus
+    // (e.g. releasing W inside the join-code input) left the key stuck held
     const action = KEYMAP[e.code];
-    if (action) { keys[action] = false; e.preventDefault(); }
+    if (action) {
+      keys[action] = false;
+      if (!typingInField(e)) e.preventDefault();
+    }
   });
 
   // Mouse buttons ride the Pointer Events stream (pointerType 'mouse'), so
@@ -222,7 +226,10 @@ const Input = (() => {
     }
     setTouchMode(true);
     if (!touch.enabled) return;                                  // menus: DOM handles it
-    if (e.target && e.target.closest && e.target.closest('.screen')) return;
+    // overlays keep their DOM taps: screens, and the update toast (which can
+    // appear mid-run — swallowing its pointerdown made it untappable exactly
+    // when "tap to restart" matters)
+    if (e.target && e.target.closest && e.target.closest('.screen, .update-toast')) return;
     e.preventDefault();
     const x = e.clientX, y = e.clientY;
 

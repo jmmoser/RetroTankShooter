@@ -33,8 +33,17 @@ const Net = (() => {
     inputs: {},          // host: peerId -> latest input {t,d,f}
     started: false,
     mode: 'coop',        // 'coop' | 'versus' — host picks in the lobby
-    snaps: [],           // client: [{ t, msg }] snapshot history for interpolation
+    snaps: [],           // client: [{ t, msg, idx }] snapshot history for interpolation
+    rejected: false,     // client: host said 'full' — ignore everything after
   };
+
+  /* Build an id -> entry map once per snapshot (interpolation runs at render
+   * rate, snapshots only arrive at 30 Hz — indexing per frame was pure churn). */
+  function indexBy(arr, key) {
+    const m = {};
+    if (arr) for (const d of arr) m[d[key]] = d;
+    return m;
+  }
 
   // Callbacks wired up by main.js.
   const cb = {
@@ -103,13 +112,15 @@ const Net = (() => {
     state.conns = state.conns.filter((c) => c !== conn);
     const id = conn.peer;
     delete state.inputs[id];
-    if (!state.started) {
-      const before = state.roster.length;
-      state.roster = state.roster.filter((r) => r.id !== id);
-      if (state.roster.length !== before) {
-        if (cb.onRoster) cb.onRoster(state.roster);
-        broadcast({ t: 'roster', roster: state.roster, mode: state.mode });
-      }
+    // always prune the roster — leaving mid-game entries in place made the
+    // next relaunch (bt-again / vs rematch) spawn permanently idle ghost
+    // tanks for players who had disconnected. The live game's player object
+    // stays (frozen via onPeerLeft); only the next launch's roster changes.
+    const before = state.roster.length;
+    state.roster = state.roster.filter((r) => r.id !== id);
+    if (state.roster.length !== before && !state.started) {
+      if (cb.onRoster) cb.onRoster(state.roster);
+      broadcast({ t: 'roster', roster: state.roster, mode: state.mode });
     }
     if (cb.onPeerLeft) cb.onPeerLeft(id);
   }
@@ -117,7 +128,15 @@ const Net = (() => {
   function hostHandle(conn, msg) {
     if (!msg) return;
     if (msg.t === 'join') {
-      if (state.started || state.roster.length >= MAX_PLAYERS) { try { conn.send({ t: 'full' }); } catch (e) {} return; }
+      if (state.started || state.roster.length >= MAX_PLAYERS) {
+        // rejected joiners must not stay subscribed to the game feed —
+        // otherwise they keep receiving rosters/snapshots and get yanked
+        // into a broken spectator view by the next 'start'/'lv' broadcast
+        try { conn.send({ t: 'full' }); } catch (e) {}
+        state.conns = state.conns.filter((c) => c !== conn);
+        setTimeout(() => { try { conn.close(); } catch (e) {} }, 250);
+        return;
+      }
       if (!state.roster.some((r) => r.id === conn.peer)) {
         state.roster.push({
           id: conn.peer,
@@ -286,6 +305,7 @@ const Net = (() => {
     code = (code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     state.role = 'client';
     state.code = code;
+    state.rejected = false;
 
     const peer = new Peer();
     state.peer = peer;
@@ -296,8 +316,8 @@ const Net = (() => {
       state.hostConn = conn;
       conn.on('open', () => { try { conn.send({ t: 'join', name: name || 'PLAYER', loadoutIndex: loadoutIndex || 0 }); } catch (e) {} });
       conn.on('data', (msg) => clientHandle(msg));
-      conn.on('close', () => { if (cb.onError) cb.onError('Disconnected from host.'); });
-      conn.on('error', () => { if (cb.onError) cb.onError('Connection error.'); });
+      conn.on('close', () => { if (!state.rejected && cb.onError) cb.onError('Disconnected from host.'); });
+      conn.on('error', () => { if (!state.rejected && cb.onError) cb.onError('Connection error.'); });
     });
     peer.on('error', (err) => {
       const type = err && err.type;
@@ -311,17 +331,29 @@ const Net = (() => {
   }
 
   function clientHandle(msg) {
-    if (!msg) return;
+    if (!msg || state.rejected) return;
     switch (msg.t) {
       case 'roster': state.roster = msg.roster; state.mode = msg.mode || 'coop'; if (cb.onRoster) cb.onRoster(msg.roster); break;
-      case 'full':   if (cb.onError) cb.onError('Game is full or already in progress.'); break;
+      case 'full':
+        // we're not in this game — stop listening before the host's next
+        // 'start'/'lv'/'s' broadcast drags us into a broken spectator view
+        state.rejected = true;
+        if (cb.onError) cb.onError('Game is full or already in progress.');
+        try { if (state.hostConn) state.hostConn.close(); } catch (e) {}
+        break;
       case 'start':  state.started = true; state.mode = msg.mode || 'coop'; if (cb.onStart) cb.onStart(msg.defs, state.id, state.mode); break;
       case 'lv':
         state.snaps.length = 0;   // new arena: stale history would tween across it
         if (cb.onLevel) cb.onLevel(msg);
         break;
       case 's':
-        state.snaps.push({ t: performance.now() / 1000, msg });
+        state.snaps.push({
+          t: performance.now() / 1000, msg,
+          idx: {
+            pl: indexBy(msg.pl, 'id'), en: indexBy(msg.en, 'i'),
+            pr: indexBy(msg.pr, 'i'), ri: indexBy(msg.ri, 'i'),
+          },
+        });
         if (state.snaps.length > SNAP_KEEP) state.snaps.shift();
         if (cb.onState) cb.onState(msg);
         break;
@@ -525,13 +557,8 @@ const Net = (() => {
 
     const lerp = (x, y) => x + (y - x) * k;
     const lerpA = (x, y) => x + wrapAngle(y - x) * k;
-    const index = (arr, key) => {
-      const m = {};
-      if (arr) for (const d of arr) m[d[key]] = d;
-      return m;
-    };
 
-    const pa = index(a.msg.pl, 'id'), pb = index(b.msg.pl, 'id');
+    const pa = a.idx.pl, pb = b.idx.pl;
     for (const p of game.players) {
       if (p.id === game.localId) continue;
       const da = pa[p.id], db = pb[p.id];
@@ -546,7 +573,7 @@ const Net = (() => {
     // velocity (drift makes hull facing lie about direction). Capped — a
     // stall should freeze the tank, not launch it through a wall.
     const newest = snaps[snaps.length - 1];
-    const dl = index(newest.msg.pl, 'id')[game.localId];
+    const dl = newest.idx.pl[game.localId];
     const lp = game.player;
     if (lp && dl && dl.al) {
       const age = Math.min(Math.max(0, now - newest.t), 0.12);
@@ -555,7 +582,7 @@ const Net = (() => {
       lp.angle = dl.a;
     }
 
-    const ea = index(a.msg.en, 'i'), eb = index(b.msg.en, 'i');
+    const ea = a.idx.en, eb = b.idx.en;
     for (const e of game.enemies) {
       const da = ea[e.nid], db = eb[e.nid];
       if (da && db) {
@@ -565,7 +592,7 @@ const Net = (() => {
       }
     }
 
-    const ra = index(a.msg.pr, 'i'), rb = index(b.msg.pr, 'i');
+    const ra = a.idx.pr, rb = b.idx.pr;
     for (const pr of game.projectiles) {
       const da = ra[pr.nid], db = rb[pr.nid];
       if (da && db) {
@@ -576,7 +603,7 @@ const Net = (() => {
       }
     }
 
-    const ga = index(a.msg.ri, 'i'), gb = index(b.msg.ri, 'i');
+    const ga = a.idx.ri, gb = b.idx.ri;
     for (const r of game.rings) {
       const da = ga[r.nid], db = gb[r.nid];
       if (da && db) r.r = lerp(da.r, db.r);
@@ -600,6 +627,7 @@ const Net = (() => {
     state.started = false; state.id = null; state.code = null;
     state.mode = 'coop';
     state.snaps = [];
+    state.rejected = false;
   }
 
   return {

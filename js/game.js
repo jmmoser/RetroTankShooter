@@ -874,13 +874,20 @@ class Game {
         if (pos) this._spawnPowerup(pos[0], pos[1], keys[(RNG() * keys.length) | 0]);
       }
     }
+    // win check: the champion must hold a UNIQUE best at/over the target —
+    // two players hitting it in the same tick used to hand the win to
+    // whoever sat first in roster order (always the host). A tie plays on
+    // as sudden death until someone pulls ahead.
+    let best = null, bestK = -1, tied = false;
     for (const p of this.players) {
-      if ((this.killCounts[p.id] || 0) >= this.killTarget) {
-        this.winnerId = p.id;
-        this.mode = 'versusover';
-        this._sfx('levelClear');
-        break;
-      }
+      const k = this.killCounts[p.id] || 0;
+      if (k > bestK) { bestK = k; best = p; tied = false; }
+      else if (k === bestK) tied = true;
+    }
+    if (best && !tied && bestK >= this.killTarget) {
+      this.winnerId = best.id;
+      this.mode = 'versusover';
+      this._sfx('levelClear');
     }
   }
 
@@ -1107,7 +1114,9 @@ class Game {
     }
     p.pendingOffers = null;
     p.offersSent = false;
-    if (p.pendingLevels > 0) {
+    // drain banked levels; a maxed build leaves pendingOffers null (the roll
+    // pays score instead), so loop until a draft opens or the bank is empty
+    while (p.pendingLevels > 0 && !p.pendingOffers) {
       p.pendingLevels--;
       this._rollOffers(p);
     }
@@ -1659,16 +1668,33 @@ class Game {
     return hit;
   }
 
+  /* Exact segment-vs-AABB (slab) test per obstacle: O(obstacles) instead of
+   * O(samples × obstacles), and no sampling holes. */
   _losClear(x0, z0, x1, z1) {
     const dx = x1 - x0, dz = z1 - z0;
-    const d = Math.hypot(dx, dz);
-    const steps = Math.ceil(d / 2.5);
-    for (let i = 1; i < steps; i++) {
-      const x = x0 + (dx * i) / steps, z = z0 + (dz * i) / steps;
-      for (const o of this.obstacles) {
-        if (o.dead) continue;
-        if (Math.abs(x - o.x) < o.w / 2 && Math.abs(z - o.z) < o.d / 2) return false;
+    for (const o of this.obstacles) {
+      if (o.dead) continue;
+      const hx = o.w / 2, hz = o.d / 2;
+      let t0 = 0, t1 = 1;
+      if (Math.abs(dx) < 1e-9) {
+        if (Math.abs(x0 - o.x) >= hx) continue;
+      } else {
+        let ta = (o.x - hx - x0) / dx, tb = (o.x + hx - x0) / dx;
+        if (ta > tb) { const t = ta; ta = tb; tb = t; }
+        if (ta > t0) t0 = ta;
+        if (tb < t1) t1 = tb;
+        if (t0 > t1) continue;
       }
+      if (Math.abs(dz) < 1e-9) {
+        if (Math.abs(z0 - o.z) >= hz) continue;
+      } else {
+        let ta = (o.z - hz - z0) / dz, tb = (o.z + hz - z0) / dz;
+        if (ta > tb) { const t = ta; ta = tb; tb = t; }
+        if (ta > t0) t0 = ta;
+        if (tb < t1) t1 = tb;
+        if (t0 > t1) continue;
+      }
+      return false;
     }
     return true;
   }
@@ -1792,8 +1818,8 @@ class Game {
       }
 
       // pick a destination; forceMove keeps a maneuvering tank rolling even
-      // when its hull isn't pointed at the player
-      let tx, tz, forceMove = false;
+      // when its hull isn't pointed at the player; hold parks the hull
+      let tx, tz, forceMove = false, hold = false;
       const threat = e.type === 'rusher' ? null : this._nearestThreat(e.x, e.z);
       if (threat) {
         // grenade inbound — scatter straight away from the shell
@@ -1830,7 +1856,11 @@ class Game {
           tx = ally.x; tz = ally.z;
           forceMove = true;
         } else if (ally) {
-          tx = e.x; tz = e.z;      // umbrella in place
+          // umbrella in place: park. (tx = e.x used to feed angleTo(0,0),
+          // which is -PI — the warden would face south and drive off.)
+          hold = true;
+          tx = e.x + fwdX(e.angle) * 12;
+          tz = e.z + fwdZ(e.angle) * 12;
         } else if (hunting) {
           tx = p.x; tz = p.z;
         } else {
@@ -1900,10 +1930,11 @@ class Game {
       const maxTurn = e.turn * alertMul * dt;
       e.angle += Math.max(-maxTurn, Math.min(maxTurn, diff));
 
-      // snipers hold still at range (unless relocating); others close in
+      // snipers hold still at range (unless relocating); others close in;
+      // a holding hull (warden umbrella) turns but never rolls
       const wantStop = e.type === 'sniper' && hunting && !forceMove &&
         e.relocT <= 0 && distP < e.fireRange * 0.8;
-      if (!wantStop && (forceMove || (Math.abs(diff) < 1.2 && !(hunting && distP < 9)))) {
+      if (!hold && !wantStop && (forceMove || (Math.abs(diff) < 1.2 && !(hunting && distP < 9)))) {
         e.x += fwdX(e.angle) * e.speed * alertMul * moveMul * dt;
         e.z += fwdZ(e.angle) * e.speed * alertMul * moveMul * dt;
       }
@@ -2090,9 +2121,13 @@ class Game {
             }
             this._hurtEnemy(j, pr.dmg, pr.owner, 'cannon');
             if (pr.pierce > 0) {
-              // PIERCING CORE: punch through and keep flying
+              // PIERCING CORE: punch through and keep flying. A chain kill in
+              // _hurtEnemy can shrink the array below j — clamp so the next
+              // iteration can't index past the end (hitList already stops
+              // double-hits on the pierced target itself).
               pr.pierce--;
               (pr.hitList || (pr.hitList = [])).push(e);
+              j = Math.min(j, this.enemies.length);
             } else {
               dead = true;
               break;
@@ -2184,14 +2219,13 @@ class Game {
         }
       }
     }
-    for (let j = this.enemies.length - 1; j >= 0; j--) {
-      const e = this.enemies[j];
+    // two-phase: collect first, then hurt by ref — chain kills reorder the array
+    const hits = [];
+    for (const e of this.enemies) {
       const d = Math.hypot(pr.x - e.x, pr.z - e.z);
-      if (d < R) {
-        const dmg = pr.dmg * (d < 3 ? 1 : 1 - (d - 3) / (R - 3) * 0.75);
-        this._hurtEnemy(j, dmg, pr.owner, 'nade');
-      }
+      if (d < R) hits.push([e, pr.dmg * (d < 3 ? 1 : 1 - (d - 3) / (R - 3) * 0.75)]);
     }
+    for (const [e, dmg] of hits) this._hurtEnemyRef(e, dmg, pr.owner, 'nade');
     const b = this.boss;
     if (b && !b.dead) {
       for (const tu of b.turrets) {
@@ -2252,11 +2286,12 @@ class Game {
         if (d < R) this._damagePlayer(pl, falloff(d), m.owner);
       }
     }
-    for (let j = this.enemies.length - 1; j >= 0; j--) {
-      const e = this.enemies[j];
+    const hits = [];
+    for (const e of this.enemies) {
       const d = Math.hypot(m.x - e.x, m.z - e.z);
-      if (d < R) this._hurtEnemy(j, falloff(d), m.owner, 'mine');
+      if (d < R) hits.push([e, falloff(d)]);
     }
+    for (const [e, dmg] of hits) this._hurtEnemyRef(e, dmg, m.owner, 'mine');
     const b = this.boss;
     if (b && !b.dead) {
       for (const tu of b.turrets) {
@@ -2268,6 +2303,16 @@ class Game {
         this._hurtBossCore(DMG * 0.8, m.owner);
       }
     }
+  }
+
+  /* Hurt an enemy by REFERENCE. Splash/chain loops must use this instead of
+   * raw indices: a chain kill (rusher pop, VOLATILE HULLS) splices the array
+   * mid-loop, so a captured index can point at a different enemy — or past
+   * the end of the array, which crashed the game. Already-removed refs are
+   * silently skipped. */
+  _hurtEnemyRef(e, dmg, ownerId, via) {
+    const i = this.enemies.indexOf(e);
+    if (i >= 0) this._hurtEnemy(i, dmg, ownerId, via);
   }
 
   /* via: 'cannon' | 'nade' | 'mine' — which weapon landed the hit, for the
@@ -2343,12 +2388,11 @@ class Game {
       owner.shields = Math.min(owner.maxShields, owner.shields + 4 * owner.up.siphon);
     }
     // a shot-down rusher still pops — the blast chains into nearby hostiles
+    // (collect-then-hurt: the chain itself splices the array)
     if (e.type === 'rusher') {
       this._burst(e.x, 1.2, e.z, 20, [1, 0.35, 0.5], 11);
-      for (let j = this.enemies.length - 1; j >= 0; j--) {
-        const o = this.enemies[j];
-        if (dist2(e.x, e.z, o.x, o.z) < 36) this._hurtEnemy(j, 40, ownerId, via);
-      }
+      const hits = this.enemies.filter((o) => dist2(e.x, e.z, o.x, o.z) < 36);
+      for (const o of hits) this._hurtEnemyRef(o, 40, ownerId, via);
     }
     // VOLATILE HULLS: every kill detonates — dangerous up close, devastating
     // when you chain a pack. Forces range discipline for the reward
@@ -2358,10 +2402,8 @@ class Game {
         if (!pl.alive) continue;
         if (dist2(e.x, e.z, pl.x, pl.z) < 36) this._damagePlayer(pl, 16);
       }
-      for (let j = this.enemies.length - 1; j >= 0; j--) {
-        const o = this.enemies[j];
-        if (dist2(e.x, e.z, o.x, o.z) < 36) this._hurtEnemy(j, 30, ownerId, via);
-      }
+      const hits = this.enemies.filter((o) => dist2(e.x, e.z, o.x, o.z) < 36);
+      for (const o of hits) this._hurtEnemyRef(o, 30, ownerId, via);
     }
     // chance to drop a pickup
     if (RNG() < 0.35) {
@@ -2752,16 +2794,18 @@ class Game {
       const r = this.rings[i];
       r.r += r.speed * dt;
       if (r.from === 'player') {
-        // squad shockwave: sweeps hostiles once each, blocked by cover
-        for (let j = this.enemies.length - 1; j >= 0; j--) {
-          const e = this.enemies[j];
+        // squad shockwave: sweeps hostiles once each, blocked by cover.
+        // Collect first — a chain kill reorders the array mid-loop.
+        const hits = [];
+        for (const e of this.enemies) {
           if (r.hitE && r.hitE.indexOf(e) >= 0) continue;
           const d = Math.hypot(e.x - r.x, e.z - r.z);
           if (Math.abs(d - r.r) < 2.6) {
             (r.hitE || (r.hitE = [])).push(e);
-            if (this._losClear(r.x, r.z, e.x, e.z)) this._hurtEnemy(j, r.dmg, r.owner, 'shock');
+            if (this._losClear(r.x, r.z, e.x, e.z)) hits.push(e);
           }
         }
+        for (const e of hits) this._hurtEnemyRef(e, r.dmg, r.owner, 'shock');
       } else {
         for (const p of this.players) {
           if (!p.alive || r.hit[p.id]) continue;

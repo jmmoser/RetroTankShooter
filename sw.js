@@ -7,6 +7,7 @@ importScripts('js/version.js');
 const CACHE = 'phantom-arena-' + GAME_VERSION;
 const ASSETS = [
   './', 'index.html', 'style.css', 'manifest.webmanifest', 'icon.svg',
+  'icon-180.png', 'icon-192.png', 'icon-512.png',
   'js/version.js', 'js/settings.js', 'js/audio.js', 'js/input.js', 'js/geometry.js',
   'js/renderer.js', 'js/hud.js', 'js/game.js', 'js/net.js', 'js/main.js',
   'js/vendor/peerjs.min.js',
@@ -36,7 +37,9 @@ self.addEventListener('fetch', (e) => {
       fetch(e.request).then((res) => {
         if (res.ok) {
           const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy));
+          // tie the cache write to the event's lifetime so the worker isn't
+          // terminated before the put completes
+          e.waitUntil(caches.open(CACHE).then((c) => c.put(e.request, copy)));
         }
         return res;
       })

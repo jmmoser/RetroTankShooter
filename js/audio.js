@@ -70,15 +70,20 @@ const AudioSys = (() => {
     o.start(t0); o.stop(t0 + dur + 0.05);
   }
 
+  // one shared second of noise for all SFX — allocating and filling a fresh
+  // AudioBuffer per shot/explosion was steady garbage in the hottest moments
+  let sfxNoiseBuf = null;
   function noise(dur, vol, fStart, fEnd, delay = 0) {
     if (!ctx) return;
+    if (!sfxNoiseBuf) {
+      sfxNoiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+      const d0 = sfxNoiseBuf.getChannelData(0);
+      for (let i = 0; i < d0.length; i++) d0[i] = Math.random() * 2 - 1;
+    }
     const t0 = ctx.currentTime + delay;
-    const len = Math.max(1, Math.floor(ctx.sampleRate * dur));
-    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     const src = ctx.createBufferSource();
-    src.buffer = buf;
+    src.buffer = sfxNoiseBuf;
+    src.loop = true;                       // long booms wrap around the buffer
     const f = ctx.createBiquadFilter();
     f.type = 'lowpass';
     f.frequency.setValueAtTime(fStart, t0);
@@ -86,7 +91,8 @@ const AudioSys = (() => {
     const g = ctx.createGain();
     env(g, t0, vol, 0.005, dur);
     src.connect(f); f.connect(g); g.connect(master);
-    src.start(t0); src.stop(t0 + dur + 0.05);
+    src.start(t0, Math.random() * 0.9);    // random slice so repeats don't phase
+    src.stop(t0 + dur + 0.05);
   }
 
   // -- game sounds ---------------------------------------------------------
@@ -244,9 +250,21 @@ const AudioSys = (() => {
     musicTimer = setInterval(scheduleMusic, 90);
   }
 
+  // top up the schedule the moment the tab hides: the last visible tick only
+  // covered 0.28 s, and the first throttled hidden tick is >=1 s away — the
+  // gap would go silent and then smear into a bunched catch-up burst
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) scheduleMusic();
+    });
+  }
+
   function scheduleMusic() {
     if (!ctx || !musicBus) return;
-    while (musicNext < ctx.currentTime + 0.28) {
+    // hidden tabs clamp setInterval to >=1s while the AudioContext keeps
+    // running — schedule far enough ahead that the soundtrack doesn't gap
+    const ahead = (typeof document !== 'undefined' && document.hidden) ? 1.6 : 0.28;
+    while (musicNext < ctx.currentTime + ahead) {
       if ((musicStep & 15) === 0 && pendingMood) {
         musicMood = pendingMood;
         pendingMood = null;
@@ -392,14 +410,19 @@ const AudioSys = (() => {
     engineOsc = engineGain = engineFilter = null;
   }
 
-  /* speed01: 0..1 of max speed */
+  /* speed01: 0..1 of max speed. Zero really means silent — the old floor of
+   * 0.05 (and the lazy startEngine here) left a permanent sawtooth hum under
+   * every menu, since main.js silences the engine by calling setEngine(0). */
   function setEngine(speed01) {
     if (!ctx) return;
-    if (!engineOsc) startEngine();
+    if (!engineOsc) {
+      if (speed01 <= 0) return;   // nothing to silence — don't boot the hum
+      startEngine();
+    }
     const t = ctx.currentTime;
     engineOsc.frequency.setTargetAtTime(38 + speed01 * 55, t, 0.08);
     engineFilter.frequency.setTargetAtTime(180 + speed01 * 500, t, 0.08);
-    engineGain.gain.setTargetAtTime(0.05 + speed01 * 0.10, t, 0.1);
+    engineGain.gain.setTargetAtTime(speed01 <= 0 ? 0 : 0.05 + speed01 * 0.10, t, 0.1);
   }
 
   function play(name) {
