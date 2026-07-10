@@ -1930,10 +1930,11 @@ class Game {
       const maxTurn = e.turn * alertMul * dt;
       e.angle += Math.max(-maxTurn, Math.min(maxTurn, diff));
 
-      // snipers hold still at range (unless relocating); others close in
+      // snipers hold still at range (unless relocating); others close in;
+      // a holding hull (warden umbrella) turns but never rolls
       const wantStop = e.type === 'sniper' && hunting && !forceMove &&
         e.relocT <= 0 && distP < e.fireRange * 0.8;
-      if (!wantStop && (forceMove || (Math.abs(diff) < 1.2 && !(hunting && distP < 9)))) {
+      if (!hold && !wantStop && (forceMove || (Math.abs(diff) < 1.2 && !(hunting && distP < 9)))) {
         e.x += fwdX(e.angle) * e.speed * alertMul * moveMul * dt;
         e.z += fwdZ(e.angle) * e.speed * alertMul * moveMul * dt;
       }

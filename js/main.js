@@ -432,14 +432,16 @@
     }
     if (game.dailySeed) {
       // record under the arena's seed date — a run finishing past UTC
-      // midnight played yesterday's arena, not today's
+      // midnight played yesterday's arena, not today's, so both the write
+      // and the "best" readout are keyed to the seed day
       const wasBest = Progress.recordDaily(game.score, game.level, game.dailySeed);
-      const best = Progress.dailyBest();
+      const best = Progress.dailyBest(game.dailySeed);
       const streak = Progress.recordDailyPlayed(game.dailySeed);
+      const seedIsToday = game.dailySeed === Progress.todayKey();
       earned = earned || wasBest;
       html += '<br>' + (wasBest
-        ? '<span class="gold">&#9733; BEST DAILY RUN TODAY &#9733;</span>'
-        : `TODAY'S BEST ${best ? best.score : 0}`);
+        ? '<span class="gold">&#9733; ' + (seedIsToday ? 'BEST DAILY RUN TODAY' : 'BEST RUN — OPS ' + game.dailySeed) + ' &#9733;</span>'
+        : (seedIsToday ? "TODAY'S BEST " : 'OPS ' + game.dailySeed + ' BEST ') + (best ? best.score : 0));
       if (!wasBest && best && best.score > 0 && game.score >= best.score * 0.8) {
         html += `<br><span class="gold">ONLY ${best.score - game.score} FROM TODAY'S BEST</span>`;
       }

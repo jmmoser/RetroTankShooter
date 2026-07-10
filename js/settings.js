@@ -135,10 +135,13 @@ const Progress = (() => {
     return isNaN(d) ? '' : dayKey(new Date(d.getTime() - 86400000));
   }
 
-  function dailyBest() {
+  /* Best stored run for `day` (defaults to today) — the game-over panel
+   * passes the arena's seed date so a midnight-straddling run reads the
+   * right day's record instead of a spurious 0. */
+  function dailyBest(day) {
     try {
       const raw = JSON.parse(localStorage.getItem('pa_daily') || 'null');
-      if (raw && raw.date === todayKey()) return raw;
+      if (raw && raw.date === (day || todayKey())) return raw;
     } catch (e) {}
     return null;
   }
@@ -164,7 +167,13 @@ const Progress = (() => {
   function loadStreak() {
     try {
       const raw = JSON.parse(localStorage.getItem('pa_streak') || 'null');
-      if (raw && typeof raw.streak === 'number') return raw;
+      if (raw && typeof raw.streak === 'number') {
+        // a malformed `last` would lexicographically outrank every real date
+        // and permanently short-circuit recordDailyPlayed — sanitize it
+        if (typeof raw.last !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw.last)) raw.last = '';
+        if (typeof raw.best !== 'number') raw.best = 0;
+        return raw;
+      }
     } catch (e) {}
     return { last: '', streak: 0, best: 0 };
   }
