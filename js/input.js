@@ -79,7 +79,8 @@ const Input = (() => {
     nadeHeld = !!(b & 2);
     mineHeld = !!(b & 4);   // middle button drops a mine
   }
-  window.addEventListener('contextmenu', (e) => e.preventDefault());
+  // text fields keep their menu (right-click -> Paste is how room codes arrive)
+  window.addEventListener('contextmenu', (e) => { if (!typingInField(e)) e.preventDefault(); });
 
   window.addEventListener('blur', () => {
     for (const k in keys) keys[k] = false;
@@ -87,6 +88,12 @@ const Input = (() => {
     nadeHeld = false;
     mineHeld = false;
     releaseAllTouch();
+    // gamepad state is only refreshed by rAF polling, which stops while the
+    // tab is hidden — without this a held stick/trigger stays "on" for the
+    // whole background stretch (the co-op host keeps simulating it)
+    pad.turn = 0;
+    pad.drive = 0;
+    pad.fire = pad.nade = pad.mine = pad.boost = pad.vent = false;
   });
 
   // ---- touch state ----------------------------------------------------------

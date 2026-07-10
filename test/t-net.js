@@ -78,6 +78,43 @@ check('client: "full" stops the feed before start/snapshots arrive', () => {
   Net.cb.onError = Net.cb.onStart = Net.cb.onState = null;
 });
 
+check('host: hostile input packets are clamped, never NaN', () => {
+  Net.leave();
+  Net.hostCreate('HOST', 1);
+  const peer = FakePeer.last;
+  peer.h.open();
+  const c = mkConn('evil');
+  peer.h.connection(c);
+  c.h.open();
+  c.h.data({ t: 'join', name: 42, loadoutIndex: 0 });   // non-string name must not throw
+  assert(Net.state.roster.length === 2, 'join with numeric name was not accepted');
+  assert(typeof Net.state.roster[1].name === 'string' && Net.state.roster[1].name.length > 0,
+    'numeric name not replaced with a default');
+  c.h.data({ t: 'input', in: { t: 1e9, d: {}, f: 1 } });
+  const inp = Net.state.inputs['evil'];
+  assert(inp.t === 1, 'huge turn not clamped: ' + inp.t);
+  assert(inp.d === 0, 'non-numeric drive not zeroed: ' + inp.d);
+  assert(inp.f === 1, 'legit fire flag lost');
+  Net.leave();
+});
+
+check('client: buffered start after leave() cannot drag us into a phantom run', () => {
+  Net.leave();
+  let started = 0;
+  Net.cb.onStart = () => started++;
+  Net.clientJoin('ABCD', 'X', 1);
+  const peer = FakePeer.last;
+  peer.h.open('client-id');
+  const hc = peer.conn;
+  hc.h.open();
+  Net.leave();   // player pressed LEAVE; 'start' was already in the channel buffer
+  hc.h.data({ t: 'start', defs: [{ id: 'host', loadoutIndex: 1 }], mode: 'coop' });
+  hc.h.data({ t: 'lv', level: 1, score: 0, obstacles: [], flags: [] });
+  assert(started === 0, 'post-leave start still reached the game');
+  assert(!Net.state.started, 'started flag flipped after leave');
+  Net.cb.onStart = null;
+});
+
 check('snapshot round-trip: host state survives serialize -> applyLevel/applyState', () => {
   Net.leave();
   const defs = [{ id: 'host', loadoutIndex: 1 }, { id: 'c1', loadoutIndex: 2 }];

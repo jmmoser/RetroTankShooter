@@ -702,7 +702,9 @@ class HUD {
     // mine triangles beside the grenades
     if (p.maxMines) {
       const my = ay - 34 * s;
-      const mx = bx + 78 * s + 6 * 18 * s + 22 * s;
+      // sit past the widest possible nade row — BANDOLIER stacks push
+      // maxNades beyond the 6 the old fixed offset assumed
+      const mx = bx + 78 * s + Math.max(p.maxNades || 0, 6) * 18 * s + 22 * s;
       ctx.font = font(13, true);
       ctx.fillStyle = 'rgba(255,122,176,0.9)';
       ctx.fillText('MINES', mx, my - 2 * s);
