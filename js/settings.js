@@ -129,7 +129,11 @@ const Progress = (() => {
     return d.getUTCFullYear() + '-' + mm + '-' + dd;
   }
   function todayKey() { return dayKey(new Date()); }
-  function yesterdayKey() { return dayKey(new Date(Date.now() - 86400000)); }
+  /* The calendar day before a YYYY-MM-DD key. */
+  function dayBefore(key) {
+    const d = new Date(key + 'T00:00:00Z');
+    return isNaN(d) ? '' : dayKey(new Date(d.getTime() - 86400000));
+  }
 
   function dailyBest() {
     try {
@@ -139,12 +143,17 @@ const Progress = (() => {
     return null;
   }
 
-  /* Returns true if this beat today's previous best. */
-  function recordDaily(score, sector) {
-    const prev = dailyBest();
-    if (prev && prev.score >= score) return false;
+  /* Returns true if this beat that day's previous best. `day` is the arena's
+   * seed date — a run launched at 23:55 UTC and finished at 00:05 played
+   * YESTERDAY'S arena and must not be recorded as (or clobber) today's best. */
+  function recordDaily(score, sector, day) {
+    day = day || todayKey();
+    let raw = null;
+    try { raw = JSON.parse(localStorage.getItem('pa_daily') || 'null'); } catch (e) {}
+    if (raw && raw.date === day && raw.score >= score) return false;
+    if (raw && raw.date > day) return false;   // stale run from a previous day
     try {
-      localStorage.setItem('pa_daily', JSON.stringify({ date: todayKey(), score, sector }));
+      localStorage.setItem('pa_daily', JSON.stringify({ date: day, score, sector }));
     } catch (e) {}
     return true;
   }
@@ -160,15 +169,17 @@ const Progress = (() => {
     return { last: '', streak: 0, best: 0 };
   }
 
-  /* Call when a daily run finishes. Extends yesterday's chain or starts a
-   * fresh one; counting is idempotent within a day. */
-  function recordDailyPlayed() {
+  /* Call when a daily run finishes. `day` is the arena's seed date, so a run
+   * that straddles UTC midnight credits the day it was actually launched.
+   * Extends the previous day's chain or starts a fresh one; idempotent within
+   * a day (ISO keys compare chronologically as strings). */
+  function recordDailyPlayed(day) {
     const s = loadStreak();
-    const today = todayKey();
-    if (s.last === today) return s;
-    s.streak = s.last === yesterdayKey() ? s.streak + 1 : 1;
+    day = day || todayKey();
+    if (s.last >= day) return s;
+    s.streak = s.last === dayBefore(day) ? s.streak + 1 : 1;
     s.best = Math.max(s.best, s.streak);
-    s.last = today;
+    s.last = day;
     try { localStorage.setItem('pa_streak', JSON.stringify(s)); } catch (e) {}
     return s;
   }
@@ -177,7 +188,8 @@ const Progress = (() => {
    * alive today (that tension is the whole point). Dead chains read 0. */
   function dailyStreak() {
     const s = loadStreak();
-    return (s.last === todayKey() || s.last === yesterdayKey()) ? s.streak : 0;
+    const today = todayKey();
+    return (s.last === today || s.last === dayBefore(today)) ? s.streak : 0;
   }
 
   return {

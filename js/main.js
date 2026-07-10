@@ -431,9 +431,11 @@
       html += `<br><span class="gold">ONLY ${highScore - game.score} FROM YOUR RECORD</span>`;
     }
     if (game.dailySeed) {
-      const wasBest = Progress.recordDaily(game.score, game.level);
+      // record under the arena's seed date — a run finishing past UTC
+      // midnight played yesterday's arena, not today's
+      const wasBest = Progress.recordDaily(game.score, game.level, game.dailySeed);
       const best = Progress.dailyBest();
-      const streak = Progress.recordDailyPlayed();
+      const streak = Progress.recordDailyPlayed(game.dailySeed);
       earned = earned || wasBest;
       html += '<br>' + (wasBest
         ? '<span class="gold">&#9733; BEST DAILY RUN TODAY &#9733;</span>'
@@ -627,7 +629,7 @@
   }
 
   function submitJoin() {
-    const code = joinInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const code = joinInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
     if (code.length < 4) { joinError.textContent = 'ENTER A 4-CHARACTER CODE'; return; }
     mobileImmersive();   // last user gesture before the host launches us into play
     joinError.textContent = 'CONNECTING…';
@@ -652,9 +654,12 @@
     else if (e.key === 'Escape') { e.preventDefault(); leaveToTitle(); }
   });
 
-  // Uppercase as you type, strip junk, and connect the moment 4 chars are in.
+  // Uppercase as you type, strip junk (pasted codes often carry spaces or a
+  // trailing newline — the html maxlength is 8 so the junk survives to be
+  // stripped here instead of truncating real characters), clamp to 4 and
+  // connect the moment the code is complete.
   joinInput.addEventListener('input', () => {
-    const v = joinInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const v = joinInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
     if (v !== joinInput.value) joinInput.value = v;
     if (v.length >= 4 && uiMode === 'join') submitJoin();
   });

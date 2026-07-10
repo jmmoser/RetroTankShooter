@@ -226,7 +226,10 @@ const Input = (() => {
     }
     setTouchMode(true);
     if (!touch.enabled) return;                                  // menus: DOM handles it
-    if (e.target && e.target.closest && e.target.closest('.screen')) return;
+    // overlays keep their DOM taps: screens, and the update toast (which can
+    // appear mid-run — swallowing its pointerdown made it untappable exactly
+    // when "tap to restart" matters)
+    if (e.target && e.target.closest && e.target.closest('.screen, .update-toast')) return;
     e.preventDefault();
     const x = e.clientX, y = e.clientY;
 
