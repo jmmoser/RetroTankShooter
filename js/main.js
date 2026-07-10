@@ -26,7 +26,8 @@
   const M = {
     ground: renderer.createMesh(Geometry.ground(ARENA_HALF + 60, 8)),
     grid: renderer.createMesh(Geometry.gridLines(ARENA_HALF, 8), renderer.gl.LINES),
-    wall: renderer.createMesh(Geometry.wallSegment()),
+    // the whole boundary as one static mesh — was ~176 draw calls per frame
+    arenaWall: renderer.createMesh(Geometry.arenaWall(ARENA_HALF)),
     block: renderer.createMesh(Geometry.block([1, 1, 1])),
     pyramid: renderer.createMesh(Geometry.pyramidMesh([1, 1, 1])),
     flag: renderer.createMesh(Geometry.flag()),
@@ -742,7 +743,7 @@
     fillVsStandings(rows, game.winnerId === game.localId);
     showScreen('vsover');
     if (Net.role === 'host') {
-      Net.broadcastState(game);
+      hostFlushState();
       Net.broadcastScreen({ s: 'vswin', winnerId: game.winnerId, standings: rows });
     }
   }
@@ -826,8 +827,15 @@
 
   // Auto-pause a solo run when the tab is hidden — no cheap deaths while
   // you're on another tab, and web-game portals require this behavior.
+  // A co-op host can't pause for everyone, so its sim keeps stepping from a
+  // coarse timer instead (see startHiddenSim).
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden && uiMode === 'playing' && Net.role === 'solo') pauseGame();
+    if (document.hidden) {
+      if (uiMode === 'playing' && Net.role === 'solo') pauseGame();
+      else if (uiMode === 'playing' && Net.role === 'host') startHiddenSim();
+    } else {
+      stopHiddenSim();
+    }
   });
 
   // ---- TECH draft overlay ------------------------------------------------------
@@ -932,14 +940,14 @@
     showClearStats();
     showScreen('clear');
     if (Net.role === 'host') {
-      Net.broadcastState(game);
+      hostFlushState();
       Net.broadcastScreen({ s: 'clear', level: game.level, levelBonus: game.levelBonus, score: game.score, ghost: game.ghostRun ? 1 : 0 });
     }
   }
 
   function doGameOver() {
     if (Net.role === 'host') {
-      Net.broadcastState(game);
+      hostFlushState();
       Net.broadcastScreen({ s: 'over', score: game.score, level: game.level });
     }
     gameOver();
@@ -1062,16 +1070,18 @@
     const shake = game.shake * (Settings.get('shake') / 10);
     const sx = (Math.random() - 0.5) * shake * 0.6;
     const sy = (Math.random() - 0.5) * shake * 0.5;
+    const sz = (Math.random() - 0.5) * shake * 0.6;   // independent of sx, or the
+                                                      // jitter rides the x=z diagonal
     if (chaseCam || !p.alive) {
       const back = 11, up = 5.5;
       cam.x = p.x - fwdX(p.angle) * back + sx;
-      cam.z = p.z - fwdZ(p.angle) * back + sx;
+      cam.z = p.z - fwdZ(p.angle) * back + sz;
       cam.y = up + sy;
       cam.yaw = p.angle;
       cam.pitch = -0.24;
     } else {
       cam.x = p.x + sx;
-      cam.z = p.z + sx;
+      cam.z = p.z + sz;
       cam.y = 2.3 + sy + Math.abs(Math.sin(performance.now() / 240)) * Math.min(1, Math.abs(p.speed) / p.maxSpeed) * 0.1;
       cam.yaw = p.angle;
       cam.pitch = 0;
@@ -1115,9 +1125,10 @@
     if (src.exit) {
       lights.push({ x: src.exit.x, y: 4, z: src.exit.z, radius: 22, r: 0.6, g: 0.8, b: 1.0 });
     }
-    lights.sort((a, c) =>
-      (Math.hypot(a.x - cam.x, a.z - cam.z) / a.radius) -
-      (Math.hypot(c.x - cam.x, c.z - cam.z) / c.radius));
+    // precompute each light's sort key once — the comparator was doing four
+    // Math.hypot calls per comparison
+    for (const l of lights) l.key = Math.hypot(l.x - cam.x, l.z - cam.z) / l.radius;
+    lights.sort((a, c) => a.key - c.key);
     return lights;
   }
 
@@ -1128,12 +1139,16 @@
   // Drawn back-to-front with the depth buffer out of the loop (nodepth): at
   // these distances 16-bit depth can't tell the layers apart and the eclipse
   // z-fights the dome, smearing dark patches across the corona.
+  // scratch matrices reused across draws — draw() uploads the uniform
+  // immediately, so per-frame trs/multiply calls don't need fresh storage
+  const MTX = m4.identity(), MTX2 = m4.identity(), MTX3 = m4.identity();
+
   function drawSky() {
     const t = performance.now() / 1000;
     const n = Math.sin(t * 11.3) * Math.sin(t * 4.7) * Math.sin(t * 1.9);
     const flare = n > 0.9 ? (n - 0.9) * 5 : 0;
     const g = 0.85 + 0.15 * Math.sin(t * 0.43) + flare;
-    const model = m4.translation(cam.x, 0, cam.z);
+    const model = m4.translation(cam.x, 0, cam.z, MTX);
     renderer.draw(M.sky, model, { unlit: true, nofog: true, nodepth: true, tint: [g, g * 0.85, g * 0.85] });
     renderer.draw(M.stars, model, { unlit: true, nofog: true, nodepth: true, points: true });
     const rim = 0.8 + 0.2 * Math.sin(t * 0.9) + flare;
@@ -1143,27 +1158,20 @@
 
   function drawArena(src) {
     drawSky();
-    renderer.draw(M.ground, m4.identity());
-    renderer.draw(M.grid, m4.identity(), { unlit: true });
-
-    const step = 8, lim = ARENA_HALF + 1.5;
-    for (let v = -ARENA_HALF; v <= ARENA_HALF; v += step) {
-      renderer.draw(M.wall, m4.trs(v, 0, -lim, 0, step, 1, 3));
-      renderer.draw(M.wall, m4.trs(v, 0, lim, 0, step, 1, 3));
-      renderer.draw(M.wall, m4.trs(-lim, 0, v, 0, 3, 1, step));
-      renderer.draw(M.wall, m4.trs(lim, 0, v, 0, 3, 1, step));
-    }
+    renderer.draw(M.ground);
+    renderer.draw(M.grid, null, { unlit: true });
+    renderer.draw(M.arenaWall);
 
     for (const o of src.obstacles) {
       if (o.dead) continue;   // crushed under the WARLORD
       const mesh = o.type === 'pyramid' ? M.pyramid : M.block;
-      renderer.draw(mesh, m4.trs(o.x, 0, o.z, 0, o.w, o.h, o.d), { tint: o.color });
+      renderer.draw(mesh, m4.trs(o.x, 0, o.z, 0, o.w, o.h, o.d, MTX), { tint: o.color });
     }
 
     const zt = performance.now() / 1000;
     for (const f of src.flags) {
       if (f.taken) continue;
-      renderer.draw(M.flag, m4.trs(f.x, 0, f.z, f.spin, 1, 1, 1));
+      renderer.draw(M.flag, m4.trs(f.x, 0, f.z, f.spin, 1, 1, 1, MTX));
       // uplink zone: boundary ring on the ground, plus a growing progress
       // ring while the capture is being held — amber pulse when contested
       const cap = f.cap || 0;
@@ -1172,10 +1180,10 @@
       const bc = hot
         ? [1.0 * pulse, 0.75 * pulse, 0.2 * pulse]
         : [0.2 * pulse, 0.9 * pulse, 0.45 * pulse];
-      renderer.draw(M.ring, m4.trs(f.x, 0.35, f.z, 0, CAP_RADIUS, 1, CAP_RADIUS),
+      renderer.draw(M.ring, m4.trs(f.x, 0.35, f.z, 0, CAP_RADIUS, 1, CAP_RADIUS, MTX),
         { tint: bc, unlit: true, additive: true });
       if (cap > 0.02) {
-        renderer.draw(M.ring, m4.trs(f.x, 0.6, f.z, 0, CAP_RADIUS * cap, 1, CAP_RADIUS * cap),
+        renderer.draw(M.ring, m4.trs(f.x, 0.6, f.z, 0, CAP_RADIUS * cap, 1, CAP_RADIUS * cap, MTX),
           { tint: [0.3, 1.0, 0.55], unlit: true, additive: true });
       }
     }
@@ -1187,7 +1195,7 @@
       const tint = d.type === 'coolant'
         ? [0.95 * pulse, 0.8 * pulse, 0.2 * pulse]
         : [0.25 * pulse, 1.0 * pulse, 0.55 * pulse];
-      renderer.draw(M.depot, m4.trs(d.x, 0, d.z, 0, 1, 1, 1), { tint, unlit: true });
+      renderer.draw(M.depot, m4.trs(d.x, 0, d.z, 0, 1, 1, 1, MTX), { tint, unlit: true });
     }
   }
 
@@ -1203,7 +1211,7 @@
       const pulse = 0.55 + 0.45 * Math.sin(now / 180);
       for (const f of game.flags) {
         if (f.taken) continue;
-        renderer.draw(M.beacon, m4.trs(f.x, 0, f.z, 0, 1, 1, 1),
+        renderer.draw(M.beacon, m4.trs(f.x, 0, f.z, 0, 1, 1, 1, MTX),
           { tint: [0.25 * pulse, 1.0 * pulse, 0.5 * pulse], unlit: true, nofog: true, additive: true });
       }
     }
@@ -1213,13 +1221,13 @@
     if (game.exit) {
       const ex = game.exit;
       const pulse = 0.6 + 0.4 * Math.sin(now / 160);
-      renderer.draw(M.beacon, m4.trs(ex.x, 0, ex.z, 0, 1.5, 1.3, 1.5),
+      renderer.draw(M.beacon, m4.trs(ex.x, 0, ex.z, 0, 1.5, 1.3, 1.5, MTX),
         { tint: [0.85 * pulse, 0.95 * pulse, 1.05 * pulse], unlit: true, nofog: true, additive: true });
-      renderer.draw(M.ring, m4.trs(ex.x, 0.4, ex.z, 0, EXIT_RADIUS, 1, EXIT_RADIUS),
+      renderer.draw(M.ring, m4.trs(ex.x, 0.4, ex.z, 0, EXIT_RADIUS, 1, EXIT_RADIUS, MTX),
         { tint: [0.55 * pulse, 0.85 * pulse, 1.0 * pulse], unlit: true, additive: true });
       // a ring collapsing into the gate reads as "come here" from any distance
       const k = 1 - ((now / 1100) % 1);
-      renderer.draw(M.ring, m4.trs(ex.x, 0.9, ex.z, 0, EXIT_RADIUS * (0.3 + k * 2.2), 1, EXIT_RADIUS * (0.3 + k * 2.2)),
+      renderer.draw(M.ring, m4.trs(ex.x, 0.9, ex.z, 0, EXIT_RADIUS * (0.3 + k * 2.2), 1, EXIT_RADIUS * (0.3 + k * 2.2), MTX),
         { tint: [0.3 * pulse * k, 0.5 * pulse * k, 0.6 * pulse * k], unlit: true, additive: true });
     }
 
@@ -1235,19 +1243,19 @@
         const f = 0.75 + 0.65 * Math.sin(now / 45);
         bodyTint = [1 + f, 0.7 + f * 0.3, 0.7 + f * 0.3];
       }
-      renderer.draw(M.bossBody, m4.trs(b.x, 0, b.z, b.angle, 1, 1, 1), { tint: bodyTint });
+      renderer.draw(M.bossBody, m4.trs(b.x, 0, b.z, b.angle, 1, 1, 1, MTX), { tint: bodyTint });
       for (const tu of b.turrets) {
         if (tu.hp <= 0) continue;
         const [wx, wz] = bossTurretWorld(b, tu);
-        renderer.draw(M.bossTurret, m4.trs(wx, BOSS_TURRET_Y, wz, tu.aim, 1, 1, 1), { tint: bodyTint });
+        renderer.draw(M.bossTurret, m4.trs(wx, BOSS_TURRET_Y, wz, tu.aim, 1, 1, 1, MTX), { tint: bodyTint });
       }
       const ct = now / 1000;
       const coreTint = b.vulnerable
         ? [1.2 + 0.8 * Math.sin(ct * 9), 0.3, 0.55]                       // exposed: hot strobe
         : [0.22 + 0.08 * Math.sin(ct * 2), 0.45, 0.9 + 0.1 * Math.sin(ct * 2)]; // shielded: cold pulse
-      renderer.draw(M.bossCore, m4.trs(b.x, 5.0, b.z, ct * 1.5, 1, 1, 1), { tint: coreTint, unlit: true });
+      renderer.draw(M.bossCore, m4.trs(b.x, 5.0, b.z, ct * 1.5, 1, 1, 1, MTX), { tint: coreTint, unlit: true });
       // additive energy halo wrapped around the core
-      renderer.draw(M.bossCore, m4.trs(b.x, 5.0, b.z, -ct * 0.9, 1.45, 1.45, 1.45),
+      renderer.draw(M.bossCore, m4.trs(b.x, 5.0, b.z, -ct * 0.9, 1.45, 1.45, 1.45, MTX),
         { tint: [coreTint[0] * 0.30, coreTint[1] * 0.30, coreTint[2] * 0.30], unlit: true, additive: true });
     }
 
@@ -1257,9 +1265,9 @@
       const ours = r.from === 'player';
       const c1 = ours ? [0.3 * fade + 0.15, 1.0 * fade, 0.8 * fade] : [1 * fade + 0.3, 0.55 * fade, 0.2 * fade];
       const c2 = ours ? [0.2 * fade, 0.8 * fade, 0.65 * fade] : [0.8 * fade, 0.4 * fade, 0.15 * fade];
-      renderer.draw(M.ring, m4.trs(r.x, 0.5, r.z, 0, r.r, 1, r.r),
+      renderer.draw(M.ring, m4.trs(r.x, 0.5, r.z, 0, r.r, 1, r.r, MTX),
         { tint: c1, unlit: true, additive: true });
-      renderer.draw(M.ring, m4.trs(r.x, 1.6, r.z, 0, r.r * 0.985, 1, r.r * 0.985),
+      renderer.draw(M.ring, m4.trs(r.x, 1.6, r.z, 0, r.r * 0.985, 1, r.r * 0.985, MTX),
         { tint: c2, unlit: true, additive: true });
     }
     for (const e of game.enemies) {
@@ -1280,7 +1288,7 @@
       }
       const sc = (e.elite ? 1.18 : 1) *
         (e.type === 'rusher' ? 0.82 : e.type === 'shellback' ? 1.22 : 1);
-      renderer.draw(tankMeshFor(e.type), m4.trs(e.x, 0, e.z, e.angle, sc, sc, sc), { tint });
+      renderer.draw(tankMeshFor(e.type), m4.trs(e.x, 0, e.z, e.angle, sc, sc, sc, MTX), { tint });
       // awareness telltale on the ground: amber = investigating, strobing
       // red = it knows — readable at a glance across the whole arena
       const aware = e.alerted ? 2 : ((e.sense || 0) >= 0.4 ? 1 : 0);
@@ -1289,15 +1297,15 @@
         const at = aware === 2
           ? [1.0 * ap, 0.22 * ap, 0.16 * ap]
           : [1.0 * ap, 0.78 * ap, 0.2 * ap];
-        renderer.draw(M.ring, m4.trs(e.x, 0.3, e.z, 0, 4.4, 1, 4.4),
+        renderer.draw(M.ring, m4.trs(e.x, 0.3, e.z, 0, 4.4, 1, 4.4, MTX),
           { tint: at, unlit: true, additive: true });
       }
       // warden: the cannon-proof umbrella reads as a slow golden ring
       if (e.type === 'warden') {
         const wp = 0.45 + 0.2 * Math.sin(now / 260);
-        renderer.draw(M.ring, m4.trs(e.x, 0.8, e.z, 0, 16, 1, 16),
+        renderer.draw(M.ring, m4.trs(e.x, 0.8, e.z, 0, 16, 1, 16, MTX),
           { tint: [1.0 * wp, 0.8 * wp, 0.25 * wp], unlit: true, additive: true });
-        renderer.draw(M.ring, m4.trs(e.x, 2.2, e.z, 0, 15.6, 1, 15.6),
+        renderer.draw(M.ring, m4.trs(e.x, 2.2, e.z, 0, 15.6, 1, 15.6, MTX),
           { tint: [0.8 * wp, 0.6 * wp, 0.18 * wp], unlit: true, additive: true });
       }
     }
@@ -1309,7 +1317,7 @@
       const tint = armed
         ? (blink ? [1.7, 0.55, 0.85] : [0.85, 0.28, 0.45])
         : [0.5, 0.55, 0.6];
-      renderer.draw(M.mine, m4.trs(m.x, 0, m.z, 0, 1, 1, 1), { tint, unlit: armed });
+      renderer.draw(M.mine, m4.trs(m.x, 0, m.z, 0, 1, 1, 1, MTX), { tint, unlit: armed });
     }
 
     // all co-op tanks; own tank only shown in chase cam (it's the camera in 1st person)
@@ -1318,20 +1326,20 @@
       const isLocal = pl.id === game.localId;
       if (isLocal && !chaseCam) continue;
       const tint = PLAYER_TINTS[pl.colorIdx] || PLAYER_TINTS[0];
-      renderer.draw(M.tankPlayer, m4.trs(pl.x, 0, pl.z, pl.angle, 1, 1, 1), { tint });
+      renderer.draw(M.tankPlayer, m4.trs(pl.x, 0, pl.z, pl.angle, 1, 1, 1, MTX), { tint });
     }
 
     for (const pr of game.projectiles) {
       const mesh = pr.kind === 'nade' ? M.shotNade : (pr.from === 'player' ? M.shotPlayer : M.shotEnemy);
-      renderer.draw(mesh, m4.trs(pr.x, pr.y, pr.z, pr.angle, 1, 1, 1), { unlit: true });
+      renderer.draw(mesh, m4.trs(pr.x, pr.y, pr.z, pr.angle, 1, 1, 1, MTX), { unlit: true });
       // additive halo + a fading tracer tail strung out behind the shot
-      renderer.draw(mesh, m4.trs(pr.x, pr.y, pr.z, pr.angle, 1.8, 1.8, 1.8),
+      renderer.draw(mesh, m4.trs(pr.x, pr.y, pr.z, pr.angle, 1.8, 1.8, 1.8, MTX),
         { unlit: true, additive: true, tint: [0.30, 0.30, 0.30] });
       const bx = fwdX(pr.angle), bz = fwdZ(pr.angle);
       for (let k = 1; k <= 3; k++) {
         const g = 0.42 / k, s = 1 - k * 0.2;
         renderer.draw(mesh,
-          m4.trs(pr.x - bx * k * 1.1, pr.y, pr.z - bz * k * 1.1, pr.angle, s, s, s),
+          m4.trs(pr.x - bx * k * 1.1, pr.y, pr.z - bz * k * 1.1, pr.angle, s, s, s, MTX),
           { unlit: true, additive: true, tint: [g, g, g] });
       }
     }
@@ -1339,16 +1347,16 @@
     // tumbling polygon shards from destroyed tanks
     for (const d of game.debris) {
       const model = m4.multiply(
-        m4.trs(d.x, d.y, d.z, d.yaw, d.scale, d.scale, d.scale),
-        m4.rotationX(d.tumble));
+        m4.trs(d.x, d.y, d.z, d.yaw, d.scale, d.scale, d.scale, MTX2),
+        m4.rotationX(d.tumble, MTX3), MTX);
       renderer.draw(M.shard, model, { tint: d.c });
     }
 
     for (const u of game.powerups) {
       const spec = POWERUP_TYPES[u.type];
       const y = 1.6 + Math.sin(u.bob) * 0.35;
-      renderer.draw(M.powerup, m4.trs(u.x, y, u.z, u.spin, 1, 1, 1), { tint: spec.tint, unlit: true });
-      renderer.draw(M.powerup, m4.trs(u.x, y, u.z, -u.spin * 0.7, 1.35, 1.35, 1.35),
+      renderer.draw(M.powerup, m4.trs(u.x, y, u.z, u.spin, 1, 1, 1, MTX), { tint: spec.tint, unlit: true });
+      renderer.draw(M.powerup, m4.trs(u.x, y, u.z, -u.spin * 0.7, 1.35, 1.35, 1.35, MTX),
         { tint: [spec.tint[0] * 0.25, spec.tint[1] * 0.25, spec.tint[2] * 0.25], unlit: true, additive: true });
     }
 
@@ -1637,6 +1645,65 @@
     }
   }
 
+  /* Host: immediate snapshot at a mode transition, carrying whatever
+   * sounds/bursts were buffered since the last 30 Hz tick (broadcasting the
+   * bare game here used to silently drop them). */
+  function hostFlushState() {
+    if (game.frameSounds.length) for (const s of game.frameSounds) netState.snd.push(s);
+    if (game.frameBursts.length) for (const b of game.frameBursts) netState.bu.push(b);
+    if (game.frameDebris.length) for (const d of game.frameDebris) netState.de.push(d);
+    Net.broadcastState(game, netState.snd, netState.bu, netState.de);
+    netState.timer = 0;
+    netState.snd = []; netState.bu = []; netState.de = [];
+  }
+
+  /* One authoritative sim step (solo & host): input, update, net tick and
+   * mode transitions. Factored out so the hidden-tab fallback below can keep
+   * a co-op host's world running while requestAnimationFrame is stopped. */
+  function stepSim(dt) {
+    feedLocalInput();
+    if (Net.role === 'host') Net.applyInputs(game);
+    if (game.mode === 'playing') {
+      game.update(dt);
+      if (Net.role === 'host') hostNetTick(dt);
+      if (game.mode === 'levelclear') enterLevelClear();
+      else if (game.mode === 'versusover') doVersusOver();
+      else checkDrafts();
+    } else if (game.mode === 'dying') {
+      game.updateDying(dt);
+      // ride the same 30 Hz tick — this used to broadcast a full snapshot
+      // every render frame during the death sequence
+      if (Net.role === 'host') hostNetTick(dt);
+      if (game.mode === 'gameover') doGameOver();
+    }
+  }
+
+  // A hidden tab stops requestAnimationFrame, which used to hard-freeze every
+  // client whenever the co-op HOST tabbed away. Step the authoritative sim
+  // from a coarse interval instead (hidden-tab timers are clamped to ~1 Hz,
+  // so each tick replays the elapsed time in normal-sized substeps).
+  let hiddenSimTimer = null, hiddenSimLast = 0;
+  function startHiddenSim() {
+    if (hiddenSimTimer) return;
+    hiddenSimLast = performance.now();
+    hiddenSimTimer = setInterval(() => {
+      const now = performance.now();
+      let elapsed = Math.min((now - hiddenSimLast) / 1000, 2);
+      hiddenSimLast = now;
+      if (uiMode !== 'playing' || Net.role !== 'host') return;
+      while (elapsed > 0) {
+        const dt = Math.min(elapsed, 0.05);
+        elapsed -= dt;
+        stepSim(dt);
+      }
+    }, 250);
+  }
+  function stopHiddenSim() {
+    if (!hiddenSimTimer) return;
+    clearInterval(hiddenSimTimer);
+    hiddenSimTimer = null;
+  }
+
   // ---- main loop -------------------------------------------------------------------
   let lastT = performance.now();
 
@@ -1676,19 +1743,7 @@
         // smooth remote motion between the host's 30 Hz snapshots
         if (game.mode === 'playing' || game.mode === 'dying') Net.clientInterpolate(game);
       } else {
-        feedLocalInput();
-        if (Net.role === 'host') Net.applyInputs(game);
-        if (game.mode === 'playing') {
-          game.update(dt);
-          if (Net.role === 'host') hostNetTick(dt);
-          if (game.mode === 'levelclear') enterLevelClear();
-          else if (game.mode === 'versusover') doVersusOver();
-          else checkDrafts();
-        } else if (game.mode === 'dying') {
-          game.updateDying(dt);
-          if (Net.role === 'host') Net.broadcastState(game);
-          if (game.mode === 'gameover') doGameOver();
-        }
+        stepSim(dt);
       }
     }
 

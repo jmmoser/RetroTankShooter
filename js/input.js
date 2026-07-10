@@ -59,9 +59,13 @@ const Input = (() => {
   });
 
   window.addEventListener('keyup', (e) => {
-    if (typingInField(e)) return;
+    // always clear held state — swallowing keyup while a text field had focus
+    // (e.g. releasing W inside the join-code input) left the key stuck held
     const action = KEYMAP[e.code];
-    if (action) { keys[action] = false; e.preventDefault(); }
+    if (action) {
+      keys[action] = false;
+      if (!typingInField(e)) e.preventDefault();
+    }
   });
 
   // Mouse buttons ride the Pointer Events stream (pointerType 'mouse'), so

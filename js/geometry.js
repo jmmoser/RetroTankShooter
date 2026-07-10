@@ -57,15 +57,16 @@ const Geometry = (() => {
       return this;
     }
 
-    /* Octahedron centered at (cx,cy,cz), radius r. */
+    /* Octahedron centered at (cx,cy,cz), radius r. Wound CCW-outward like
+     * every other builder here, so back-face culling keeps the near faces. */
     octahedron(cx, cy, cz, r, color) {
       const top = [cx, cy + r, cz], bot = [cx, cy - r, cz];
       const px = [cx + r, cy, cz], nx = [cx - r, cy, cz];
       const pz = [cx, cy, cz + r], nz = [cx, cy, cz - r];
-      this.tri(px, pz, top, color).tri(pz, nx, top, color)
-          .tri(nx, nz, top, color).tri(nz, px, top, color)
-          .tri(pz, px, bot, color).tri(nx, pz, bot, color)
-          .tri(nz, nx, bot, color).tri(px, nz, bot, color);
+      this.tri(pz, px, top, color).tri(nx, pz, top, color)
+          .tri(nz, nx, top, color).tri(px, nz, top, color)
+          .tri(px, pz, bot, color).tri(pz, nx, bot, color)
+          .tri(nx, nz, bot, color).tri(nz, px, bot, color);
       return this;
     }
 
@@ -199,10 +200,9 @@ const Geometry = (() => {
     b.boxEdges( 1.35, 0.45, 0, 0.85, 0.9, 4.4, hullColor); // right tread
     b.boxEdges(0, 0.85, 0, 2.0, 0.9, 4.2, hullColor);      // hull
     b.boxEdges(0, 1.6, 0.3, 1.5, 0.7, 1.9, hullColor);     // turret
-    // sloped nose (triangle + lines back to the hull's leading edge)
+    // sloped nose triangle
     const nl = [-1.0, 1.3, -2.1], nr = [1.0, 1.3, -2.1], na = [0, 0.6, -2.9];
     b.edge(nl, nr, hullColor).edge(nr, na, hullColor).edge(na, nl, hullColor);
-    b.edge(nl, [-1.0, 1.3, -2.1], hullColor);
     // gun barrel as a single bright vector line out the front of the turret
     b.edge([0, 1.62, -0.6], [0, 1.62, -3.0], C.barrel);
     return b.build();
@@ -456,8 +456,10 @@ const Geometry = (() => {
     const verts = [];
     const c = [0.09, 0.36, 0.31];
     const cMajor = [0.18, 0.66, 0.55];
-    let i = 0;
-    for (let v = -half; v <= half; v += step, i++) {
+    // count-based so both edges get a line even when step doesn't divide 2*half
+    const n = Math.max(1, Math.round((half * 2) / step));
+    for (let i = 0; i <= n; i++) {
+      const v = -half + (i * half * 2) / n;
       const col = (i % 4 === 0) ? cMajor : c;
       verts.push(v, 0.03, -half, 0, 1, 0, col[0], col[1], col[2]);
       verts.push(v, 0.03,  half, 0, 1, 0, col[0], col[1], col[2]);
@@ -467,5 +469,23 @@ const Geometry = (() => {
     return new Float32Array(verts);
   }
 
-  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring };
+  /* The whole arena boundary baked as one static mesh (same profile as
+   * wallSegment): X walls run corner to corner, Z walls fit exactly between
+   * them — no overlap, no corner gap, one draw call instead of ~176. */
+  function arenaWall(half) {
+    const b = new MeshBuilder();
+    const lim = half + 1.5;   // wall centerline just outside the play boundary
+    const th = 3, hi = 2.0;
+    const span = (lim + th / 2) * 2;
+    const inner = (lim - th / 2) * 2;
+    for (const s of [-1, 1]) {
+      b.box(0, hi / 2, s * lim, span, hi, th, C.wall);
+      b.box(0, hi + 0.1, s * lim, span, 0.2, th, C.wallTop);
+      b.box(s * lim, hi / 2, 0, th, hi, inner, C.wall);
+      b.box(s * lim, hi + 0.1, 0, th, 0.2, inner, C.wallTop);
+    }
+    return b.build();
+  }
+
+  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, arenaWall, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring };
 })();

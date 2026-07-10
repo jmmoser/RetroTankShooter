@@ -35,8 +35,12 @@ const m4 = {
     out[14] = 2 * far * near * nf;
     return out;
   },
-  multiply(a, b) {
-    const out = new Float32Array(16);
+  /* All builders below take an optional `out` matrix so per-frame callers can
+   * reuse scratch storage instead of allocating hundreds of Float32Arrays a
+   * frame (uniformMatrix4fv copies immediately, so reuse across draws is safe).
+   * `out` must not alias an input of multiply(). */
+  multiply(a, b, out) {
+    out = out || new Float32Array(16);
     for (let c = 0; c < 4; c++) {
       for (let r = 0; r < 4; r++) {
         out[c * 4 + r] =
@@ -46,8 +50,9 @@ const m4 = {
     }
     return out;
   },
-  translation(x, y, z) {
-    const m = m4.identity();
+  translation(x, y, z, out) {
+    const m = out || new Float32Array(16);
+    m.set(m4._I);
     m[12] = x; m[13] = y; m[14] = z;
     return m;
   },
@@ -55,9 +60,12 @@ const m4 = {
     const c = Math.cos(a), s = Math.sin(a);
     return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]);
   },
-  rotationX(a) {
+  rotationX(a, out) {
     const c = Math.cos(a), s = Math.sin(a);
-    return new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]);
+    const m = out || new Float32Array(16);
+    m.set(m4._I);
+    m[5] = c; m[6] = s; m[9] = -s; m[10] = c;
+    return m;
   },
   rotationZ(a) {
     const c = Math.cos(a), s = Math.sin(a);
@@ -67,16 +75,17 @@ const m4 = {
     return new Float32Array([x,0,0,0, 0,y,0,0, 0,0,z,0, 0,0,0,1]);
   },
   /* translate * rotY * scale — the common entity transform */
-  trs(x, y, z, ry, sx, sy, sz) {
+  trs(x, y, z, ry, sx, sy, sz, out) {
     const c = Math.cos(ry), s = Math.sin(ry);
-    return new Float32Array([
-      c * sx, 0, -s * sx, 0,
-      0, sy, 0, 0,
-      s * sz, 0, c * sz, 0,
-      x, y, z, 1,
-    ]);
+    const m = out || new Float32Array(16);
+    m[0] = c * sx;  m[1] = 0;  m[2] = -s * sx; m[3] = 0;
+    m[4] = 0;       m[5] = sy; m[6] = 0;       m[7] = 0;
+    m[8] = s * sz;  m[9] = 0;  m[10] = c * sz; m[11] = 0;
+    m[12] = x;      m[13] = y; m[14] = z;      m[15] = 1;
+    return m;
   },
 };
+m4._I = m4.identity();
 
 const MAX_LIGHTS = 12;
 
@@ -98,7 +107,14 @@ void main() {
   vec4 viewPos = uView * world;
   gl_Position = uProj * viewPos;
   vColor = aColor;
-  vNormal = normalize(mat3(uModel) * aNormal);
+  // proper normal transform under non-uniform scale: for M = R*S the normal
+  // matrix is R*S^-1 = mat3(M)*S^-2, and the squared per-axis scales are the
+  // squared lengths of mat3(M)'s columns
+  vec3 s2 = vec3(
+    dot(uModel[0].xyz, uModel[0].xyz),
+    dot(uModel[1].xyz, uModel[1].xyz),
+    dot(uModel[2].xyz, uModel[2].xyz));
+  vNormal = normalize(mat3(uModel) * (aNormal / max(s2, vec3(1e-8))));
   vWorld = world.xyz;
   vFogDepth = -viewPos.z;
   if (uPointMode > 0.5) {
@@ -470,6 +486,7 @@ class Renderer {
     const vbo = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
     gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    this._boundVbo = null;   // ARRAY_BUFFER binding changed under the cache
     return { vbo, count: data.length / 9, mode: mode !== undefined ? mode : gl.TRIANGLES };
   }
 
@@ -539,6 +556,8 @@ class Renderer {
   }
 
   _bindVertexFormat(vbo) {
+    if (this._boundVbo === vbo) return;   // same mesh drawn back-to-back
+    this._boundVbo = vbo;
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
     const stride = 9 * 4;
@@ -619,15 +638,8 @@ class Renderer {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE);
     gl.depthMask(false);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.particleVbo);
+    this._bindVertexFormat(this.particleVbo);   // same 9-float layout as meshes
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.subarray(0, n * 9));
-    const stride = 9 * 4;
-    gl.enableVertexAttribArray(this.attribs.pos);
-    gl.vertexAttribPointer(this.attribs.pos, 3, gl.FLOAT, false, stride, 0);
-    gl.enableVertexAttribArray(this.attribs.normal);
-    gl.vertexAttribPointer(this.attribs.normal, 3, gl.FLOAT, false, stride, 12);
-    gl.enableVertexAttribArray(this.attribs.color);
-    gl.vertexAttribPointer(this.attribs.color, 3, gl.FLOAT, false, stride, 24);
     gl.drawArrays(gl.POINTS, 0, n);
     gl.disable(gl.BLEND);
     gl.depthMask(true);
@@ -658,6 +670,7 @@ class Renderer {
     gl.disableVertexAttribArray(this.attribs.normal);
     gl.disableVertexAttribArray(this.attribs.color);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quadVbo);
+    this._boundVbo = null;   // buffer + attrib pointers no longer match the cache
 
     const fullscreen = (p) => {
       gl.enableVertexAttribArray(p.aPos);

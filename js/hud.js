@@ -5,6 +5,10 @@ const PLAYER_HEX = ['#4fd6bb', '#b07bd6', '#e8c75a', '#6fc7e8'];
 
 /* Radar blip color per enemy type. Everyone gets distinct SHAPES; the
  * colorblind setting additionally splits the hues (deuteranopia-safe). */
+const CB_BLIP_COLORS = {
+  drone: '#ff8c1a', hunter: '#ffe84a', sniper: '#4a90ff', phantom: '#e8f4ff',
+  rusher: '#ff5ac8', shellback: '#c9d4e0', warden: '#ffd24a',
+};
 function enemyBlipColor(type) {
   const cb = typeof Settings !== 'undefined' && Settings.get('colorblind');
   if (!cb) {
@@ -12,10 +16,7 @@ function enemyBlipColor(type) {
     if (type === 'warden') return '#ffd24a';
     return '#ff4a3c';
   }
-  return {
-    drone: '#ff8c1a', hunter: '#ffe84a', sniper: '#4a90ff', phantom: '#e8f4ff',
-    rusher: '#ff5ac8', shellback: '#c9d4e0', warden: '#ffd24a',
-  }[type] || '#ff8c1a';
+  return CB_BLIP_COLORS[type] || '#ff8c1a';
 }
 
 class HUD {
@@ -78,11 +79,19 @@ class HUD {
     this.pickupFlash = Math.max(0, this.pickupFlash - dt * 1.5);
 
     if (this.flash > 0) {
-      const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.75);
-      g.addColorStop(0, 'rgba(255,40,30,0)');
-      g.addColorStop(1, `rgba(255,40,30,${0.45 * this.flash})`);
-      ctx.fillStyle = g;
+      // the gradient shape only depends on the canvas size — rebuild on
+      // resize, fade via globalAlpha instead of re-baking per frame
+      if (!this._flashGrad || this._flashW !== W || this._flashH !== H) {
+        const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.75);
+        g.addColorStop(0, 'rgba(255,40,30,0)');
+        g.addColorStop(1, 'rgba(255,40,30,0.45)');
+        this._flashGrad = g;
+        this._flashW = W; this._flashH = H;
+      }
+      ctx.globalAlpha = this.flash;
+      ctx.fillStyle = this._flashGrad;
       ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
     }
     if (this.pickupFlash > 0) {
       ctx.fillStyle = `rgba(79,214,187,${0.12 * this.pickupFlash})`;
@@ -363,20 +372,30 @@ class HUD {
     ctx.strokeStyle = 'rgba(79,214,187,0.25)';
     ctx.stroke();
 
-    // sweep
-    const sweepA = (performance.now() / 1000 * 1.6) % (Math.PI * 2);
-    const grad = ctx.createConicGradient
-      ? ctx.createConicGradient(sweepA, cx, cy)
-      : null;
-    if (grad) {
-      grad.addColorStop(0, 'rgba(79,214,187,0.30)');
-      grad.addColorStop(0.12, 'rgba(79,214,187,0)');
-      grad.addColorStop(1, 'rgba(79,214,187,0)');
+    // sweep — one cached angle-0 gradient at the origin, rotated into place
+    // (conic gradients are radius-independent, so it survives resizes too)
+    if (this._sweepGrad === undefined) {
+      if (ctx.createConicGradient) {
+        const grad = ctx.createConicGradient(0, 0, 0);
+        grad.addColorStop(0, 'rgba(79,214,187,0.30)');
+        grad.addColorStop(0.12, 'rgba(79,214,187,0)');
+        grad.addColorStop(1, 'rgba(79,214,187,0)');
+        this._sweepGrad = grad;
+      } else {
+        this._sweepGrad = null;
+      }
+    }
+    if (this._sweepGrad) {
+      const sweepA = (performance.now() / 1000 * 1.6) % (Math.PI * 2);
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(sweepA);
       ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, R, 0, Math.PI * 2);
-      ctx.fillStyle = grad;
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, R, 0, Math.PI * 2);
+      ctx.fillStyle = this._sweepGrad;
       ctx.fill();
+      ctx.restore();
     }
 
     // clip blips to the dish

@@ -36,7 +36,9 @@ self.addEventListener('fetch', (e) => {
       fetch(e.request).then((res) => {
         if (res.ok) {
           const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy));
+          // tie the cache write to the event's lifetime so the worker isn't
+          // terminated before the put completes
+          e.waitUntil(caches.open(CACHE).then((c) => c.put(e.request, copy)));
         }
         return res;
       })
