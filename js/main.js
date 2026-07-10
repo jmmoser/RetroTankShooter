@@ -744,7 +744,9 @@
       `<div class="roster-row"><span class="roster-dot c${r.ci}"></span>` +
       `${r.name}<span class="roster-lo">${r.kills} KILLS</span></div>`).join('');
     document.getElementById('bt-vs-again').classList.toggle('hidden', Net.role !== 'host');
-    document.getElementById('vs-wait').classList.toggle('hidden', Net.role !== 'client');
+    const wait = document.getElementById('vs-wait');
+    wait.textContent = 'WAITING FOR HOST…';   // startHostRun may have replaced it
+    wait.classList.toggle('hidden', Net.role !== 'client');
   }
 
   function doVersusOver() {
@@ -887,6 +889,7 @@
   }
 
   function buildDraft(offers) {
+    draftOpenedAt = performance.now();   // banked follow-up drafts re-arm the settle gate too
     draftChoicesEl.innerHTML = '';
     offers.forEach((o, i) => {
       const def = UPGRADES.find((u) => u.id === o.id);
@@ -904,7 +907,6 @@
 
   function openDraft(offers) {
     draftOpen = true;
-    draftOpenedAt = performance.now();
     buildDraft(normalizeOffers(offers));
     if (Net.role === 'solo') {
       uiMode = 'draft';               // the war waits while you fit the new part
