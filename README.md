@@ -18,10 +18,11 @@ into tumbling polygon shards.
 
 Built with **plain WebGL, Canvas 2D and Web Audio** — no build step, no
 assets, no CDNs. Even the **march-anthem soundtrack is synthesized live** by
-a tiny sequencer: a solemn bugle hymn under the menus, a full-tilt military
-march with a brass fanfare hook in combat — snare rolls, tremolo strings and
-risers creeping in as the sector alert and your combo climb — and a pounding
-war-drum mix that turns the anthem sour while a WARLORD is on the field.
+a tiny sequencer: a solemn bugle hymn under the menus, a driving military
+march with a brass fanfare hook in combat — only the lightest kick-and-snare
+pulse under it, with tremolo strings creeping in as the sector alert and
+your combo climb — and a phrygian mix that turns the anthem sour while a
+WARLORD is on the field.
 Single-player makes no network requests at all. Optional
 **online co-op** uses one small bundled library (PeerJS, in `js/vendor/`)
 for peer-to-peer connections; nothing else needs to be hosted.
@@ -78,9 +79,9 @@ the sector pays a **GHOST EXTRACTION** bonus. Your hull is gone when
 shields hit zero.
 
 Getting overwhelmed? **SETTINGS → DIFFICULTY** has three campaign presets:
-**RECRUIT** slows enemy sensors, shortens the alarm and softens incoming
-fire while you learn the systems, **STANDARD** is the game as designed,
-and **VETERAN** sharpens the sensors and stretches the hunt. Stay unhit
+**RECRUIT** (the default) slows enemy sensors, shortens the alarm and
+softens incoming fire while you learn the systems, **STANDARD** is the game
+as designed, and **VETERAN** sharpens the sensors and stretches the hunt. Stay unhit
 for a few seconds and your hull **self-repairs** — fully on RECRUIT, to
 about two-thirds on STANDARD, never on VETERAN, where a depot is the only
 way back. Daily Ops always runs STANDARD so the shared leaderboard seed

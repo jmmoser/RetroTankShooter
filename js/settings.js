@@ -13,9 +13,9 @@
 
 const Settings = (() => {
   // quality: 0 = LOW (no MSAA on the glow scene pass), 1 = HIGH
-  // difficulty: 0 = RECRUIT, 1 = STANDARD, 2 = VETERAN (campaign pacing;
-  // Daily Ops and versus always run STANDARD)
-  const DEFAULTS = { volume: 7, music: 6, shake: 10, glow: true, quality: 1, crt: true, aimAssist: true, colorblind: false, fps: false, difficulty: 1 };
+  // difficulty: 0 = RECRUIT (default), 1 = STANDARD, 2 = VETERAN (campaign
+  // pacing; Daily Ops and versus always run STANDARD)
+  const DEFAULTS = { volume: 7, music: 6, shake: 10, glow: true, quality: 1, crt: true, aimAssist: true, colorblind: false, fps: false, difficulty: 0 };
   const s = Object.assign({}, DEFAULTS);
   try {
     const raw = JSON.parse(localStorage.getItem('pa_settings') || '{}');

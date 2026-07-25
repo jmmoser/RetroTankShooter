@@ -198,10 +198,9 @@ const AudioSys = (() => {
   // JS interval walks 16th-note steps a beat ahead of the AudioContext clock
   // and schedules short-lived oscillators per voice. Three moods share the
   // engine — a solemn anthem under the menus, a full-tilt march in combat,
-  // and a phrygian war-drum mix for bosses — and the game's alert/combo
-  // state pumps an intensity knob that opens filters, thickens the snare
-  // work and fades in a tremolo dread layer. All synthesized live: the game
-  // still ships zero asset files.
+  // and a phrygian boss mix — and the game's alert/combo state pumps an
+  // intensity knob that opens filters and fades in a tremolo dread layer.
+  // All synthesized live: the game still ships zero asset files.
   let musicBus = null, musicTimer = null, musicNoiseBuf = null;
   let musicMood = null, pendingMood = null;
   let musicStep = 0, musicNext = 0, musicIntensity = 0;
@@ -284,9 +283,9 @@ const AudioSys = (() => {
     else pendingMood = mood;
   }
 
-  /* 0..1 from the game (alert level / combo heat): opens the bass filter,
-   * densifies the snare work and fades in the dread tremolo so escalation
-   * is audible, not just a HUD bar. */
+  /* 0..1 from the game (alert level / combo heat): opens the bass filter
+   * and fades in the dread tremolo so escalation is audible, not just a
+   * HUD bar. */
   function setMusicIntensity(v) {
     musicIntensity = Math.max(0, Math.min(1, v || 0));
   }
@@ -381,7 +380,7 @@ const AudioSys = (() => {
   }
 
   /* Military snare: bandpassed crack + highpass sizzle + a short skin thump.
-   * peak scales all three, so the same voice does accents and ghost notes. */
+   * peak scales all three. */
   function mSnare(t, peak) {
     mNoise(t, 0.11, peak, 'bandpass', 1900);
     mNoise(t, 0.05, peak * 0.55, 'highpass', 5200);
@@ -394,26 +393,6 @@ const AudioSys = (() => {
     for (let i = 0; i < count; i++) {
       mNoise(t + i * spacing, 0.035, peakEnd * (0.25 + 0.75 * (i / count)), 'bandpass', 2000);
     }
-  }
-
-  /* Noise sweep rising into a downbeat — the held-breath before the loop
-   * slams back around. */
-  function mRiser(t, dur, peak) {
-    const src = ctx.createBufferSource();
-    src.buffer = mNoiseBuf();
-    src.loop = true;
-    const f = ctx.createBiquadFilter();
-    f.type = 'bandpass';
-    f.Q.value = 1.4;
-    f.frequency.setValueAtTime(320, t);
-    f.frequency.exponentialRampToValueAtTime(3800, t + dur);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + dur * 0.92);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(f); f.connect(g); g.connect(musicBus);
-    src.start(t, Math.random());
-    src.stop(t + dur + 0.03);
   }
 
   /* Timpani boom for the anthem: a kick stretched into a hall. */
@@ -456,14 +435,14 @@ const AudioSys = (() => {
     src.stop(t + dur + 0.03);
   }
 
-  function mKick(t) {
+  function mKick(t, peak) {
     const o = ctx.createOscillator();
     o.type = 'sine';
     o.frequency.setValueAtTime(130, t);
     o.frequency.exponentialRampToValueAtTime(38, t + 0.1);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.5, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(peak || 0.5, t + 0.006);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
     o.connect(g); g.connect(musicBus);
     o.start(t); o.stop(t + 0.18);
@@ -563,28 +542,11 @@ const AudioSys = (() => {
       if (pos === 8 && (bar & 3) === 3) mRoll(t, 12, mstep / 2, 0.028);
       return;
     }
-    if (pos === 0 && bar === 0) mNoise(t, 0.55, 0.08, 'highpass', 5600);   // crash
-    if (mood.drums === 1) {
-      if (pos === 0 || pos === 8 || (inten > 0.5 && pos === 6)) mKick(t);
-      if (pos === 4 || pos === 12) mSnare(t, 0.2);
-      else if (pos === 2 || pos === 7 || pos === 10) {
-        mSnare(t, 0.04 + inten * 0.035);                                   // ghosts
-      }
-      if (pos === 12 && (bar === 3 || bar === 7 || inten > 0.7)) {
-        mRoll(t + mstep, 6, mstep / 2, 0.12);
-      }
-    } else {
-      if ((pos & 3) === 0) mKick(t);
-      if (pos === 4 || pos === 12) mSnare(t, 0.22);
-      else if ((pos & 3) === 2) mSnare(t, 0.05 + inten * 0.04);
-      if (bar === 7 && pos === 8) mRoll(t, 16, mstep / 2, 0.14);
-    }
-    if ((pos & 1) === 1) mNoise(t, 0.03, 0.045 + inten * 0.05, 'highpass', 6800);   // hats
-    else if (inten > 0.65 && (pos & 3) === 2) mNoise(t, 0.025, 0.04, 'highpass', 7500);
-    // held breath into the loop point
-    if (pos === 0 && bar === 7 && (mood.drive === 2 || inten > 0.35)) {
-      mRiser(t, mstep * 16, 0.05 + inten * 0.04);
-    }
+    // in-game the kit is pared to almost nothing — a soft kick on the two
+    // downbeats and a quiet backbeat snare hold the march time while the
+    // bass and brass carry the drive
+    if (pos === 0 || pos === 8) mKick(t, mood.drums === 2 ? 0.3 : 0.24);
+    if (pos === 4 || pos === 12) mSnare(t, 0.07);
   }
 
   // -- engine hum ----------------------------------------------------------
