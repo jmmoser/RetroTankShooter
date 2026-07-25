@@ -17,13 +17,11 @@ shellbacks, shield-warden packs, long-eyed snipers and tanks that shatter
 into tumbling polygon shards.
 
 Built with **plain WebGL, Canvas 2D and Web Audio** — no build step, no
-assets, no CDNs. Even the **march-anthem soundtrack is synthesized live** by
-a tiny sequencer: a solemn bugle hymn under the menus, a driving military
-march with a brass fanfare hook in combat — only the lightest kick-and-snare
-pulse under it, with tremolo strings creeping in as the sector alert and
-your combo climb — and a phrygian mix that turns the anthem sour while a
-WARLORD is on the field.
-Single-player makes no network requests at all. Optional
+assets, no CDNs. Even the **synthwave soundtrack is synthesized live** by a
+tiny sequencer: a brooding loop under the menus, a driving groove in combat
+that opens up as the sector alert and your combo climb, and a harder mix
+while a WARLORD is on the field. Single-player makes no network requests at
+all. Optional
 **online co-op** uses one small bundled library (PeerJS, in `js/vendor/`)
 for peer-to-peer connections; nothing else needs to be hosted.
 
@@ -383,7 +381,7 @@ style.css       retro CRT styling
 sw.js           offline cache (installable PWA; single-player works offline)
 js/settings.js  persistent settings + career progress, XP/ranks, medals,
                 daily streak (localStorage)
-js/audio.js     synthesized SFX, engine hum & the procedural march-anthem
+js/audio.js     synthesized SFX, engine hum & the procedural synthwave
                 soundtrack (Web Audio lookahead sequencer, no sound files)
 js/input.js     keyboard / mouse / touch / gamepad
 js/geometry.js  procedural low-poly meshes

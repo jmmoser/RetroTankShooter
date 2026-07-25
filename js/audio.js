@@ -197,75 +197,26 @@ const AudioSys = (() => {
   // A tiny lookahead sequencer (the classic "tale of two clocks" pattern): a
   // JS interval walks 16th-note steps a beat ahead of the AudioContext clock
   // and schedules short-lived oscillators per voice. Three moods share the
-  // engine — a solemn anthem under the menus, a full-tilt march in combat,
-  // and a phrygian boss mix — and the game's alert/combo state pumps an
-  // intensity knob that opens filters and fades in a tremolo dread layer.
-  // All synthesized live: the game still ships zero asset files.
+  // engine — brooding menu pads, a driving combat groove, and a harder boss
+  // variant — and the game's alert/combo state pumps an intensity knob that
+  // opens filters and thickens the hats. All synthesized live: the game
+  // still ships zero asset files.
   let musicBus = null, musicTimer = null, musicNoiseBuf = null;
   let musicMood = null, pendingMood = null;
   let musicStep = 0, musicNext = 0, musicIntensity = 0;
-  let mstep = 60 / 132 / 4;                               // one 16th note; per-mood
+
+  const MUSIC_BPM = 112;
+  const MSTEP = 60 / MUSIC_BPM / 4;                       // one 16th note
   const mf = (m) => 440 * Math.pow(2, (m - 69) / 12);     // midi note -> Hz
 
-  // Everything lives around Bb major — parade-ground brass territory. Each
-  // mood is an 8-bar phrase: bars are [rootMidi, isMinor] chords, lead is a
-  // sparse [step, midi, lengthIn16ths] fanfare line. The anthem borrows the
-  // minor iv (bar 6) so the pride carries a knot of worry; the boss phrase
-  // hangs Ab over a G home — phrygian b2, the classic dread interval.
+  // chord roots per bar (midi); combat rides an Am / F / G / Em loop while
+  // the boss mix bends it phrygian for menace
   const MOODS = {
-    menu: {
-      bpm: 76, drums: 0, drive: 0,
-      bars: [[46, 0], [43, 1], [39, 0], [41, 0], [46, 0], [43, 1], [39, 1], [41, 0]],
-      // taps-style bugle: unhurried triads, one long note per breath
-      lead: [
-        [0, 65, 3], [4, 65, 2], [6, 70, 8],
-        [16, 65, 2], [18, 70, 2], [20, 74, 10],
-        [32, 74, 4], [36, 72, 2], [38, 70, 4], [44, 67, 4],
-        [48, 69, 4], [52, 72, 4], [56, 65, 8],
-        [64, 65, 3], [68, 70, 2], [70, 74, 8],
-        [80, 74, 3], [84, 79, 2], [86, 77, 8],
-        [96, 75, 4], [100, 70, 4], [104, 66, 6],
-        [112, 72, 4], [118, 69, 2], [120, 70, 8],
-      ],
-    },
-    combat: {
-      bpm: 132, drums: 1, drive: 1,
-      bars: [[46, 0], [46, 0], [39, 0], [41, 0], [43, 1], [39, 0], [41, 0], [41, 0]],
-      // the hook: a bugle-call fanfare that climbs, turns minor for a bar of
-      // doubt, then runs a rising pickup back into the top of the loop
-      lead: [
-        [0, 65, 2], [2, 70, 2], [4, 74, 3], [8, 70, 2], [10, 74, 2], [12, 77, 4],
-        [16, 77, 3], [20, 74, 2], [22, 70, 2], [24, 72, 2], [26, 74, 2], [28, 72, 2], [30, 70, 2],
-        [32, 70, 2], [34, 75, 2], [36, 79, 4], [40, 77, 2], [42, 75, 2], [44, 70, 4],
-        [48, 72, 2], [50, 77, 2], [52, 81, 3], [56, 79, 2], [58, 77, 2], [60, 76, 2], [62, 72, 2],
-        [64, 74, 2], [66, 79, 2], [68, 82, 4], [72, 81, 2], [74, 79, 2], [76, 74, 4],
-        [80, 72, 2], [82, 75, 2], [84, 79, 4], [88, 82, 4], [92, 79, 4],
-        [96, 81, 3], [100, 79, 2], [102, 77, 2], [104, 79, 2], [106, 81, 2], [108, 84, 4],
-        [120, 72, 2], [122, 74, 2], [124, 76, 2], [126, 77, 2],
-      ],
-    },
-    boss: {
-      bpm: 144, drums: 2, drive: 2,
-      bars: [[43, 1], [44, 0], [43, 1], [41, 1], [43, 1], [44, 0], [46, 1], [44, 0]],
-      // clipped stabs circling the half-step, ending on a chromatic slither
-      lead: [
-        [0, 67, 1], [2, 67, 1], [4, 70, 2], [8, 67, 1], [10, 68, 1], [12, 67, 4],
-        [16, 68, 2], [20, 72, 2], [24, 68, 1], [26, 68, 1], [28, 75, 4],
-        [32, 74, 2], [36, 70, 2], [40, 67, 1], [42, 68, 1], [44, 67, 2], [46, 62, 2],
-        [48, 65, 2], [52, 68, 2], [56, 72, 4], [60, 68, 2], [62, 65, 2],
-        [64, 79, 2], [66, 79, 1], [68, 74, 2], [72, 75, 2], [76, 74, 4],
-        [80, 80, 4], [84, 75, 2], [88, 72, 2], [92, 68, 4],
-        [96, 77, 2], [100, 74, 2], [104, 70, 2], [108, 74, 2], [110, 77, 2],
-        [112, 80, 2], [116, 79, 2], [120, 74, 1], [122, 75, 1], [124, 74, 1], [126, 73, 1],
-      ],
-    },
+    menu:   { bars: [45, 41, 43, 40], drums: false, drive: 0 },
+    combat: { bars: [45, 41, 43, 40], drums: true,  drive: 1 },
+    boss:   { bars: [45, 46, 43, 44], drums: true,  drive: 2 },
   };
-  // dense per-step lookup so the hot path never scans the sparse tables
-  for (const k in MOODS) {
-    const m = MOODS[k];
-    m.leadMap = new Array(128).fill(null);
-    for (const n of m.lead) m.leadMap[n[0]] = n;
-  }
+  const ARP = [0, 3, 7, 12, 7, 3];   // minor arpeggio, up and back
 
   function musicGainValue() { return muted ? 0 : musicVol * 0.5; }
 
@@ -283,9 +234,8 @@ const AudioSys = (() => {
     else pendingMood = mood;
   }
 
-  /* 0..1 from the game (alert level / combo heat): opens the bass filter
-   * and fades in the dread tremolo so escalation is audible, not just a
-   * HUD bar. */
+  /* 0..1 from the game (alert level / combo heat): opens the bass filter and
+   * densifies the hats so escalation is audible, not just a HUD bar. */
   function setMusicIntensity(v) {
     musicIntensity = Math.max(0, Math.min(1, v || 0));
   }
@@ -294,16 +244,7 @@ const AudioSys = (() => {
     if (!ctx || musicTimer) return;
     musicBus = ctx.createGain();
     musicBus.gain.value = musicGainValue();
-    // a compressor glues the march — kick and snare pump the brass slightly,
-    // and a dozen simultaneous voices can't clip the output
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -14;
-    comp.knee.value = 18;
-    comp.ratio.value = 6;
-    comp.attack.value = 0.004;
-    comp.release.value = 0.16;
-    musicBus.connect(comp);
-    comp.connect(ctx.destination);
+    musicBus.connect(ctx.destination);
     musicNext = ctx.currentTime + 0.06;
     musicStep = 0;
     musicTimer = setInterval(scheduleMusic, 90);
@@ -324,22 +265,18 @@ const AudioSys = (() => {
     // running — schedule far enough ahead that the soundtrack doesn't gap
     const ahead = (typeof document !== 'undefined' && document.hidden) ? 1.6 : 0.28;
     while (musicNext < ctx.currentTime + ahead) {
-      if ((musicStep & 15) === 0) {
-        if (pendingMood) {
-          musicMood = pendingMood;
-          pendingMood = null;
-          musicStep = 0;   // new mood always enters at the top of its hook
-        }
-        if (musicMood) mstep = 60 / MOODS[musicMood].bpm / 4;
+      if ((musicStep & 15) === 0 && pendingMood) {
+        musicMood = pendingMood;
+        pendingMood = null;
       }
       if (musicMood && !muted && musicVol > 0) playMusicStep(musicStep, musicNext);
-      musicStep = (musicStep + 1) & 127;   // 8 bars of 16 steps
-      musicNext += mstep;
+      musicStep = (musicStep + 1) & 63;   // 4 bars of 16 steps
+      musicNext += MSTEP;
     }
   }
 
   // voice helpers — every node routes into musicBus, never into the SFX master
-  function mOsc(type, freq, t, dur, peak, cutoff, attack) {
+  function mOsc(type, freq, t, dur, peak, cutoff) {
     const o = ctx.createOscillator();
     o.type = type;
     o.frequency.setValueAtTime(freq, t);
@@ -348,80 +285,21 @@ const AudioSys = (() => {
     f.frequency.setValueAtTime(cutoff, t);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + (attack || 0.012));
+    g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + 0.012);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(f); f.connect(g); g.connect(musicBus);
     o.start(t); o.stop(t + dur + 0.03);
   }
 
-  /* Fanfare brass: two saws detuned against each other, pitch scooping up
-   * into the note and the filter blooming open just behind the attack —
-   * the cheap-synth cartoon of a trumpet section leaning into a phrase. */
-  function mBrass(midi, t, dur, peak, cutoff) {
-    const hz = mf(midi);
-    for (const det of [-7, 7]) {
-      const o = ctx.createOscillator();
-      o.type = 'sawtooth';
-      o.frequency.setValueAtTime(hz * 0.982, t);
-      o.frequency.exponentialRampToValueAtTime(hz, t + 0.045);
-      o.detune.setValueAtTime(det, t);
-      const f = ctx.createBiquadFilter();
-      f.type = 'lowpass';
-      f.frequency.setValueAtTime(cutoff * 0.45, t);
-      f.frequency.exponentialRampToValueAtTime(cutoff, t + 0.07);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + 0.025);
-      g.gain.setValueAtTime(Math.max(peak, 0.0002), t + Math.max(0.03, dur * 0.55));
-      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      o.connect(f); f.connect(g); g.connect(musicBus);
-      o.start(t); o.stop(t + dur + 0.03);
-    }
-  }
-
-  /* Military snare: bandpassed crack + highpass sizzle + a short skin thump.
-   * peak scales all three. */
-  function mSnare(t, peak) {
-    mNoise(t, 0.11, peak, 'bandpass', 1900);
-    mNoise(t, 0.05, peak * 0.55, 'highpass', 5200);
-    mOsc('triangle', 196, t, 0.06, peak * 0.5, 900, 0.004);
-  }
-
-  /* Buzz roll: a crescendo of 32nd-note ghost hits, the parade-snare build
-   * that yanks every phrase back to its downbeat. */
-  function mRoll(t, count, spacing, peakEnd) {
-    for (let i = 0; i < count; i++) {
-      mNoise(t + i * spacing, 0.035, peakEnd * (0.25 + 0.75 * (i / count)), 'bandpass', 2000);
-    }
-  }
-
-  /* Timpani boom for the anthem: a kick stretched into a hall. */
-  function mTimp(t, midi, peak) {
-    const o = ctx.createOscillator();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(mf(midi) * 1.6, t);
-    o.frequency.exponentialRampToValueAtTime(mf(midi), t + 0.09);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(peak, t + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
-    o.connect(g); g.connect(musicBus);
-    o.start(t); o.stop(t + 1.2);
-  }
-
-  function mNoiseBuf() {
+  function mNoise(t, dur, peak, filterType, freq) {
     if (!musicNoiseBuf) {
       const len = ctx.sampleRate;   // one shared second of noise
       musicNoiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
       const d = musicNoiseBuf.getChannelData(0);
       for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     }
-    return musicNoiseBuf;
-  }
-
-  function mNoise(t, dur, peak, filterType, freq) {
     const src = ctx.createBufferSource();
-    src.buffer = mNoiseBuf();
+    src.buffer = musicNoiseBuf;
     src.loop = true;
     const f = ctx.createBiquadFilter();
     f.type = filterType;
@@ -435,30 +313,24 @@ const AudioSys = (() => {
     src.stop(t + dur + 0.03);
   }
 
-  function mKick(t, peak) {
+  function mKick(t) {
     const o = ctx.createOscillator();
     o.type = 'sine';
     o.frequency.setValueAtTime(130, t);
     o.frequency.exponentialRampToValueAtTime(38, t + 0.1);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(peak || 0.5, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.006);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
     o.connect(g); g.connect(musicBus);
     o.start(t); o.stop(t + 0.18);
   }
 
-  /* One pad chord per bar: root + third + fifth as detuned saws through a
-   * closed lowpass, swelling under everything else. The third makes the
-   * major/minor character of each bar land; the boss mix stacks a b9 on
-   * top so even the sustain feels wrong. */
-  function mPad(root, minor, t, cutoff, peak, b9) {
-    const barDur = mstep * 16;
-    const tones = [
-      [root + 12, -5], [root + 12 + (minor ? 3 : 4), 4], [root + 19, 2],
-    ];
-    if (b9) tones.push([root + 25, 6]);
-    for (const [note, det] of tones) {
+  /* One dark pad chord per bar: root + fifth as detuned saws through a
+   * closed lowpass, swelling under everything else. */
+  function mPad(root, t, cutoff, peak) {
+    const barDur = MSTEP * 16;
+    for (const [note, det] of [[root + 12, -4], [root + 12, 4], [root + 19, 3]]) {
       const o = ctx.createOscillator();
       o.type = 'sawtooth';
       o.frequency.setValueAtTime(mf(note), t);
@@ -477,76 +349,41 @@ const AudioSys = (() => {
 
   function playMusicStep(step, t) {
     const mood = MOODS[musicMood];
-    const bar = (step >> 4) & 7, pos = step & 15;
-    const chord = mood.bars[bar];
-    const root = chord[0], minor = chord[1];
+    const bar = (step >> 4) & 3, pos = step & 15;
+    const root = mood.bars[bar];
     const inten = musicIntensity;
 
     if (pos === 0) {
-      mPad(root, minor, t,
-        mood.drive === 0 ? 560 : 720 + inten * 520,
-        mood.drive === 0 ? 0.075 : 0.05,
-        mood.drive === 2 && inten > 0.4);
-      // sub drone under the war footing — felt more than heard
-      if (mood.drive === 2 || inten > 0.5) {
-        mOsc('sine', mf(root - 12), t, mstep * 16, 0.1, 220, 0.3);
-      }
+      mPad(root, t, mood.drive === 0 ? 520 : 700 + inten * 500,
+        mood.drive === 0 ? 0.07 : 0.05);
     }
 
-    // lead: bugle on the anthem, massed brass over the marches, with a faint
-    // octave-up shimmer so the hook glints like parade chrome
-    const note = mood.leadMap[step];
-    if (note) {
-      const dur = note[2] * mstep;
-      if (mood.drive === 0) {
-        mOsc('triangle', mf(note[1]), t, dur, 0.06, 2400, 0.05);
-      } else {
-        mBrass(note[1], t, dur, 0.05 + inten * 0.022, 1700 + inten * 2100);
-        mOsc('triangle', mf(note[1] + 12), t, dur * 0.8, 0.02, 5200);
-      }
-    }
-
-    // bass: long hymn tones on the menu; sousaphone oom-pah (root, fifth
-    // below) in combat that picks up marching 8ths as the alert climbs; the
-    // boss just pounds relentless 8ths with octave kicks
+    // bass: slow pulses on the menu, driving 8ths with octave lifts in combat
     if (mood.drive === 0) {
-      if (pos === 0) mOsc('triangle', mf(root - 12), t, mstep * 9, 0.17, 320, 0.08);
-      else if (pos === 10) mOsc('triangle', mf(root - 5), t, mstep * 5, 0.12, 300, 0.06);
-    } else if (mood.drive === 1) {
-      if (pos === 0 || pos === 8) {
-        mOsc('sawtooth', mf(root - 12), t, mstep * 3.4, 0.26, 420 + inten * 480);
-      } else if (pos === 4 || pos === 12) {
-        mOsc('sawtooth', mf(root - 17), t, mstep * 3.4, 0.22, 420 + inten * 480);
-      } else if (inten > 0.35 && (pos & 1) === 0) {
-        mOsc('sawtooth', mf(root), t, mstep * 1.4, 0.13, 520 + inten * 560);
-      }
+      if (pos === 0 || pos === 10) mOsc('sawtooth', mf(root - 12), t, MSTEP * 5, 0.15, 300);
     } else if ((pos & 1) === 0) {
       const oct = (pos === 6 || pos === 14) ? 0 : -12;
-      mOsc('sawtooth', mf(root + oct), t, mstep * 1.7,
-        (pos & 3) === 0 ? 0.27 : 0.22, 400 + inten * 520);
+      mOsc('sawtooth', mf(root + oct), t, MSTEP * 1.6,
+        mood.drive === 2 && (pos & 3) === 2 ? 0.28 : 0.22,
+        380 + inten * 450);
     }
 
-    // dread layer: high tremolo strings sawing on the off-16ths, creeping up
-    // a half-step in the boss mix — the horror-score shiver over the anthem
-    if (inten > 0.55 && mood.drive > 0 && (pos & 1) === 1) {
-      const creep = mood.drive === 2 && ((step >> 1) & 1) ? 1 : 0;
-      mOsc('sawtooth', mf(root + 36 + creep), t, mstep * 0.9,
-        0.008 + (inten - 0.55) * 0.03, 3200, 0.006);
+    // arp: sparse chimes on the menu, a 16th-note pulse under fire
+    if (mood.drive === 0) {
+      if (pos === 4 || pos === 12) {
+        mOsc('triangle', mf(root + 24 + ARP[(step >> 2) % ARP.length]), t, MSTEP * 3.2, 0.05, 2200);
+      }
+    } else if ((pos & 1) === 0 || inten > 0.55) {
+      mOsc('square', mf(root + 12 + ARP[(step >> 1) % ARP.length]), t, MSTEP * 1.1,
+        0.04 + inten * 0.03, 1400 + inten * 2600);
     }
 
-    // drums
-    if (mood.drums === 0) {
-      // parade ground heard from a bunker: timpani on the phrase pillars and
-      // a distant snare roll every fourth bar — the war is close, even here
-      if (pos === 0 && (bar === 0 || bar === 4)) mTimp(t, root - 12, 0.16);
-      if (pos === 8 && (bar & 3) === 3) mRoll(t, 12, mstep / 2, 0.028);
-      return;
+    if (mood.drums) {
+      if (pos === 0 || pos === 8 || (mood.drive === 2 && (pos === 4 || pos === 12))) mKick(t);
+      if (pos === 4 || pos === 12) mNoise(t, 0.12, 0.16, 'bandpass', 1900);         // snare
+      if ((pos & 1) === 1) mNoise(t, 0.03, 0.05 + inten * 0.05, 'highpass', 6500);  // hats
+      else if (inten > 0.7 && (pos & 3) === 2) mNoise(t, 0.025, 0.04, 'highpass', 7500);
     }
-    // in-game the kit is pared to almost nothing — a soft kick on the two
-    // downbeats and a quiet backbeat snare hold the march time while the
-    // bass and brass carry the drive
-    if (pos === 0 || pos === 8) mKick(t, mood.drums === 2 ? 0.3 : 0.24);
-    if (pos === 4 || pos === 12) mSnare(t, 0.07);
   }
 
   // -- engine hum ----------------------------------------------------------
