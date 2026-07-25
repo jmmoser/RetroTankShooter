@@ -73,6 +73,63 @@ check('_losClear: blocked through slabs, clear beside them, exact for thin walls
   assert(g._losClear(-20, 0, 20, 0), 'dead slab still blocks');
 });
 
+// Aim assist used to snap onto a target's live position, overriding a correct
+// manual lead with a guaranteed trailing miss on crossing targets at range.
+// It must lock the shell-flight intercept point instead.
+check('aim assist leads a crossing target to the intercept point', () => {
+  const g = freshGame();
+  g.enemies.length = 0;
+  g.obstacles.length = 0;
+  const p = g.player;
+  p.x = 0; p.z = 0;
+  g._spawnEnemy('drone', 0, -100);
+  const e = g.enemies[0];
+  e.vx = 14; e.vz = 0;   // crossing left-to-right, orthogonal to the shot
+  // player aims roughly at the lead point (a hair off, inside the cone)
+  p.angle = -0.19;
+  const a = g._aimAssist(p);
+  assert(a !== p.angle, 'assist did not engage');
+  // fly the shell and the target forward; the snap must produce a hit
+  let minD = Infinity;
+  for (let t = 0; t < 2; t += 1 / 240) {
+    const sx = -Math.sin(a) * 72 * t, sz = -Math.cos(a) * 72 * t;
+    minD = Math.min(minD, Math.hypot(sx - (e.x + e.vx * t), sz - (e.z + e.vz * t)));
+  }
+  assert(minD < 2, 'shell missed the crossing target by ' + minD.toFixed(1));
+  // the old behavior — snapping to the live bearing — misses by a hull length+
+  const live = 0;   // bearing straight at the spawn position
+  let liveD = Infinity;
+  for (let t = 0; t < 2; t += 1 / 240) {
+    const sx = -Math.sin(live) * 72 * t, sz = -Math.cos(live) * 72 * t;
+    liveD = Math.min(liveD, Math.hypot(sx - (e.x + e.vx * t), sz - (e.z + e.vz * t)));
+  }
+  assert(liveD > 10, 'test premise broken: live-position snap should miss');
+});
+
+check('aim assist still snaps exactly onto a stationary target', () => {
+  const g = freshGame();
+  g.enemies.length = 0;
+  g.obstacles.length = 0;
+  const p = g.player;
+  p.x = 0; p.z = 0;
+  g._spawnEnemy('drone', 5, -80);
+  const want = Math.atan2(-5, 80);
+  p.angle = want + 0.05;   // sloppy but inside the cone
+  const a = g._aimAssist(p);
+  assert(Math.abs(a - want) < 1e-9, 'expected exact snap, got ' + a + ' vs ' + want);
+});
+
+check('enemy velocity is tracked from real displacement', () => {
+  const g = freshGame();
+  g.enemies.length = 0;
+  g.obstacles.length = 0;
+  g._spawnEnemy('rusher', 0, 80, true);
+  const e = g.enemies[0];
+  for (let i = 0; i < 30; i++) g._updateEnemies(1 / 60);
+  assert(Number.isFinite(e.vx) && Number.isFinite(e.vz), 'velocity not tracked');
+  assert(Math.hypot(e.vx, e.vz) > 1, 'hunting rusher should register speed');
+});
+
 check('1500-frame combat soak with alarm and reinforcements', () => {
   const g = freshGame();
   g._raiseAlarm(0, 0);

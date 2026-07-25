@@ -40,6 +40,7 @@ const CAP_TIME = 3.2;            // seconds of uncontested holding per zone
 // Heat cannon: no ammo — the gun rides a heat gauge. Hotter = faster and
 // harder (redline), overheat = locked out. A manual vent with a perfect-tap
 // window (Gears-style) is the rhythm skill at the center of every fight.
+const SHELL_SPEED = 72;          // player cannon muzzle velocity (units/s)
 const SHOT_HEAT = 7;             // heat per shell
 const VENT_TIME = 1.1;           // full manual vent duration (seconds)
 const VENT_WIN = [0.38, 0.58];   // perfect-tap window inside the vent sweep
@@ -1545,7 +1546,7 @@ class Game {
           const a = shotAngle + (si - (shots - 1) / 2) * 0.1;
           this.projectiles.push({
             x: p.x + fwdX(a) * 3.2, z: p.z + fwdZ(a) * 3.2, y: 1.6, angle: a,
-            speed: 72, from: 'player', owner: p.id, dmg, life: 2.2,
+            speed: SHELL_SPEED, from: 'player', owner: p.id, dmg, life: 2.2,
             bounce: (p.up && p.up.ricochet) || 0,
             pierce: (p.up && p.up.pierce) || 0,
           });
@@ -1616,7 +1617,12 @@ class Game {
    * within a narrow cone in front of the hull. Touch aiming is inherently a
    * few degrees sloppy; the cone is tight enough that keyboard and gamepad
    * players just feel accurate rather than assisted. Applies uniformly so
-   * every input scheme stays on equal footing in co-op. */
+   * every input scheme stays on equal footing in co-op.
+   *
+   * The snap leads: it locks the shell-flight intercept point, not the
+   * target's live position. A crossing target at range moves several hull
+   * lengths during flight; snapping to "where it is now" used to override a
+   * correct manual lead with a guaranteed trailing miss. */
   _aimAssist(p) {
     // togglable in settings; the host's sim applies it for everyone in co-op.
     // Touch aiming is inherently sloppy and keeps the wide cone; precise
@@ -1625,29 +1631,40 @@ class Game {
     const touch = typeof Input !== 'undefined' && Input.touchUI && Input.touchUI().mode;
     const CONE = touch ? 0.2 : 0.07, RANGE = 150;
     let best = p.angle, bestErr = CONE;
-    const consider = (x, z) => {
-      if (dist2(p.x, p.z, x, z) > RANGE * RANGE) return;
-      const bearing = angleTo(x - p.x, z - p.z);
+    const consider = (x, z, vx, vz) => {
+      const d2 = dist2(p.x, p.z, x, z);
+      if (d2 > RANGE * RANGE) return;
+      let ax = x, az = z;
+      if (vx || vz) {
+        // where will it be when the shell arrives? One refinement pass on
+        // the flight time is plenty — tanks top out well under shell speed.
+        let t = Math.sqrt(d2) / SHELL_SPEED;
+        t = Math.hypot(x + vx * t - p.x, z + vz * t - p.z) / SHELL_SPEED;
+        ax = x + vx * t;
+        az = z + vz * t;
+      }
+      const bearing = angleTo(ax - p.x, az - p.z);
       const err = Math.abs(wrapAngle(bearing - p.angle));
-      if (err < bestErr && this._losClear(p.x, p.z, x, z)) { bestErr = err; best = bearing; }
+      if (err < bestErr && this._losClear(p.x, p.z, ax, az)) { bestErr = err; best = bearing; }
     };
     if (this.versus) {
       for (const pl of this.players) {
-        if (pl.alive && pl.id !== p.id) consider(pl.x, pl.z);
+        if (pl.alive && pl.id !== p.id) consider(pl.x, pl.z, pl.vx || 0, pl.vz || 0);
       }
     }
     for (const e of this.enemies) {
       if (e.cloak > 0.6) continue;   // can't lock what the radar can't see
-      consider(e.x, e.z);
+      consider(e.x, e.z, e.vx || 0, e.vz || 0);
     }
     const b = this.boss;
     if (b && !b.dead) {
+      // turrets ride the hull, so hull velocity is their velocity too
       for (const tu of b.turrets) {
         if (tu.hp <= 0) continue;
         const [wx, wz] = bossTurretWorld(b, tu);
-        consider(wx, wz);
+        consider(wx, wz, b.vx || 0, b.vz || 0);
       }
-      if (b.vulnerable) consider(b.x, b.z);
+      if (b.vulnerable) consider(b.x, b.z, b.vx || 0, b.vz || 0);
     }
     return best;
   }
@@ -1808,6 +1825,7 @@ class Game {
     const alertMul = 1 + this.alert * 0.4;
     this.suspicion = false;
     for (const e of this.enemies) {
+      const ex0 = e.x, ez0 = e.z;
       e.hitFlash = Math.max(0, e.hitFlash - dt * 4);
       const p = this._nearestPlayer(e.x, e.z);
       const distP = p ? Math.hypot(p.x - e.x, p.z - e.z) : Infinity;
@@ -1967,6 +1985,13 @@ class Game {
           e.x += (e.x - o.x) * push;
           e.z += (e.z - o.z) * push;
         }
+      }
+
+      // true velocity from actual displacement (drive + shoves + clamps) —
+      // the aim assist leads with this
+      if (dt > 0) {
+        e.vx = (e.x - ex0) / dt;
+        e.vz = (e.z - ez0) / dt;
       }
 
       // fire at player — smarter types lead a moving target
@@ -2609,6 +2634,7 @@ class Game {
       return;
     }
     b.hitFlash = Math.max(0, b.hitFlash - dt * 4);
+    const bx0 = b.x, bz0 = b.z;
     const p = this._nearestPlayer(b.x, b.z);
 
     // the hull crushes any slab it touches — cover is temporary
@@ -2699,6 +2725,12 @@ class Game {
     const lim = ARENA_HALF - WALL_PAD - b.radius;
     b.x = Math.max(-lim, Math.min(lim, b.x));
     b.z = Math.max(-lim, Math.min(lim, b.z));
+
+    // true hull velocity for the aim-assist lead (matters most mid-charge)
+    if (dt > 0) {
+      b.vx = (b.x - bx0) / dt;
+      b.vz = (b.z - bz0) / dt;
+    }
 
     // the exposed core periodically slams out a shockwave
     if (b.vulnerable && b.state !== 'charge') {
