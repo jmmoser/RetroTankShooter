@@ -444,8 +444,9 @@ const Geometry = (() => {
     return new Float32Array(verts);
   }
 
-  /* Ground: near-black plane + cold grid lines (line list, y slightly raised). */
-  function ground(half, step) {
+  /* Ground: one near-black plane spanning the arena. The cold grid lines drawn
+   * over it are a separate mesh — see gridLines. */
+  function ground(half) {
     const b = new MeshBuilder();
     const g = [0.015, 0.035, 0.030]; // almost void, faint cold tint
     b.quad([-half, 0, -half], [-half, 0, half], [half, 0, half], [half, 0, -half], g);

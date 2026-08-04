@@ -33,7 +33,7 @@
 
   // ---- meshes -------------------------------------------------------------
   const M = {
-    ground: renderer.createMesh(Geometry.ground(ARENA_HALF + 60, 8)),
+    ground: renderer.createMesh(Geometry.ground(ARENA_HALF + 60)),
     grid: renderer.createMesh(Geometry.gridLines(ARENA_HALF, 8), renderer.gl.LINES),
     // the whole boundary as one static mesh — was ~176 draw calls per frame
     arenaWall: renderer.createMesh(Geometry.arenaWall(ARENA_HALF)),
@@ -740,7 +740,7 @@
     game.combo = 0; game.comboT = 0; game.mult = 1;
     game.versus = versus; game.killCounts = {}; game.killTarget = 10;
     game.winnerId = null; game.dailySeed = null;
-    game.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0, silentKills: 0 };
+    game.runStats = freshRunStats();
     game.mode = 'playing';
     game._prevSh = null; game._prevAlive = null;  // reset damage-feedback tracking
     closeDraft();
@@ -1364,12 +1364,16 @@
         renderer.draw(M.ring, m4.trs(e.x, 0.3, e.z, 0, 4.4, 1, 4.4, MTX),
           { tint: at, unlit: true, additive: true });
       }
-      // warden: the cannon-proof umbrella reads as a slow golden ring
-      if (e.type === 'warden') {
+      // warden: the cannon-proof umbrella reads as a slow golden ring. The
+      // radius is the hull's own `aura` stat, so the ring can't drift out of
+      // step with the range the sim actually deflects at.
+      const aura = ENEMY_TYPES[e.type].aura;
+      if (aura) {
         const wp = 0.45 + 0.2 * Math.sin(now / 260);
-        renderer.draw(M.ring, m4.trs(e.x, 0.8, e.z, 0, 16, 1, 16, MTX),
+        renderer.draw(M.ring, m4.trs(e.x, 0.8, e.z, 0, aura, 1, aura, MTX),
           { tint: [1.0 * wp, 0.8 * wp, 0.25 * wp], unlit: true, additive: true });
-        renderer.draw(M.ring, m4.trs(e.x, 2.2, e.z, 0, 15.6, 1, 15.6, MTX),
+        const inner = aura * 0.975;
+        renderer.draw(M.ring, m4.trs(e.x, 2.2, e.z, 0, inner, 1, inner, MTX),
           { tint: [0.8 * wp, 0.6 * wp, 0.18 * wp], unlit: true, additive: true });
       }
     }

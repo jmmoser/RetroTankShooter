@@ -49,7 +49,7 @@ const Net = (() => {
   const cb = {
     onRoster: null,   // (roster)
     onCode: null,     // (code)          host: room code is ready
-    onStart: null,    // (defs, localId) client: begin the run
+    onStart: null,    // (defs, localId, mode) client: begin the run
     onLevel: null,    // (msg)           client: new sector arena
     onState: null,    // (msg)           client: snapshot
     onScreen: null,   // (msg)           client: screen transition (clear/over)

@@ -2,7 +2,8 @@
  * daily determinism, extraction, mutators, upgrades, warden AI. */
 const { loadScripts, fakeHud, check, assert } = require('./helpers');
 
-loadScripts(['game.js'], 'global.Game = Game; global.__UPGRADES = UPGRADES;');
+loadScripts(['game.js'],
+  'global.Game = Game; global.__UPGRADES = UPGRADES; global.ENEMY_TYPES = ENEMY_TYPES;');
 const hud = fakeHud();
 
 check('boss sector (level 5): 3000-frame fight does not throw', () => {
@@ -160,4 +161,89 @@ check('warden parks at umbrella range instead of creeping off', () => {
   for (let t = 0; t < 600; t++) g._updateEnemies(1 / 60);
   const drift = Math.hypot(w.x - x0, w.z - z0);
   assert(drift < 3, 'warden drifted ' + drift.toFixed(1) + 'u while holding');
+});
+
+/* The run-stat block used to be spelled out at each of its call sites, and the
+ * constructor's copy drifted: it lost silentKills, so a kill on a Game that was
+ * never newRun()'d incremented undefined into NaN instead of failing loudly. */
+check('runStats: constructor and newRun agree, silent kills stay finite', () => {
+  const fresh = new Game(hud);
+  const run = new Game(hud);
+  run.newRun([{ id: 'solo', loadoutIndex: 1 }], 'solo', {});
+  const keys = (o) => Object.keys(o).sort().join(',');
+  assert(keys(fresh.runStats) === keys(run.runStats),
+    'runStats shapes drifted: [' + keys(fresh.runStats) + '] vs [' + keys(run.runStats) + ']');
+
+  run.enemies.length = 0;
+  run._spawnEnemy('drone', run.player.x + 30, run.player.z);
+  run._killEnemy(0, 'solo', 'cannon');       // unaware hull = a silent kill
+  assert(run.runStats.silentKills === 1, 'silent kill not counted: ' + run.runStats.silentKills);
+
+  // the same kill on a never-launched Game must not poison the counter either
+  fresh._spawnEnemy('drone', 0, 0);
+  fresh._killEnemy(0, null, 'cannon');
+  assert(Number.isFinite(fresh.runStats.silentKills),
+    'constructor runStats is missing silentKills: ' + fresh.runStats.silentKills);
+});
+
+/* Both of these knobs were declared in ENEMY_TYPES and then ignored, with the
+ * real number hardcoded at the point of use (and, for the aura, a third copy in
+ * the renderer). Retuning the table must actually change the fight. */
+check('shellback plate arc is driven by ENEMY_TYPES.frontArmor', () => {
+  const g = new Game(hud);
+  g.newRun([{ id: 'solo', loadoutIndex: 1 }], 'solo', {});
+  g.obstacles.length = 0;
+  const spawn = () => {
+    g.enemies.length = 0;
+    g._spawnEnemy('shellback', 0, 0);
+    const e = g.enemies[0];
+    e.angle = 0;        // model faces -Z
+    e.alerted = true;   // keep the alert path out of the measurement
+    return e;
+  };
+  // fire a near-stationary shell from a fixed bearing and report damage dealt
+  const damageFrom = (e, x, z) => {
+    g.projectiles.length = 0;
+    g.projectiles.push({ x, z, y: 1.6, angle: 0, speed: 0.01, from: 'player', owner: 'solo', dmg: 40, life: 1 });
+    const hp0 = e.hp;
+    g._updateProjectiles(1 / 60);
+    return hp0 - e.hp;
+  };
+  assert(damageFrom(spawn(), 0, -2) === 0, 'frontal shell was not deflected by the plate');
+  assert(damageFrom(spawn(), 2, 0) > 0, 'flank shell was deflected — plate arc too wide');
+
+  const plate = ENEMY_TYPES.shellback.frontArmor;
+  ENEMY_TYPES.shellback.frontArmor = 2.0;   // widen past the flank bearing
+  try {
+    assert(damageFrom(spawn(), 2, 0) === 0, 'flank shell still landed after widening frontArmor');
+  } finally {
+    ENEMY_TYPES.shellback.frontArmor = plate;
+  }
+});
+
+check('warden umbrella radius is driven by ENEMY_TYPES.aura', () => {
+  const g = new Game(hud);
+  g.newRun([{ id: 'solo', loadoutIndex: 1 }], 'solo', {});
+  const aura = ENEMY_TYPES.warden.aura;
+  const absorbedAt = (gap) => {
+    g.enemies.length = 0;
+    g._spawnEnemy('drone', 0, 0);
+    g._spawnEnemy('warden', gap, 0);
+    const d = g.enemies[0];
+    d.alerted = true;
+    const hp0 = d.hp;
+    g._hurtEnemy(0, 25, 'solo', 'cannon');
+    return d.hp === hp0;
+  };
+  assert(absorbedAt(aura - 1), 'cannon hit inside the umbrella was not absorbed');
+  assert(!absorbedAt(aura + 1), 'cannon hit outside the umbrella was still absorbed');
+
+  // shrink the umbrella: a gap that was covered a moment ago must now be open
+  ENEMY_TYPES.warden.aura = aura / 2;
+  try {
+    assert(!absorbedAt(aura - 1), 'hit was still absorbed after shrinking aura');
+    assert(absorbedAt(aura / 2 - 1), 'shrunken umbrella stopped absorbing entirely');
+  } finally {
+    ENEMY_TYPES.warden.aura = aura;
+  }
 });

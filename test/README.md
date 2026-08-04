@@ -14,7 +14,7 @@ context — `helpers.js` loads the needed `js/` files into a vm per process).
 | Suite | Covers |
 | --- | --- |
 | `t-game-combat.js` | splash/chain-kill array safety, line-of-sight (segment-vs-AABB), piercing shells, combat soak |
-| `t-game-modes.js` | boss sectors, versus rules (tie-break, self-damage), warp gates, daily determinism, extraction, mutators, upgrade stacking, warden hold AI |
+| `t-game-modes.js` | boss sectors, versus rules (tie-break, self-damage), warp gates, daily determinism, extraction, mutators, upgrade stacking, warden hold AI, run-stat shape parity, `ENEMY_TYPES` knobs (shellback plate arc, warden aura) driving real behavior |
 | `t-geometry.js` | outward face winding (octahedron/box/pyramid), grid edge coverage, arena-wall perimeter/no-overlap, wireframe edge sanity |
 | `t-m4.js` | matrix composition and the out-parameter scratch-matrix contract |
 | `t-net.js` | lobby full-rejection (host and client sides), mid-game roster pruning, snapshot serialize→apply round-trip, snapshot interpolation |
