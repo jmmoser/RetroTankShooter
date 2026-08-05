@@ -119,15 +119,21 @@ const LOADOUTS = [
 // sight: how far the hull can spot a FULL-signature tank inside its vision
 // cone; a slow, cold tank shrinks that to ~a third. Snipers are the
 // long-range eyes of the grid — cross their lane hot and the map knows.
+//
+// Two counterplay knobs live here rather than at their point of use, so
+// retuning a hull means editing this table and nothing else:
+//  - frontArmor: half-angle (radians) of the deflecting faceplate.
+//  - aura: radius of the cannon-proof umbrella (the renderer draws this same
+//    number as the warden's ground ring).
 const ENEMY_TYPES = {
-  drone:     { hp: 60,  speed: 14, turn: 1.6, fireRange: 95,  fireCd: 2.2, aggro: 999, score: 150, shotSpeed: 50, dmg: 14, lead: 0,   sight: 55 },
-  rusher:    { hp: 22,  speed: 26, turn: 3.4, fireRange: 0,   fireCd: 9,   aggro: 999, score: 100, shotSpeed: 0,  dmg: 30, lead: 0,   sight: 45 },
-  hunter:    { hp: 85,  speed: 22, turn: 2.4, fireRange: 70,  fireCd: 1.5, aggro: 999, score: 300, shotSpeed: 58, dmg: 18, lead: 0.8, sight: 70 },
-  sniper:    { hp: 75,  speed: 7,  turn: 1.2, fireRange: 160, fireCd: 3.2, aggro: 999, score: 400, shotSpeed: 85, dmg: 26, lead: 0.9, sight: 150 },
-  phantom:   { hp: 110, speed: 19, turn: 2.2, fireRange: 100, fireCd: 2.3, aggro: 999, score: 600, shotSpeed: 66, dmg: 22, lead: 0.8, sight: 85, cloaks: true },
+  drone:     { hp: 60,  speed: 14, turn: 1.6, fireRange: 95,  fireCd: 2.2, score: 150, shotSpeed: 50, dmg: 14, lead: 0,   sight: 55 },
+  rusher:    { hp: 22,  speed: 26, turn: 3.4, fireRange: 0,   fireCd: 9,   score: 100, shotSpeed: 0,  dmg: 30, lead: 0,   sight: 45 },
+  hunter:    { hp: 85,  speed: 22, turn: 2.4, fireRange: 70,  fireCd: 1.5, score: 300, shotSpeed: 58, dmg: 18, lead: 0.8, sight: 70 },
+  sniper:    { hp: 75,  speed: 7,  turn: 1.2, fireRange: 160, fireCd: 3.2, score: 400, shotSpeed: 85, dmg: 26, lead: 0.9, sight: 150 },
+  phantom:   { hp: 110, speed: 19, turn: 2.2, fireRange: 100, fireCd: 2.3, score: 600, shotSpeed: 66, dmg: 22, lead: 0.8, sight: 85, cloaks: true },
   // counterplay hulls: reading the fight matters more than holding fire
-  shellback: { hp: 150, speed: 9,  turn: 1.1, fireRange: 75,  fireCd: 2.6, aggro: 999, score: 350, shotSpeed: 48, dmg: 20, lead: 0.4, sight: 50, frontArmor: true },
-  warden:    { hp: 90,  speed: 8,  turn: 1.4, fireRange: 70,  fireCd: 3.0, aggro: 999, score: 500, shotSpeed: 46, dmg: 12, lead: 0.3, sight: 55, aura: 16 },
+  shellback: { hp: 150, speed: 9,  turn: 1.1, fireRange: 75,  fireCd: 2.6, score: 350, shotSpeed: 48, dmg: 20, lead: 0.4, sight: 50, frontArmor: 1.05 },
+  warden:    { hp: 90,  speed: 8,  turn: 1.4, fireRange: 70,  fireCd: 3.0, score: 500, shotSpeed: 46, dmg: 12, lead: 0.3, sight: 55, aura: 16 },
 };
 
 /* In-run TECH upgrade pool: kills and zone captures pay tech, each tech level
@@ -230,6 +236,17 @@ function hashStr(str) {
   return h >>> 0;
 }
 
+/* A fresh per-run stat block. One definition, three callers (the constructor,
+ * newRun, and the co-op client's local setup in main.js) — keeping the literal
+ * in each of them let the shapes drift, and a missing counter increments to
+ * NaN silently instead of failing loudly. */
+function freshRunStats() {
+  return {
+    kills: 0, flags: 0, warlords: 0, bestMult: 1,
+    localKills: 0, nadeKills: 0, mineKills: 0, silentKills: 0,
+  };
+}
+
 // Tints used to tell co-op tanks apart (multiply over the player hull color).
 const PLAYER_TINTS = [
   [1.0, 1.0, 1.0],   // P1 — stock teal
@@ -295,7 +312,7 @@ class Game {
     this.killCounts = {};  // versus: playerId -> kills
     this.winnerId = null;
     this.puTimer = 0;      // versus: contested powerup respawn timer
-    this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0 };
+    this.runStats = freshRunStats();
     this.levelUntouched = true; // local player unhit this sector (medal)
   }
 
@@ -392,7 +409,7 @@ class Game {
     this.pot = 0;
     this.mutator = null;
     this.gates = null;
-    this.runStats = { kills: 0, flags: 0, warlords: 0, bestMult: 1, localKills: 0, nadeKills: 0, mineKills: 0, silentKills: 0 };
+    this.runStats = freshRunStats();
     // one-shot coaching lines: zones are HELD, not touched — say so the
     // first time the local tank starts (and abandons) a capture this run
     this._hintHold = false;
@@ -774,7 +791,6 @@ class Game {
       fireRange: spec.fireRange,
       fireCd: rand(1, spec.fireCd),
       fireDelay: spec.fireCd / diff / (elite ? 1.2 : 1),
-      aggro: spec.aggro,
       score: elite ? Math.round(spec.score * 1.5) : spec.score,
       shotSpeed: spec.shotSpeed,
       // fewer hulls on the field now, so each one hits harder — being
@@ -1109,7 +1125,7 @@ class Game {
     const pool = UPGRADES.filter((u) => (p.up[u.id] || 0) < u.max);
     if (!pool.length) { this.score += 500; return; }   // full build: cash it in
     for (let i = pool.length - 1; i > 0; i--) {
-      const j = (Math.random() * (i + 1)) | 0;
+      const j = (RNG() * (i + 1)) | 0;
       const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
     }
     p.pendingOffers = pool.slice(0, Math.min(3, pool.length)).map((u) => u.id);
@@ -1693,9 +1709,16 @@ class Game {
       const dx = t.x - b.x, dz = t.z - b.z;
       const d = Math.hypot(dx, dz), min = b.radius + radius;
       if (d < min) {
-        const f = (min - d) / (d || 1);
-        t.x += dx * f;
-        t.z += dz * f;
+        if (d < 1e-4) {
+          // dead center: dx/dz are both zero, so scaling them pushes nowhere
+          // and the tank stays buried in the hull. Eject along the hull axis.
+          t.x = b.x + fwdX(b.angle) * min;
+          t.z = b.z + fwdZ(b.angle) * min;
+        } else {
+          const f = (min - d) / d;
+          t.x += dx * f;
+          t.z += dz * f;
+        }
         hit = true;
       }
     }
@@ -1771,6 +1794,7 @@ class Game {
    * alarm can decay once everyone has lost you. */
   _senseUpdate(e, dt) {
     const spec = ENEMY_TYPES[e.type];
+    const dr = this._diff();   // runs per enemy per player per frame — hoist it
     if (e.alerted) {
       let seen = false;
       for (const pl of this.players) {
@@ -1784,7 +1808,7 @@ class Game {
       }
       if (seen) {
         e.seenT = 0;
-        this.alarmT = Math.max(this.alarmT, this._diff().alarm);   // fresh contact
+        this.alarmT = Math.max(this.alarmT, dr.alarm);   // fresh contact
       } else {
         e.seenT += dt;
       }
@@ -1806,7 +1830,7 @@ class Game {
       const bearing = Math.abs(wrapAngle(angleTo(pl.x - e.x, pl.z - e.z) - e.angle));
       if (bearing > SIGHT_CONE && d > 9 + sig * 16) continue;   // behind it, and too far to hear
       if (!this._losClear(e.x, e.z, pl.x, pl.z)) continue;
-      const f = (0.7 + 2.4 * (1 - d / sightR)) * this._diff().detect *
+      const f = (0.7 + 2.4 * (1 - d / sightR)) * dr.detect *
         (1 - 0.2 * ((pl.up && pl.up.ghost) || 0));
       if (f > fill) { fill = f; sx = pl.x; sz = pl.z; }
     }
@@ -1826,17 +1850,18 @@ class Game {
     this.suspicion = false;
     for (const e of this.enemies) {
       const ex0 = e.x, ez0 = e.z;
+      const spec = ENEMY_TYPES[e.type];
       e.hitFlash = Math.max(0, e.hitFlash - dt * 4);
       const p = this._nearestPlayer(e.x, e.z);
       const distP = p ? Math.hypot(p.x - e.x, p.z - e.z) : Infinity;
       // a patrol only fights what its sensors actually found
       if (!this.bossLevel) this._senseUpdate(e, dt);
-      const hunting = !!p && e.alerted && distP < e.aggro;
+      const hunting = !!p && e.alerted;
       // unaware patrols roll slow; an investigating hull picks up the pace
       let moveMul = e.alerted ? 1 : (e.invT > 0 ? 0.8 : 0.55);
 
       // phantoms shimmer out of visibility once the hunt is on, decloak to fire
-      if (ENEMY_TYPES[e.type].cloaks) {
+      if (spec.cloaks) {
         e.decloakT = Math.max(0, e.decloakT - dt);
         const target = (!e.alerted || e.decloakT > 0 || e.hitFlash > 0) ? 0 : 1;
         e.cloak += (target - e.cloak) * Math.min(1, dt * 2.5);
@@ -2006,11 +2031,11 @@ class Game {
         }
         const aimDiff = Math.abs(wrapAngle(angleTo(aimX - e.x, aimZ - e.z) - e.angle));
         // phantoms telegraph: decloak a beat before the shot lands
-        if (ENEMY_TYPES[e.type].cloaks && aimDiff < 0.5 && e.decloakT <= 0 && e.cloak > 0.5) {
+        if (spec.cloaks && aimDiff < 0.5 && e.decloakT <= 0 && e.cloak > 0.5) {
           e.decloakT = 1.6;
           this._sfx('cloak');
         }
-        const canFire = !ENEMY_TYPES[e.type].cloaks || e.cloak < 0.35;
+        const canFire = !spec.cloaks || e.cloak < 0.35;
         if (aimDiff < 0.12 && canFire && this._losClear(e.x, e.z, p.x, p.z)) {
           e.fireCd = e.fireDelay / (1 + this.alert * 0.3);
           this.projectiles.push({
@@ -2157,8 +2182,9 @@ class Game {
           if (segDist2(sx, sz, pr.x, pr.z, e.x, e.z) < 2.4 * 2.4) {
             // SHELLBACK: the frontal plate deflects shells — flank the arc,
             // lob over it, or ram straight through it
-            if (e.type === 'shellback' &&
-                Math.abs(wrapAngle(angleTo(pr.x - e.x, pr.z - e.z) - e.angle)) < 1.05) {
+            const plate = ENEMY_TYPES[e.type].frontArmor;
+            if (plate &&
+                Math.abs(wrapAngle(angleTo(pr.x - e.x, pr.z - e.z) - e.angle)) < plate) {
               dead = true;
               this._burst(pr.x, 1.6, pr.z, 6, [0.7, 0.8, 1.0], 5);
               this._sfx('deflect');
@@ -2373,10 +2399,11 @@ class Game {
     const e = this.enemies[index];
     // WARDEN umbrella: hostiles under it shrug off cannon fire — lob over
     // it, mine it, ram through it, or kill the warden first
-    if (via === 'cannon' && e.type !== 'warden') {
+    if (via === 'cannon' && !ENEMY_TYPES[e.type].aura) {
       for (const w of this.enemies) {
-        if (w.type !== 'warden') continue;
-        if (dist2(w.x, w.z, e.x, e.z) < 16 * 16) {
+        const aura = ENEMY_TYPES[w.type].aura;
+        if (!aura) continue;
+        if (dist2(w.x, w.z, e.x, e.z) < aura * aura) {
           this._burst(e.x, 1.8, e.z, 6, [1, 0.85, 0.3], 5);
           this._sfx('deflect');
           // the umbrella flared: the pack knows it's under fire
