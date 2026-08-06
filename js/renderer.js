@@ -1,15 +1,24 @@
-/* Minimal WebGL flat-shaded renderer + small column-major mat4 library.
+/* WebGL flat-shaded renderer + small column-major mat4 library.
  *
  * Beyond the base forward pass this renderer carries the game's whole "neon
  * over the void" look:
  *  - up to MAX_LIGHTS dynamic point lights (muzzle flashes, explosions,
  *    tracers) applied to lit geometry, so the action illuminates the arena
+ *  - a real-time directional SHADOW MAP: a depth-only pass from the sun,
+ *    packed into RGBA8 (portable to WebGL1, no depth-texture extension) and
+ *    sampled back with a 3x3 PCF kernel, so hulls and cover ground themselves
+ *    on the arena floor instead of floating over it
+ *  - specular + fresnel rim lighting, which is what keeps flat-shaded facets
+ *    from reading as untextured cardboard
  *  - additive blending + soft round particles for glowing energy effects
  *  - an HDR-ish glow pipeline: scene renders into an offscreen target, a
  *    bright-pass extracts hot pixels, they get gaussian-blurred at half res,
- *    and the composite pass adds the bloom back with FXAA + a vignette.
- * The glow pipeline degrades gracefully: if FBOs fail (or GLOW FX is off in
- * settings) everything renders straight to the canvas like before.
+ *    and the composite pass adds the bloom back over an ACES-tonemapped,
+ *    graded image with FXAA, chromatic aberration, radial speed blur, film
+ *    grain and a vignette.
+ * Every stage degrades gracefully: if FBOs fail (or GLOW FX is off in
+ * settings) everything renders straight to the canvas like before, and if the
+ * shadow target fails the sun just stops casting.
  *
  * Antialiasing: the context is created with antialias:true, but that only
  * covers direct-to-canvas rendering — an offscreen FBO gets no MSAA, which
@@ -34,6 +43,37 @@ const m4 = {
     out[11] = -1;
     out[14] = 2 * far * near * nf;
     return out;
+  },
+  /* Orthographic projection — the shadow map's light frustum. */
+  ortho(l, r, b, t, n, f, out) {
+    out = out ? out.fill(0) : new Float32Array(16);
+    out[0] = 2 / (r - l);
+    out[5] = 2 / (t - b);
+    out[10] = -2 / (f - n);
+    out[12] = -(r + l) / (r - l);
+    out[13] = -(t + b) / (t - b);
+    out[14] = -(f + n) / (f - n);
+    out[15] = 1;
+    return out;
+  },
+  /* Right-handed look-at view matrix (used to place the sun's camera). */
+  lookAt(ex, ey, ez, cx, cy, cz, ux, uy, uz, out) {
+    let zx = ex - cx, zy = ey - cy, zz = ez - cz;
+    let l = Math.hypot(zx, zy, zz) || 1;
+    zx /= l; zy /= l; zz /= l;
+    let xx = uy * zz - uz * zy, xy = uz * zx - ux * zz, xz = ux * zy - uy * zx;
+    l = Math.hypot(xx, xy, xz) || 1;
+    xx /= l; xy /= l; xz /= l;
+    const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+    const m = out || new Float32Array(16);
+    m[0] = xx; m[1] = yx; m[2] = zx; m[3] = 0;
+    m[4] = xy; m[5] = yy; m[6] = zy; m[7] = 0;
+    m[8] = xz; m[9] = yz; m[10] = zz; m[11] = 0;
+    m[12] = -(xx * ex + xy * ey + xz * ez);
+    m[13] = -(yx * ex + yy * ey + yz * ez);
+    m[14] = -(zx * ex + zy * ey + zz * ez);
+    m[15] = 1;
+    return m;
   },
   /* All builders below take an optional `out` matrix so per-frame callers can
    * reuse scratch storage instead of allocating hundreds of Float32Arrays a
@@ -99,8 +139,19 @@ const CAM_PROJ = new Float32Array(16);
 const CAM_A = new Float32Array(16);
 const CAM_B = new Float32Array(16);
 const CAM_C = new Float32Array(16);
+// shadow pass scratch
+const SUN_PROJ = new Float32Array(16);
+const SUN_VIEW = new Float32Array(16);
+const SUN_VP = new Float32Array(16);
 
 const MAX_LIGHTS = 12;
+// RENDER QUALITY picks the map size: HIGH resolves a tank's silhouette
+// cleanly, LOW quarters the fill cost of the sun pass for weak GPUs
+const SHADOW_SIZE_HI = 1024;
+const SHADOW_SIZE_LO = 512;
+// half-extent of the sun's ortho box, in world units, centred ahead of the
+// camera — tight enough that a 1024 map still resolves a tank's silhouette
+const SHADOW_RADIUS = 62;
 
 const VS = `
 attribute vec3 aPos;
@@ -109,12 +160,14 @@ attribute vec3 aColor;
 uniform mat4 uProj;
 uniform mat4 uView;
 uniform mat4 uModel;
+uniform mat4 uShadowMat;
 uniform mediump float uPointMode;
 uniform mediump float uPixelScale;
 varying vec3 vColor;
 varying vec3 vNormal;
 varying vec3 vWorld;
 varying float vFogDepth;
+varying vec4 vShadowPos;
 void main() {
   vec4 world = uModel * vec4(aPos, 1.0);
   vec4 viewPos = uView * world;
@@ -130,6 +183,7 @@ void main() {
   vNormal = normalize(mat3(uModel) * (aNormal / max(s2, vec3(1e-8))));
   vWorld = world.xyz;
   vFogDepth = -viewPos.z;
+  vShadowPos = uShadowMat * world;
   if (uPointMode > 0.5) {
     gl_PointSize = clamp(aNormal.x * uPixelScale / max(gl_Position.w, 0.1), 1.0, 64.0);
   }
@@ -139,6 +193,7 @@ void main() {
 const FS = `
 precision mediump float;
 uniform vec3 uLightDir;
+uniform vec3 uCamPos;
 uniform vec3 uFogColor;
 uniform float uFogDensity;
 uniform float uUnlit;
@@ -148,10 +203,43 @@ uniform vec3 uTint;
 uniform int uNumLights;
 uniform vec4 uLightPosR[${MAX_LIGHTS}];   // xyz = world pos, w = 1/radius
 uniform vec3 uLightCol[${MAX_LIGHTS}];
+uniform sampler2D uShadowMap;
+uniform float uShadowOn;
+uniform float uShadowTexel;
 varying vec3 vColor;
 varying vec3 vNormal;
 varying vec3 vWorld;
 varying float vFogDepth;
+varying vec4 vShadowPos;
+
+float unpackDepth(vec4 c) {
+  return dot(c, vec4(1.0, 1.0 / 255.0, 1.0 / 65025.0, 1.0 / 16581375.0));
+}
+
+/* 3x3 PCF over the packed depth map, feathered to nothing at the edge of the
+ * sun's ortho box so geometry does not pop as the box follows the camera. */
+float sunShadow(float ndl) {
+  if (uShadowOn < 0.5) return 1.0;
+  vec3 sp = vShadowPos.xyz / vShadowPos.w;
+  sp = sp * 0.5 + 0.5;
+  if (sp.z > 1.0) return 1.0;
+  vec2 edge = abs(sp.xy - 0.5);
+  float fade = 1.0 - smoothstep(0.40, 0.499, max(edge.x, edge.y));
+  if (fade <= 0.0) return 1.0;
+  // slope-scaled bias: grazing facets need much more slack than flat ones
+  float bias = 0.0016 + 0.0075 * (1.0 - ndl);
+  float lit = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 o = vec2(float(x), float(y)) * uShadowTexel;
+      float d = unpackDepth(texture2D(uShadowMap, sp.xy + o));
+      lit += step(sp.z - bias, d);
+    }
+  }
+  lit /= 9.0;
+  return mix(1.0, lit, fade);
+}
+
 void main() {
   float pointFade = 1.0;
   if (uPointMode > 0.5) {
@@ -164,8 +252,23 @@ void main() {
       pointFade = (1.0 - r) * (1.0 - r) * (1.0 + 2.0 * r);
     }
   }
-  float diff = max(dot(normalize(vNormal), uLightDir), 0.0);
-  vec3 lit = vColor * (0.32 + 0.7 * diff);
+  vec3 N = normalize(vNormal);
+  vec3 V = normalize(uCamPos - vWorld);
+  float diff = max(dot(N, uLightDir), 0.0);
+  float shadow = mix(1.0, sunShadow(diff), step(0.5, 1.0 - uPointMode));
+  // ambient is only lightly shadowed — shadowed facets go cool and deep, not
+  // black, which is what keeps the arena readable in the dark
+  vec3 lit = vColor * (0.32 * (0.80 + 0.20 * shadow) + 0.7 * diff * shadow);
+  // specular: a tight sun highlight rakes across the facets as hulls turn
+  vec3 H = normalize(uLightDir + V);
+  float spec = pow(max(dot(N, H), 0.0), 28.0) * diff * shadow;
+  lit += vec3(0.55, 0.62, 0.68) * spec * 0.55;
+  // fresnel rim in the arena's cold key colour — reads the silhouette of every
+  // hull against the void even when it is facing away from the sun. Masked off
+  // near-horizontal facets: the arena floor is seen at a permanent grazing
+  // angle, and an unmasked fresnel term turns the whole ground into haze.
+  float rim = pow(1.0 - max(dot(N, V), 0.0), 4.0) * (1.0 - abs(N.y) * 0.9);
+  lit += vec3(0.16, 0.42, 0.44) * rim * (0.30 + 0.70 * vColor);
   // dynamic point lights: shots and explosions splash light onto lit geometry
   vec3 dyn = vec3(0.0);
   for (int i = 0; i < ${MAX_LIGHTS}; i++) {
@@ -182,14 +285,39 @@ void main() {
 }
 `;
 
+/* ---- shadow pass -------------------------------------------------------- */
+/* Depth-only render from the sun. The depth is packed into RGBA8 by hand
+ * rather than written to a depth texture, because depth-texture support is an
+ * extension on WebGL1 and this way the pass is identical everywhere. */
+
+const SHADOW_VS = `
+attribute vec3 aPos;
+uniform mat4 uModel;
+uniform mat4 uLightVP;
+void main() {
+  gl_Position = uLightVP * (uModel * vec4(aPos, 1.0));
+}
+`;
+
+const SHADOW_FS = `
+precision highp float;
+void main() {
+  const vec4 bit = vec4(1.0, 255.0, 65025.0, 16581375.0);
+  const vec4 mask = vec4(1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0, 0.0);
+  vec4 c = fract(gl_FragCoord.z * bit);
+  c -= c.gbaa * mask;
+  gl_FragColor = c;
+}
+`;
+
 /* ---- post-processing shaders ------------------------------------------- */
 
 const QUAD_VS = `
-attribute vec2 aPos;
+attribute vec3 aPos;
 varying vec2 vUV;
 void main() {
-  vUV = aPos * 0.5 + 0.5;
-  gl_Position = vec4(aPos, 0.0, 1.0);
+  vUV = aPos.xy * 0.5 + 0.5;
+  gl_Position = vec4(aPos.xy, 0.0, 1.0);
 }
 `;
 
@@ -225,14 +353,26 @@ void main() {
 }
 `;
 
-/* Composite: FXAA the sharp scene (the offscreen target has no MSAA), add
- * the blurred bloom on top, then a gentle vignette to pull focus center. */
+/* Composite — the whole "film" half of the look lives here:
+ *   FXAA -> radial speed blur -> chromatic aberration -> bloom add ->
+ *   exposure -> ACES tonemap -> grade/flash -> vignette -> grain
+ * Every effect is driven by a uniform the game animates (setPostFx), so
+ * boosting, taking a hit and dying all read differently on screen. */
 const COMPOSITE_FS = `
 precision mediump float;
 uniform sampler2D uScene;
 uniform sampler2D uBloom;
 uniform vec2 uTexel;
 uniform float uBloomStrength;
+uniform float uTime;
+uniform float uExposure;
+uniform float uAberration;
+uniform float uRadial;
+uniform float uGrain;
+uniform float uVignette;
+uniform float uSaturation;
+uniform vec3 uGrade;
+uniform vec3 uFlash;
 varying vec2 vUV;
 
 vec3 fxaa(sampler2D tex, vec2 uv, vec2 texel) {
@@ -265,15 +405,59 @@ vec3 fxaa(sampler2D tex, vec2 uv, vec2 texel) {
   return rgbB;
 }
 
+/* Narkowicz's ACES approximation — the filmic shoulder that keeps stacked
+ * additive glow from clipping to flat white. */
+vec3 aces(vec3 x) {
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
 void main() {
+  vec2 fromCenter = vUV - 0.5;
+  float r2 = dot(fromCenter, fromCenter);
+
+  // radial speed blur: the frame smears toward the edges under boost
   vec3 scene = fxaa(uScene, vUV, uTexel);
+  if (uRadial > 0.001) {
+    vec3 sm = scene;
+    for (int i = 1; i <= 5; i++) {
+      float k = float(i) * 0.2 * uRadial * 0.09;
+      sm += texture2D(uScene, vUV - fromCenter * k).rgb;
+    }
+    scene = mix(scene, sm / 6.0, clamp(uRadial, 0.0, 1.0) * smoothstep(0.02, 0.25, r2));
+  }
+
+  // chromatic aberration: lens fringing that grows toward the corners
+  if (uAberration > 0.001) {
+    vec2 off = fromCenter * uAberration * (0.35 + r2 * 2.4);
+    scene.r = texture2D(uScene, vUV + off).r;
+    scene.b = texture2D(uScene, vUV - off).b;
+  }
+
   vec3 bloom = texture2D(uBloom, vUV).rgb;
-  vec3 col = scene + bloom * uBloomStrength;
-  // soft filmic-ish rolloff so stacked glow saturates instead of clipping
-  col = col / (1.0 + col * 0.10);
-  vec2 v = vUV - 0.5;
-  col *= 1.0 - dot(v, v) * 0.38;
-  gl_FragColor = vec4(col, 1.0);
+  vec3 col = (scene + bloom * uBloomStrength) * uExposure;
+  col = aces(col);
+
+  // grade: a colour multiplier plus an additive flash (hits, warps, deaths)
+  col *= uGrade;
+  col += uFlash;
+  float luma = dot(col, vec3(0.299, 0.587, 0.114));
+  col = mix(vec3(luma), col, uSaturation);
+
+  // vignette
+  col *= 1.0 - r2 * uVignette;
+
+  // film grain, animated per frame and rolled off in the highlights so it
+  // lives in the shadows where real grain lives
+  if (uGrain > 0.001) {
+    float n = hash(vUV * vec2(1024.0, 768.0) + fract(uTime) * 91.7) - 0.5;
+    col += n * uGrain * (1.0 - luma * 0.7);
+  }
+
+  gl_FragColor = vec4(max(col, 0.0), 1.0);
 }
 `;
 
@@ -291,15 +475,14 @@ class Renderer {
     this.program = this._buildProgram(VS, FS);
     gl.useProgram(this.program);
 
-    this.attribs = {
-      pos: gl.getAttribLocation(this.program, 'aPos'),
-      normal: gl.getAttribLocation(this.program, 'aNormal'),
-      color: gl.getAttribLocation(this.program, 'aColor'),
-    };
+    // attribute locations are forced identical in every program (see
+    // _buildProgram), so one vertex-format binding serves all passes
+    this.attribs = { pos: 0, normal: 1, color: 2 };
     this.uniforms = {};
-    for (const name of ['uProj', 'uView', 'uModel', 'uLightDir', 'uFogColor',
+    for (const name of ['uProj', 'uView', 'uModel', 'uLightDir', 'uCamPos', 'uFogColor',
                         'uFogDensity', 'uUnlit', 'uPointMode', 'uSoftPoint', 'uTint',
-                        'uPixelScale', 'uNumLights', 'uLightPosR', 'uLightCol']) {
+                        'uPixelScale', 'uNumLights', 'uLightPosR', 'uLightCol',
+                        'uShadowMat', 'uShadowMap', 'uShadowOn', 'uShadowTexel']) {
       this.uniforms[name] = gl.getUniformLocation(this.program, name);
     }
 
@@ -313,14 +496,19 @@ class Renderer {
     gl.uniform3fv(this.uniforms.uFogColor, this.fogColor);
     this.fogDensity = 0.0058;
     gl.uniform1f(this.uniforms.uFogDensity, this.fogDensity);
-    const L = [0.35, 0.8, 0.48];
-    const ll = Math.hypot(L[0], L[1], L[2]);
-    gl.uniform3f(this.uniforms.uLightDir, L[0] / ll, L[1] / ll, L[2] / ll);
+    this.sunDir = [0.35, 0.8, 0.48];
+    const ll = Math.hypot(this.sunDir[0], this.sunDir[1], this.sunDir[2]);
+    this.sunDir = [this.sunDir[0] / ll, this.sunDir[1] / ll, this.sunDir[2] / ll];
+    gl.uniform3fv(this.uniforms.uLightDir, this.sunDir);
     gl.uniform3f(this.uniforms.uTint, 1, 1, 1);
     gl.uniform1f(this.uniforms.uUnlit, 0);
     gl.uniform1f(this.uniforms.uPointMode, 0);
     gl.uniform1f(this.uniforms.uSoftPoint, 0);
     gl.uniform1i(this.uniforms.uNumLights, 0);
+    gl.uniform1i(this.uniforms.uShadowMap, 0);
+    gl.uniform1f(this.uniforms.uShadowOn, 0);
+    gl.uniform1f(this.uniforms.uShadowTexel, 1 / SHADOW_SIZE_HI);
+    gl.uniformMatrix4fv(this.uniforms.uShadowMat, false, m4._I);
 
     // streaming particle buffer
     this.maxParticles = 2048;
@@ -335,15 +523,46 @@ class Renderer {
     this.lightPosR = new Float32Array(MAX_LIGHTS * 4);
     this.lightCol = new Float32Array(MAX_LIGHTS * 3);
 
-    // ---- glow pipeline ----------------------------------------------------
+    // ---- post / film state --------------------------------------------------
     this.glowEnabled = true;    // user setting (setGlow)
     this.msaaEnabled = true;    // user setting (setMsaa): RENDER QUALITY HIGH
     this.glowSupported = true;  // flipped false if FBO setup fails
     this.bloomStrength = 1.15;
+    /* Film-grade knobs the game animates every frame (see setPostFx). These
+     * are the defaults — a clean, slightly contrasty image with a hint of
+     * grain and lens fringing, i.e. what the game looks like at rest. */
+    this.fx = {
+      exposure: 1.06,
+      aberration: 0.0016,
+      radial: 0,
+      grain: 0.035,
+      vignette: 0.42,
+      saturation: 1.08,
+      grade: [1, 1, 1],
+      flash: [0, 0, 0],
+    };
     try {
       this._initPost();
     } catch (e) {
       this.glowSupported = false;
+    }
+
+    // ---- shadow map ---------------------------------------------------------
+    this.shadowsEnabled = true;
+    this.shadowSupported = true;
+    this.shadowTarget = null;
+    this.shadowSize = SHADOW_SIZE_HI;
+    this.shadowCenterX = 0;
+    this.shadowCenterZ = 0;
+    this.shadowCull = SHADOW_RADIUS * 1.9;
+    this._shadowMode = false;
+    this.shadowMat = m4.identity();
+    try {
+      this.shadowProg = this._buildPostLikeProgram(SHADOW_VS, SHADOW_FS,
+        ['uModel', 'uLightVP']);
+      this._ensureShadowTarget();
+    } catch (e) {
+      this.shadowSupported = false;
     }
   }
 
@@ -361,11 +580,24 @@ class Renderer {
     const prog = gl.createProgram();
     gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsSrc));
     gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsSrc));
+    // every program sees the same attribute slots, so a vertex format bound
+    // for one pass stays valid across a program switch
+    gl.bindAttribLocation(prog, 0, 'aPos');
+    gl.bindAttribLocation(prog, 1, 'aNormal');
+    gl.bindAttribLocation(prog, 2, 'aColor');
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
       throw new Error('Program link error: ' + gl.getProgramInfoLog(prog));
     }
     return prog;
+  }
+
+  _buildPostLikeProgram(vs, fs, uniformNames) {
+    const gl = this.gl;
+    const prog = this._buildProgram(vs, fs);
+    const u = {};
+    for (const n of uniformNames) u[n] = gl.getUniformLocation(prog, n);
+    return { prog, aPos: 0, u };
   }
 
   /* ---- post-processing setup ---------------------------------------------- */
@@ -374,19 +606,16 @@ class Renderer {
     const gl = this.gl;
     this.quadVbo = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quadVbo);
+    // xyz per vertex so the shared aPos slot keeps a 3-float layout
     gl.bufferData(gl.ARRAY_BUFFER,
-      new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), gl.STATIC_DRAW);
 
-    const makePostProg = (fs, uniformNames) => {
-      const prog = this._buildProgram(QUAD_VS, fs);
-      const u = {};
-      for (const n of uniformNames) u[n] = gl.getUniformLocation(prog, n);
-      return { prog, aPos: gl.getAttribLocation(prog, 'aPos'), u };
-    };
-    this.brightProg = makePostProg(BRIGHT_FS, ['uTex']);
-    this.blurProg = makePostProg(BLUR_FS, ['uTex', 'uDir']);
-    this.compositeProg = makePostProg(COMPOSITE_FS,
-      ['uScene', 'uBloom', 'uTexel', 'uBloomStrength']);
+    this.brightProg = this._buildPostLikeProgram(QUAD_VS, BRIGHT_FS, ['uTex']);
+    this.blurProg = this._buildPostLikeProgram(QUAD_VS, BLUR_FS, ['uTex', 'uDir']);
+    this.compositeProg = this._buildPostLikeProgram(QUAD_VS, COMPOSITE_FS,
+      ['uScene', 'uBloom', 'uTexel', 'uBloomStrength', 'uTime', 'uExposure',
+       'uAberration', 'uRadial', 'uGrain', 'uVignette', 'uSaturation',
+       'uGrade', 'uFlash']);
 
     this.sceneFbo = null;   // allocated lazily in _resizePost
     this.msaaFbo = null;    // WebGL2 only: multisampled scene target
@@ -396,13 +625,16 @@ class Renderer {
     this.postH = 0;
   }
 
-  _makeTarget(w, h, depth) {
+  _makeTarget(w, h, depth, nearest) {
     const gl = this.gl;
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    // the packed-depth target must never be filtered: interpolating the packed
+    // bytes produces garbage depths. Only the blur/scene targets want LINEAR.
+    const filter = nearest ? gl.NEAREST : gl.LINEAR;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     const fbo = gl.createFramebuffer();
@@ -491,15 +723,48 @@ class Renderer {
 
   setGlow(on) { this.glowEnabled = !!on; }
 
-  /* RENDER QUALITY: HIGH multisamples the scene pass (WebGL2), LOW renders
-   * it plain and leaves the smoothing to FXAA — much cheaper in fill rate.
-   * Rebuilds the offscreen targets on the next frame, since depth ownership
-   * moves between the MSAA renderbuffer and the scene texture. */
+  /* RENDER QUALITY: HIGH multisamples the scene pass (WebGL2) and runs the
+   * wider bloom; LOW renders plain and leaves the smoothing to FXAA — much
+   * cheaper in fill rate. Rebuilds the offscreen targets on the next frame,
+   * since depth ownership moves between the MSAA renderbuffer and the scene
+   * texture. */
   setMsaa(on) {
     on = !!on;
     if (on === this.msaaEnabled) return;
     this.msaaEnabled = on;
     this.postW = 0;
+  }
+
+  setShadows(on) { this.shadowsEnabled = !!on; }
+
+  /* (Re)allocate the sun's depth target at the size the current quality
+   * setting asks for. Called on the first frame and whenever quality flips. */
+  _ensureShadowTarget() {
+    const want = this.msaaEnabled ? SHADOW_SIZE_HI : SHADOW_SIZE_LO;
+    if (this.shadowTarget && this.shadowSize === want) return;
+    this._dropTarget(this.shadowTarget);
+    this.shadowTarget = null;
+    this.shadowTarget = this._makeTarget(want, want, true, true);
+    this.shadowSize = want;
+    const gl = this.gl;
+    gl.useProgram(this.program);
+    gl.uniform1f(this.uniforms.uShadowTexel, 1 / want);
+  }
+
+  /* Per-frame film grade. Partial objects are fine — anything omitted keeps
+   * its current value, so callers can nudge one knob without restating the
+   * whole grade. */
+  setPostFx(o) {
+    if (!o) return;
+    const fx = this.fx;
+    if (o.exposure !== undefined) fx.exposure = o.exposure;
+    if (o.aberration !== undefined) fx.aberration = o.aberration;
+    if (o.radial !== undefined) fx.radial = o.radial;
+    if (o.grain !== undefined) fx.grain = o.grain;
+    if (o.vignette !== undefined) fx.vignette = o.vignette;
+    if (o.saturation !== undefined) fx.saturation = o.saturation;
+    if (o.grade) fx.grade = o.grade;
+    if (o.flash) fx.flash = o.flash;
   }
 
   createMesh(data, mode) {
@@ -520,6 +785,69 @@ class Renderer {
       this.canvas.height = h;
       this.gl.viewport(0, 0, w, h);
     }
+  }
+
+  /* ---- shadow pass ---------------------------------------------------------
+   * Call before beginFrame with the same camera; draw only the casters (hulls,
+   * cover, debris) between begin and end. Returns false when shadows are off
+   * or unsupported, in which case the caller skips the caster pass entirely. */
+  beginShadow(camera) {
+    if (!this.shadowsEnabled || !this.shadowSupported) return false;
+    const gl = this.gl;
+    try {
+      this._ensureShadowTarget();
+    } catch (e) {
+      this.shadowSupported = false;   // GPU refused the target: stop casting
+      return false;
+    }
+    const SHADOW_SIZE = this.shadowSize;
+    const L = this.sunDir;
+    // centre the sun's box a little ahead of the camera so the shadowed region
+    // covers what the player is actually looking at
+    // forward is (-sin yaw, -cos yaw), matching the sim's fwdX/fwdZ
+    const ahead = 26;
+    const cx = camera.x - Math.sin(camera.yaw) * ahead;
+    const cz = camera.z - Math.cos(camera.yaw) * ahead;
+    const dist = 150;
+    const view = m4.lookAt(cx + L[0] * dist, L[1] * dist, cz + L[2] * dist,
+      cx, 0, cz, 0, 1, 0, SUN_VIEW);
+    // snap the box to whole shadow texels, or the map crawls with the camera
+    // and every shadow edge shimmers
+    const texel = (SHADOW_RADIUS * 2) / SHADOW_SIZE;
+    const lx = view[0] * cx + view[4] * 0 + view[8] * cz + view[12];
+    const ly = view[1] * cx + view[5] * 0 + view[9] * cz + view[13];
+    const sx = Math.round(lx / texel) * texel - lx;
+    const sy = Math.round(ly / texel) * texel - ly;
+    const proj = m4.ortho(-SHADOW_RADIUS + sx, SHADOW_RADIUS + sx,
+      -SHADOW_RADIUS + sy, SHADOW_RADIUS + sy, 1, dist * 2 + 120, SUN_PROJ);
+    m4.multiply(proj, view, SUN_VP);
+    this.shadowMat.set(SUN_VP);
+    // published so the caster pass can cull everything the box can't reach
+    this.shadowCenterX = cx;
+    this.shadowCenterZ = cz;
+    this.shadowCull = SHADOW_RADIUS * 1.9;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowTarget.fbo);
+    gl.viewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
+    gl.clearColor(1, 1, 1, 1);          // "nothing here" = maximum depth
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.clearColor(this.fogColor[0], this.fogColor[1], this.fogColor[2], 1);
+    gl.useProgram(this.shadowProg.prog);
+    gl.uniformMatrix4fv(this.shadowProg.u.uLightVP, false, SUN_VP);
+    // render backfaces only: the depth recorded is then the *far* side of each
+    // solid, which pushes acne off the lit surfaces entirely
+    gl.cullFace(gl.FRONT);
+    this._shadowMode = true;
+    return true;
+  }
+
+  endShadow() {
+    if (!this._shadowMode) return;
+    const gl = this.gl;
+    this._shadowMode = false;
+    gl.cullFace(gl.BACK);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this._shadowCastThisFrame = true;
   }
 
   /* camera: { x, y, z, yaw, pitch, roll, fov } */
@@ -563,6 +891,18 @@ class Renderer {
 
     gl.uniformMatrix4fv(this.uniforms.uProj, false, proj);
     gl.uniformMatrix4fv(this.uniforms.uView, false, view);
+    gl.uniform3f(this.uniforms.uCamPos, camera.x, camera.y, camera.z);
+
+    // hand the sun's matrix + map to the lighting shader (unit 0 is the
+    // shadow map for the whole scene pass; the post passes rebind it later)
+    const casting = !!this._shadowCastThisFrame;
+    gl.uniform1f(this.uniforms.uShadowOn, casting ? 1 : 0);
+    if (casting) {
+      gl.uniformMatrix4fv(this.uniforms.uShadowMat, false, this.shadowMat);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.shadowTarget.tex);
+    }
+    this._shadowCastThisFrame = false;
     this.pixelScale = this.canvas.height * 1.2;
   }
 
@@ -606,12 +946,25 @@ class Renderer {
   /* opts: unlit, tint, nofog (skybox geometry must not dissolve into fog),
    * points (GL_POINTS mesh with size in aNormal.x, like the particle path),
    * additive (glow geometry: blend ONE,ONE with no depth writes),
+   * decal (ground marks: blend ZERO, ONE_MINUS_SRC_COLOR so the fragment
+   * colour reads as an opacity mask — white darkens the floor fully, black
+   * leaves it alone, which is what feathers a scorch instead of stamping a
+   * hard polygon. Depth-tested but never written, so overlapping marks stack
+   * instead of z-fighting),
    * soft (round points fade at the rim instead of hard-clipping),
    * nodepth (backdrop geometry: no depth test or writes — at sky distances
    * the 16-bit FBO depth buffer can't separate the layers and they z-fight,
    * so the backdrop relies on painter's order instead) */
   draw(mesh, model, opts) {
     const gl = this.gl;
+    if (this._shadowMode) {
+      // depth-only pass: glow, sprites and backdrops cast nothing
+      if (opts && (opts.additive || opts.decal || opts.points || opts.nodepth)) return;
+      gl.uniformMatrix4fv(this.shadowProg.u.uModel, false, model || this.identityModel);
+      this._bindVertexFormat(mesh.vbo);
+      gl.drawArrays(mesh.mode, 0, mesh.count);
+      return;
+    }
     gl.uniformMatrix4fv(this.uniforms.uModel, false, model || this.identityModel);
     gl.uniform1f(this.uniforms.uUnlit, opts && opts.unlit ? 1 : 0);
     const tint = (opts && opts.tint) || null;
@@ -631,6 +984,12 @@ class Renderer {
       gl.blendFunc(gl.ONE, gl.ONE);
       gl.depthMask(false);
     }
+    const decal = opts && opts.decal;
+    if (decal) {
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ZERO, gl.ONE_MINUS_SRC_COLOR);
+      gl.depthMask(false);
+    }
     const nodepth = opts && opts.nodepth;
     if (nodepth) {
       gl.disable(gl.DEPTH_TEST);
@@ -638,7 +997,7 @@ class Renderer {
     }
     this._bindVertexFormat(mesh.vbo);
     gl.drawArrays(mesh.mode, 0, mesh.count);
-    if (additive) {
+    if (additive || decal) {
       gl.disable(gl.BLEND);
       gl.depthMask(true);
     }
@@ -654,7 +1013,7 @@ class Renderer {
 
   /* particles: array of {x,y,z,size,r,g,b} — soft additive glow sprites */
   drawParticles(particles) {
-    if (!particles.length) return;
+    if (!particles.length || this._shadowMode) return;
     const gl = this.gl;
     const n = Math.min(particles.length, this.maxParticles);
     const d = this.particleData;
@@ -708,7 +1067,7 @@ class Renderer {
 
     const fullscreen = (p) => {
       gl.enableVertexAttribArray(p.aPos);
-      gl.vertexAttribPointer(p.aPos, 2, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 0, 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     };
 
@@ -724,22 +1083,26 @@ class Renderer {
     gl.uniform1i(this.brightProg.u.uTex, 0);
     fullscreen(this.brightProg);
 
-    // 2) two gaussian iterations (H+V each) ping-ponging at half res
+    // 2) gaussian iterations (H+V each) ping-ponging at half res, each pair
+    //    reaching further than the last — a wide, filmic falloff rather than a
+    //    tight halo. HIGH quality affords three pairs; LOW stops at two.
     gl.useProgram(this.blurProg.prog);
     gl.uniform1i(this.blurProg.u.uTex, 0);
     let src = 0;
-    for (let i = 0; i < 4; i++) {
+    const passes = this.msaaEnabled ? 6 : 4;
+    for (let i = 0; i < passes; i++) {
       const dst = 1 - src;
       gl.bindFramebuffer(gl.FRAMEBUFFER, ping[dst].fbo);
       gl.bindTexture(gl.TEXTURE_2D, ping[src].tex);
-      const spread = 1 + (i >> 1);   // second iteration reaches further
+      const spread = 1 + (i >> 1) * 1.6;   // later iterations reach further
       if (i % 2 === 0) gl.uniform2f(this.blurProg.u.uDir, spread / bw, 0);
       else gl.uniform2f(this.blurProg.u.uDir, 0, spread / bh);
       fullscreen(this.blurProg);
       src = dst;
     }
 
-    // 3) composite to the canvas: FXAA'd scene + bloom + vignette
+    // 3) composite to the canvas: graded, tonemapped scene + bloom + film
+    const fx = this.fx;
     gl.useProgram(this.compositeProg.prog);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
@@ -747,10 +1110,20 @@ class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, this.sceneFbo.tex);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, ping[src].tex);
-    gl.uniform1i(this.compositeProg.u.uScene, 0);
-    gl.uniform1i(this.compositeProg.u.uBloom, 1);
-    gl.uniform2f(this.compositeProg.u.uTexel, 1 / this.canvas.width, 1 / this.canvas.height);
-    gl.uniform1f(this.compositeProg.u.uBloomStrength, this.bloomStrength);
+    const u = this.compositeProg.u;
+    gl.uniform1i(u.uScene, 0);
+    gl.uniform1i(u.uBloom, 1);
+    gl.uniform2f(u.uTexel, 1 / this.canvas.width, 1 / this.canvas.height);
+    gl.uniform1f(u.uBloomStrength, this.bloomStrength);
+    gl.uniform1f(u.uTime, (performance.now() % 10000) / 1000);
+    gl.uniform1f(u.uExposure, fx.exposure);
+    gl.uniform1f(u.uAberration, fx.aberration);
+    gl.uniform1f(u.uRadial, fx.radial);
+    gl.uniform1f(u.uGrain, fx.grain);
+    gl.uniform1f(u.uVignette, fx.vignette);
+    gl.uniform1f(u.uSaturation, fx.saturation);
+    gl.uniform3fv(u.uGrade, fx.grade);
+    gl.uniform3fv(u.uFlash, fx.flash);
     fullscreen(this.compositeProg);
 
     gl.activeTexture(gl.TEXTURE0);
