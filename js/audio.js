@@ -1,9 +1,42 @@
-/* Web Audio synthesized retro SFX — no sound files needed. */
+/* Web Audio synthesized retro SFX — no sound files needed.
+ *
+ * The signal path is a small mixing desk rather than a pile of oscillators
+ * wired straight to the speakers:
+ *
+ *   dry voices ─┬─────────────────────────────► master ─┐
+ *               └─ send ─► convolver (arena IR) ────────┤
+ *   music ────────────────► duck ─────────────────────► limiter ─► out
+ *
+ *  - every SFX can be placed in the world: a positional voice gets stereo
+ *    panning from the listener's facing, distance attenuation, an air-
+ *    absorption lowpass that swallows the highs at range, and a reverb send
+ *    that gets wetter the further away it is, so a shell landing across the
+ *    arena reads as *over there*, not as a sound effect in your headphones
+ *  - the reverb impulse is generated procedurally (still zero asset files):
+ *    an exponentially decaying noise tail with a few early reflections, which
+ *    is what gives the arena its size
+ *  - big detonations duck the soundtrack for a beat, the same sidechain trick
+ *    that keeps a film mix from turning to mud
+ *  - a limiter sits across the whole mix so stacked explosions compress
+ *    instead of clipping
+ */
 const AudioSys = (() => {
   let ctx = null;
-  let master = null;
-  let engineOsc = null, engineGain = null, engineFilter = null;
+  let master = null;       // dry SFX bus
+  let limiter = null;      // master limiter — everything lands here
+  let convolver = null;    // arena reverb
+  let reverbReturn = null;
+  let musicDuck = null;    // sidechain gain the soundtrack rides through
   let muted = false;
+
+  // where the ears are: world position + hull facing, fed by the main loop
+  const ear = { x: 0, z: 0, rx: 1, rz: 0, on: false };
+
+  /* Voices route here. Positional plays swap in a per-sound bus for the
+   * duration of the call (sfx builders are synchronous, so a module-level
+   * "current destination" is enough and keeps every builder unchanged). */
+  let dest = null;
+  let send = null;   // reverb send for the voice being built, or null
   // 0..1 volume from the settings screen; 0.7 default maps to the old 0.5 gain
   let vol = 0.7;
   let musicVol = 0.6;
@@ -18,15 +51,129 @@ const AudioSys = (() => {
 
   function gainValue() { return muted ? 0 : vol * 0.72; }
 
+  /* An arena-sized impulse response, synthesized: a handful of early
+   * reflections off the slabs, then an exponentially decaying noise tail.
+   * Stereo, with the two channels decorrelated so the space has width. */
+  function makeImpulse(seconds, decay) {
+    const rate = ctx.sampleRate;
+    const len = Math.max(1, Math.floor(rate * seconds));
+    const buf = ctx.createBuffer(2, len, rate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        const t = i / len;
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay);
+      }
+      // early reflections: discrete slaps in the first ~90 ms
+      for (const [ms, amp] of [[11, 0.55], [23, 0.42], [37, 0.3], [58, 0.24], [89, 0.16]]) {
+        const i = Math.floor((ms / 1000) * rate) + (ch ? 37 : 0);
+        if (i < len) d[i] += (Math.random() < 0.5 ? -amp : amp);
+      }
+    }
+    return buf;
+  }
+
   function ensure() {
     if (ctx) return true;
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return false;
     ctx = new AC();
+
+    // limiter across the whole mix: stacked explosions compress instead of
+    // clipping into digital crunch
+    limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -8;
+    limiter.knee.value = 6;
+    limiter.ratio.value = 12;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.18;
+    limiter.connect(ctx.destination);
+
     master = ctx.createGain();
     master.gain.value = gainValue();
-    master.connect(ctx.destination);
+    master.connect(limiter);
+
+    // reverb return — the arena's own space
+    try {
+      convolver = ctx.createConvolver();
+      convolver.buffer = makeImpulse(1.6, 2.6);
+      reverbReturn = ctx.createGain();
+      reverbReturn.gain.value = 0.55;
+      convolver.connect(reverbReturn);
+      reverbReturn.connect(limiter);
+    } catch (e) {
+      convolver = null;   // no convolver on this device: everything stays dry
+    }
+
+    musicDuck = ctx.createGain();
+    musicDuck.gain.value = 1;
+    musicDuck.connect(limiter);
+
+    dest = master;
     return true;
+  }
+
+  /* Listener pose, pushed by the main loop every frame. Forward is
+   * (-sin yaw, -cos yaw) to match the sim, so the right-ear vector — what
+   * panning is actually measured against — is (cos yaw, -sin yaw). */
+  function setListener(x, z, yaw) {
+    if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(yaw)) return;
+    ear.x = x; ear.z = z;
+    ear.rx = Math.cos(yaw); ear.rz = -Math.sin(yaw);
+    ear.on = true;
+  }
+  function clearListener() { ear.on = false; }
+
+  /* Build a one-shot bus placing a sound in the world. Returns null when the
+   * sound should just play flat (no listener yet, or no position given). */
+  function positionalBus(x, z) {
+    if (!ctx || !ear.on || !Number.isFinite(x) || !Number.isFinite(z)) return null;
+    const dx = x - ear.x, dz = z - ear.z;
+    const d = Math.hypot(dx, dz);
+    const g = ctx.createGain();
+    // inverse-square-ish rolloff, flattened so mid-range action stays present
+    g.gain.value = 1 / (1 + (d * d) / 850);
+    // air absorption: distance eats the highs long before it eats the level
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = Math.max(420, 20000 * Math.exp(-d / 85));
+    let out = lp;
+    if (typeof ctx.createStereoPanner === 'function') {
+      const pan = ctx.createStereoPanner();
+      // hard panning only once a sound is far enough away to have a direction
+      const k = d > 0.001 ? Math.min(1, d / 7) : 0;
+      pan.pan.value = Math.max(-1, Math.min(1, (d > 0.001 ? (dx * ear.rx + dz * ear.rz) / d : 0) * k * 0.85));
+      lp.connect(pan);
+      out = pan;
+    }
+    out.connect(g);
+    g.connect(master);
+    let sendGain = null;
+    if (convolver) {
+      // the further off it happens, the wetter it reads
+      sendGain = ctx.createGain();
+      sendGain.gain.value = 0.10 + 0.45 * Math.min(1, d / 70);
+      sendGain.connect(convolver);
+    }
+    // tear the chain down once the longest possible one-shot has finished
+    setTimeout(() => {
+      try {
+        lp.disconnect(); out.disconnect(); g.disconnect();
+        if (sendGain) sendGain.disconnect();
+      } catch (e) {}
+    }, 3000);
+    return { input: lp, send: sendGain };
+  }
+
+  /* Sidechain: a detonation pulls the soundtrack down and lets it back up. */
+  function duckMusic(amount, seconds) {
+    if (!musicDuck) return;
+    const t = ctx.currentTime;
+    const g = musicDuck.gain;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(g.value, t);
+    g.linearRampToValueAtTime(Math.max(0.05, 1 - amount), t + 0.03);
+    g.linearRampToValueAtTime(1, t + 0.03 + seconds);
   }
 
   function resume() {
@@ -66,7 +213,9 @@ const AudioSys = (() => {
     o.frequency.setValueAtTime(f0, t0);
     if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), t0 + dur);
     env(g, t0, vol, 0.005, dur);
-    o.connect(g); g.connect(master);
+    o.connect(g);
+    g.connect(dest || master);
+    if (send) g.connect(send);
     o.start(t0); o.stop(t0 + dur + 0.05);
   }
 
@@ -90,7 +239,9 @@ const AudioSys = (() => {
     f.frequency.exponentialRampToValueAtTime(Math.max(fEnd, 40), t0 + dur);
     const g = ctx.createGain();
     env(g, t0, vol, 0.005, dur);
-    src.connect(f); f.connect(g); g.connect(master);
+    src.connect(f); f.connect(g);
+    g.connect(dest || master);
+    if (send) g.connect(send);
     src.start(t0, Math.random() * 0.9);    // random slice so repeats don't phase
     src.stop(t0 + dur + 0.05);
   }
@@ -244,7 +395,7 @@ const AudioSys = (() => {
     if (!ctx || musicTimer) return;
     musicBus = ctx.createGain();
     musicBus.gain.value = musicGainValue();
-    musicBus.connect(ctx.destination);
+    musicBus.connect(musicDuck || ctx.destination);
     musicNext = ctx.currentTime + 0.06;
     musicStep = 0;
     musicTimer = setInterval(scheduleMusic, 90);
@@ -386,47 +537,116 @@ const AudioSys = (() => {
     }
   }
 
-  // -- engine hum ----------------------------------------------------------
+  // -- engine ---------------------------------------------------------------
+  /* Four layers instead of one hum, because a tank is not a buzzer:
+   *   sub      a sine at the firing frequency — the part you feel
+   *   body     a detuned sawtooth pair an octave up through a resonant
+   *            lowpass that opens as the throttle does
+   *   tread    bandpassed noise: the track plates slapping the ground, so
+   *            level rides speed rather than throttle
+   *   turbine  a thin high whine that only shows up under boost
+   * All four hang off one gain so the whole plant fades in and out together,
+   * and the whole assembly is torn down once it has faded to nothing. */
+  let eng = null;
   function startEngine() {
-    if (!ctx || engineOsc) return;
-    engineOsc = ctx.createOscillator();
-    engineOsc.type = 'sawtooth';
-    engineOsc.frequency.value = 40;
-    engineFilter = ctx.createBiquadFilter();
-    engineFilter.type = 'lowpass';
-    engineFilter.frequency.value = 220;
-    engineGain = ctx.createGain();
-    engineGain.gain.value = 0;
-    engineOsc.connect(engineFilter);
-    engineFilter.connect(engineGain);
-    engineGain.connect(master);
-    engineOsc.start();
+    if (!ctx || eng) return;
+    const t = ctx.currentTime;
+    const out = ctx.createGain();
+    out.gain.value = 0;
+    out.connect(master);
+
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.value = 26;
+    const subG = ctx.createGain();
+    subG.gain.value = 0.5;
+    sub.connect(subG); subG.connect(out);
+
+    const bodyF = ctx.createBiquadFilter();
+    bodyF.type = 'lowpass';
+    bodyF.frequency.value = 200;
+    bodyF.Q.value = 6;                    // a little resonance = a little growl
+    const bodyG = ctx.createGain();
+    bodyG.gain.value = 0.36;
+    bodyF.connect(bodyG); bodyG.connect(out);
+    const body = [];
+    for (const det of [-7, 9]) {          // detuned pair: beating, not a tone
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = 52;
+      o.detune.value = det;
+      o.connect(bodyF);
+      body.push(o);
+    }
+
+    // tread clatter rides the shared noise buffer the SFX use
+    if (!sfxNoiseBuf) {
+      sfxNoiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+      const d0 = sfxNoiseBuf.getChannelData(0);
+      for (let i = 0; i < d0.length; i++) d0[i] = Math.random() * 2 - 1;
+    }
+    const tread = ctx.createBufferSource();
+    tread.buffer = sfxNoiseBuf;
+    tread.loop = true;
+    const treadF = ctx.createBiquadFilter();
+    treadF.type = 'bandpass';
+    treadF.frequency.value = 420;
+    treadF.Q.value = 1.1;
+    const treadG = ctx.createGain();
+    treadG.gain.value = 0;
+    tread.connect(treadF); treadF.connect(treadG); treadG.connect(out);
+
+    const turbine = ctx.createOscillator();
+    turbine.type = 'triangle';
+    turbine.frequency.value = 420;
+    const turbineG = ctx.createGain();
+    turbineG.gain.value = 0;
+    turbine.connect(turbineG); turbineG.connect(out);
+
+    sub.start(t); body[0].start(t); body[1].start(t); tread.start(t, Math.random() * 0.5);
+    turbine.start(t);
+    eng = { out, sub, subG, body, bodyF, tread, treadG, turbine, turbineG };
   }
 
   function stopEngine() {
-    if (!engineOsc) return;
-    try { engineOsc.stop(); } catch (e) {}
-    engineOsc.disconnect(); engineFilter.disconnect(); engineGain.disconnect();
-    engineOsc = engineGain = engineFilter = null;
+    if (!eng) return;
+    for (const n of [eng.sub, eng.body[0], eng.body[1], eng.tread, eng.turbine]) {
+      try { n.stop(); } catch (e) {}
+      try { n.disconnect(); } catch (e) {}
+    }
+    try { eng.out.disconnect(); } catch (e) {}
+    eng = null;
   }
 
-  /* speed01: 0..1 of max speed. Zero really means silent — the old floor of
-   * 0.05 (and the lazy startEngine here) left a permanent sawtooth hum under
-   * every menu, since main.js silences the engine by calling setEngine(0). */
+  /* speed01: 0..1 of max speed. boost01: 0..1 of how hard the drive is being
+   * pushed. Zero speed really means silent — main.js calls setEngine(0) in the
+   * menus, and a permanently audible idle under the title screen is a bug, not
+   * atmosphere. */
   let engineStopTimer = null;
-  function setEngine(speed01) {
+  function setEngine(speed01, boost01) {
     if (!ctx) return;
-    if (!engineOsc) {
-      if (speed01 <= 0) return;   // nothing to silence — don't boot the hum
+    speed01 = Math.max(0, Math.min(1, speed01 || 0));
+    boost01 = Math.max(0, Math.min(1, boost01 || 0));
+    if (!eng) {
+      if (speed01 <= 0) return;   // nothing to silence — don't boot the plant
       startEngine();
+      if (!eng) return;
     }
     const t = ctx.currentTime;
-    engineOsc.frequency.setTargetAtTime(38 + speed01 * 55, t, 0.08);
-    engineFilter.frequency.setTargetAtTime(180 + speed01 * 500, t, 0.08);
-    engineGain.gain.setTargetAtTime(speed01 <= 0 ? 0 : 0.05 + speed01 * 0.10, t, 0.1);
-    // once the fade-out ramp has landed, tear the oscillator down entirely —
-    // an inaudible sawtooth+filter otherwise keeps processing for the rest of
-    // the session. startEngine() lazily reboots it on the next drive.
+    const ramp = (param, v, tau) => param.setTargetAtTime(v, t, tau);
+    // firing frequency climbs with throttle, and boost adds a hard overrev
+    const f0 = 24 + speed01 * 34 + boost01 * 14;
+    ramp(eng.sub.frequency, f0, 0.09);
+    ramp(eng.body[0].frequency, f0 * 2, 0.09);
+    ramp(eng.body[1].frequency, f0 * 2, 0.09);
+    ramp(eng.bodyF.frequency, 150 + speed01 * 620 + boost01 * 500, 0.1);
+    ramp(eng.treadG.gain, speed01 * 0.13, 0.12);
+    ramp(eng.turbineG.gain, boost01 * 0.028, 0.15);
+    ramp(eng.turbine.frequency, 380 + boost01 * 900 + speed01 * 260, 0.2);
+    ramp(eng.out.gain, speed01 <= 0 ? 0 : 0.20 + speed01 * 0.22 + boost01 * 0.10, 0.1);
+    // once the fade-out ramp has landed, tear the whole plant down — five
+    // inaudible nodes otherwise keep processing for the rest of the session.
+    // startEngine() lazily reboots it on the next drive.
     if (speed01 <= 0) {
       if (!engineStopTimer) {
         engineStopTimer = setTimeout(() => { engineStopTimer = null; stopEngine(); }, 500);
@@ -437,13 +657,30 @@ const AudioSys = (() => {
     }
   }
 
-  function play(name) {
+  /* play('explosion')                 — flat, centred (UI, stingers)
+   * play('explosion', { x, z })       — placed in the arena
+   * Anything that shakes the room also ducks the soundtrack under itself. */
+  const BIG = { explosion: 1, bigExplosion: 1, nadeBoom: 1, bossDown: 1, shock: 1 };
+
+  function play(name, at) {
     if (!ctx || muted) return;
-    if (sfx[name]) sfx[name]();
+    const fn = sfx[name];
+    if (!fn) return;
+    const bus = at ? positionalBus(at.x, at.z) : null;
+    dest = bus ? bus.input : master;
+    send = bus ? bus.send : null;
+    try {
+      fn();
+    } finally {
+      dest = master;
+      send = null;
+    }
+    if (BIG[name]) duckMusic(name === 'bigExplosion' || name === 'bossDown' ? 0.55 : 0.38, 0.45);
   }
 
   return {
     resume, play, setEngine, stopEngine, toggleMuted, isMuted, setVolume,
     setMusicVolume, setMusicMood, setMusicIntensity,
+    setListener, clearListener,
   };
 })();

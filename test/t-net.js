@@ -155,6 +155,76 @@ check('snapshot round-trip: host state survives serialize -> applyLevel/applySta
   }
 });
 
+check('placed sounds survive the wire and spatialize on the client', () => {
+  Net.leave();
+  const host = new Game(hud);
+  host.newRun([{ id: 'host', loadoutIndex: 1 }], 'host', {});
+  host.frameSounds.length = 0;
+  host._sfx('explosion', 41.6, -12.2);   // placed
+  host._sfx('alarm');                    // flat
+
+  const cap = mkConn('capture');
+  Net.state.conns.push(cap);
+  Net.broadcastLevel(host);
+  Net.broadcastState(host, host.frameSounds.slice());
+  Net.state.conns.length = 0;
+  const sMsg = cap.sent[1];
+
+  const heard = [];
+  const realAudio = global.AudioSys;
+  global.AudioSys = { play(name, at) { heard.push({ name, at }); } };
+  try {
+    const client = new Game(hud);
+    client.players = [client._makePlayer({ id: 'host', loadoutIndex: 1 }, 0)];
+    client.localId = 'host';
+    client.player = client.players[0];
+    Net.applyLevel(client, cap.sent[0]);
+    Net.applyState(client, sMsg);
+  } finally {
+    global.AudioSys = realAudio;
+  }
+
+  const boom = heard.find((h) => h.name === 'explosion');
+  const alarm = heard.find((h) => h.name === 'alarm');
+  assert(boom && boom.at && boom.at.x === 42 && boom.at.z === -12,
+    'placed sound lost its position: ' + JSON.stringify(boom));
+  assert(alarm && !alarm.at, 'flat sound gained a position');
+});
+
+check('a hostile snapshot cannot inject a NaN position or a non-string sound key', () => {
+  Net.leave();
+  const host = new Game(hud);
+  host.newRun([{ id: 'host', loadoutIndex: 1 }], 'host', {});
+  const cap = mkConn('capture');
+  Net.state.conns.push(cap);
+  Net.broadcastLevel(host);
+  Net.broadcastState(host, []);
+  Net.state.conns.length = 0;
+  const [lvMsg, sMsg] = cap.sent;
+  // a malicious host controls this field entirely
+  sMsg.snd = [['fire', 'x', 3], [{}, 1, 2], ['boost', NaN, 2], 'alarm', 42, null];
+
+  const heard = [];
+  const realAudio = global.AudioSys;
+  global.AudioSys = { play(name, at) { heard.push({ name, at }); } };
+  try {
+    const client = new Game(hud);
+    client.players = [client._makePlayer({ id: 'host', loadoutIndex: 1 }, 0)];
+    client.localId = 'host';
+    client.player = client.players[0];
+    Net.applyLevel(client, lvMsg);
+    Net.applyState(client, sMsg);
+  } finally {
+    global.AudioSys = realAudio;
+  }
+  assert(heard.length > 0, 'nothing played at all');
+  for (const h of heard) {
+    assert(typeof h.name === 'string', 'non-string sound key reached the mixer');
+    assert(!h.at || (Number.isFinite(h.at.x) && Number.isFinite(h.at.z)),
+      'non-finite position reached the mixer: ' + JSON.stringify(h.at));
+  }
+});
+
 check('clientInterpolate blends entities across cached snapshot indexes', () => {
   Net.leave();
   Net.clientJoin('ABCD', 'X', 1);

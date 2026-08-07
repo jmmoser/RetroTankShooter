@@ -548,17 +548,29 @@ const Net = (() => {
       }
     }
 
-    if (msg.bu) for (const b of msg.bu) game._burst(b.x, b.y, b.z, b.n, b.c, b.p);
+    if (msg.bu) for (const b of msg.bu) {
+      game._burst(b.x, b.y, b.z, b.n, b.c, b.p);
+      // a burst this big was a detonation: burn the floor here too, so a
+      // client's arena carries the same scars as the host's
+      if (b.n >= 24) game._addDecal(b.x, b.z, 2.5 + b.n * 0.09, 26, 'scorch', 0, 0.6);
+    }
     if (msg.de) for (const d of msg.de) game._spawnShards(d.x, d.z, d.c, false);
     if (msg.snd) {
       for (const s of msg.snd) {
-        AudioSys.play(s);
+        // a placed sound arrives as [key, x, z]; a flat one as a bare string.
+        // Clients spatialize it against their *own* listener, so the same
+        // host event sounds like it came from where it happened for everyone.
+        const placed = Array.isArray(s);
+        const k = placed ? s[0] : s;
+        if (typeof k !== 'string') continue;
+        AudioSys.play(k, placed && Number.isFinite(s[1]) && Number.isFinite(s[2])
+          ? { x: s[1], z: s[2] } : null);
         // clients don't run the sim — mirror the host's event banners off
         // the sounds that always accompany them
-        if (s === 'alarm') game.hud.message('ALARM — THE GRID IS HUNTING', '#ff4a3c', 2.4);
-        else if (s === 'coreExposed') game.hud.message('CORE EXPOSED — ATTACK', '#ffd24a', 3);
-        else if (s === 'bossDown') game.hud.message('WARLORD DESTROYED', '#3cff78', 3);
-        else if (s === 'comboBreak') game.hud.message('COMBO BROKEN', '#ff4a3c', 1.5);
+        if (k === 'alarm') game.hud.message('ALARM — THE GRID IS HUNTING', '#ff4a3c', 2.4);
+        else if (k === 'coreExposed') game.hud.message('CORE EXPOSED — ATTACK', '#ffd24a', 3);
+        else if (k === 'bossDown') game.hud.message('WARLORD DESTROYED', '#3cff78', 3);
+        else if (k === 'comboBreak') game.hud.message('COMBO BROKEN', '#ff4a3c', 1.5);
       }
     }
   }

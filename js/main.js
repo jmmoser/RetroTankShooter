@@ -56,6 +56,8 @@
     powerup: renderer.createMesh(Geometry.powerup()),
     mine: renderer.createMesh(Geometry.mine()),
     beacon: renderer.createMesh(Geometry.beacon()),
+    decalDisc: renderer.createMesh(Geometry.decalDisc()),
+    decalQuad: renderer.createMesh(Geometry.decalQuad()),
     bossBody: renderer.createMesh(Geometry.bossBody()),
     bossTurret: renderer.createMesh(Geometry.bossTurret()),
     bossCore: renderer.createMesh(Geometry.bossCore()),
@@ -97,6 +99,7 @@
     document.getElementById('crt').style.display = Settings.get('crt') ? '' : 'none';
     document.getElementById('fps').classList.toggle('hidden', !Settings.get('fps'));
     renderer.setGlow(Settings.get('glow'));
+    renderer.setShadows(Settings.get('shadows'));
     renderer.setMsaa(Settings.get('quality') >= 1);
   }
   Settings.onChange = () => { applySettings(); renderSettingVals(); };
@@ -847,6 +850,9 @@
     uiMode = 'paused';
     resetAbort();
     showScreen('pause');
+    // drop any hit-stop still owed: it should buy a beat of weight on impact,
+    // not hand the player half a second of slow motion after they unpause
+    game.hitStop = 0;
     AudioSys.setEngine(0);
     // set the mood directly: the auto-pause path runs with the tab hidden,
     // where no frame (and thus no updateMusic) will run to drop the combat
@@ -1104,7 +1110,31 @@
   let demoT = 0;
 
   // ---- camera ---------------------------------------------------------------
-  const cam = { x: 0, y: 2.3, z: 0, yaw: 0, pitch: 0, roll: 0, fov: 1.22 };
+  // A camera rig rather than a hard mount: recoil and impacts shove it and a
+  // spring pulls it back, trauma shakes all six axes on smooth noise (white
+  // noise per-frame reads as a cheap rattle — continuous noise reads as a
+  // heavy machine being hit), and the FOV breathes with speed so boosting
+  // feels fast rather than merely being fast.
+  const BASE_FOV = 1.22;
+  const cam = { x: 0, y: 2.3, z: 0, yaw: 0, pitch: 0, roll: 0, fov: BASE_FOV };
+  const rig = {
+    fov: BASE_FOV,
+    kx: 0, kz: 0, vx: 0, vz: 0,   // impact displacement + its velocity
+    leadX: 0, leadZ: 0,           // smoothed look-ahead along the hull's travel
+  };
+
+  /* 1-D value noise: hashed lattice with a smoothstep between samples. Shake
+   * driven by this is continuous, so it reads as inertia instead of static. */
+  function vnoise(t, seed) {
+    const i = Math.floor(t), f = t - i;
+    const h = (n) => {
+      const s = Math.sin((n * 12.9898 + seed * 78.233)) * 43758.5453;
+      return (s - Math.floor(s)) * 2 - 1;
+    };
+    const u = f * f * (3 - 2 * f);
+    const a = h(i), b = h(i + 1);
+    return a + (b - a) * u;
+  }
 
   function inMenu() {
     return uiMode === 'title' || uiMode === 'setup' || uiMode === 'lobby' || uiMode === 'join' ||
@@ -1120,36 +1150,121 @@
       cam.z = Math.sin(demoT) * 95;
       cam.y = 34;
       cam.yaw = angleTo(0 - cam.x, 0 - cam.z);
-      cam.pitch = -0.30;
-      cam.roll = 0;
+      // a slow handheld drift keeps the attract shot alive instead of dead-still
+      cam.pitch = -0.30 + vnoise(demoT * 2.2, 3) * 0.006;
+      cam.roll = vnoise(demoT * 1.7, 9) * 0.008;
+      cam.fov = BASE_FOV;
+      rig.kx = rig.kz = rig.vx = rig.vz = 0;
       return;
     }
     const p = game.player;
     if (!p) return;
-    // bank gently into turns for a hovertank feel
+    const alive = p.alive;
     const ax = Input.axis();
     const speed01 = p.maxSpeed ? Math.min(1, Math.abs(p.speed || 0) / p.maxSpeed) : 0;
-    const rollTarget = (uiMode === 'playing' && p.alive) ? ax.turn * 0.045 * (0.3 + 0.7 * speed01) : 0;
+    const boosting = !!p.boosting;
+
+    // impact impulses drain into a spring, so a shot shoves the view and it
+    // settles back over a few frames instead of teleporting
+    rig.vx += game.kickX; rig.vz += game.kickZ;
+    game.kickX = 0; game.kickZ = 0;
+    const K = 110, C = 17;   // stiff and heavily damped: a shove, not a wobble
+    rig.vx += (-K * rig.kx - C * rig.vx) * dt;
+    rig.vz += (-K * rig.kz - C * rig.vz) * dt;
+    rig.kx = Math.max(-1.4, Math.min(1.4, rig.kx + rig.vx * dt));
+    rig.kz = Math.max(-1.4, Math.min(1.4, rig.kz + rig.vz * dt));
+
+    // trauma: squared so light taps stay subtle and heavy hits really land
+    const trauma = Math.min(1, game.shake) * (Settings.get('shake') / 10);
+    const amt = trauma * trauma;
+    const t = performance.now() / 1000;
+    const sx = vnoise(t * 26, 1) * amt * 0.9 + rig.kx;
+    const sy = vnoise(t * 26, 2) * amt * 0.6;
+    const sz = vnoise(t * 26, 3) * amt * 0.9 + rig.kz;
+    // rotational shake is what sells weight — the lens twists, not just slides
+    const syaw = vnoise(t * 21, 4) * amt * 0.05;
+    const spitch = vnoise(t * 21, 5) * amt * 0.04;
+    const sroll = vnoise(t * 16, 6) * amt * 0.075;
+
+    // bank gently into turns for a hovertank feel
+    const rollTarget = (uiMode === 'playing' && alive) ? ax.turn * 0.045 * (0.3 + 0.7 * speed01) : 0;
     cam.roll += (rollTarget - cam.roll) * Math.min(1, dt * 8);
-    const shake = game.shake * (Settings.get('shake') / 10);
-    const sx = (Math.random() - 0.5) * shake * 0.6;
-    const sy = (Math.random() - 0.5) * shake * 0.5;
-    const sz = (Math.random() - 0.5) * shake * 0.6;   // independent of sx, or the
-                                                      // jitter rides the x=z diagonal
-    if (chaseCam || !p.alive) {
-      const back = 11, up = 5.5;
-      cam.x = p.x - fwdX(p.angle) * back + sx;
-      cam.z = p.z - fwdZ(p.angle) * back + sz;
+
+    // FOV breathes: wide under boost, wider still at speed, and pulls in for
+    // the death cam so the last two seconds read as a close-up
+    let fovTarget = BASE_FOV + speed01 * 0.06 + (boosting ? 0.17 : 0);
+    if (!alive) fovTarget = BASE_FOV - 0.16;
+    rig.fov += (fovTarget - rig.fov) * Math.min(1, dt * (boosting ? 7 : 3.5));
+    cam.fov = rig.fov;
+
+    if (chaseCam || !alive) {
+      // the chase rig trails further back the faster you go, and leads the
+      // camera along the direction of travel rather than the hull's facing
+      const back = 11 + speed01 * 2.6;
+      const up = 5.5 + speed01 * 0.5;
+      const vmag = Math.hypot(p.vx || 0, p.vz || 0) || 1;
+      const tgtLeadX = ((p.vx || 0) / vmag) * speed01 * 2.4;
+      const tgtLeadZ = ((p.vz || 0) / vmag) * speed01 * 2.4;
+      const lerp = Math.min(1, dt * 3);
+      rig.leadX += (tgtLeadX - rig.leadX) * lerp;
+      rig.leadZ += (tgtLeadZ - rig.leadZ) * lerp;
+      cam.x = p.x - fwdX(p.angle) * back + rig.leadX + sx;
+      cam.z = p.z - fwdZ(p.angle) * back + rig.leadZ + sz;
       cam.y = up + sy;
-      cam.yaw = p.angle;
-      cam.pitch = -0.24;
+      cam.yaw = p.angle + syaw;
+      cam.pitch = -0.24 + spitch;
     } else {
       cam.x = p.x + sx;
       cam.z = p.z + sz;
-      cam.y = 2.3 + sy + Math.abs(Math.sin(performance.now() / 240)) * Math.min(1, Math.abs(p.speed) / p.maxSpeed) * 0.1;
-      cam.yaw = p.angle;
-      cam.pitch = 0;
+      // engine idle rumble through the hull, stronger the harder it's working
+      const rumble = Math.sin(t * 26) * 0.012 * (0.25 + speed01);
+      cam.y = 2.3 + sy + rumble +
+        Math.abs(Math.sin(performance.now() / 240)) * speed01 * 0.1;
+      cam.yaw = p.angle + syaw;
+      cam.pitch = spitch;
     }
+    cam.roll += sroll;
+  }
+
+  // ---- film grade -------------------------------------------------------------
+  // The post stack is animated, not static: boost smears the frame, damage
+  // pushes it red and grainy, an active hunt warms the whole grade, and the
+  // death cam drains the colour out of the arena. These are all smoothed —
+  // a grade that snaps between states reads as a bug, not as drama.
+  const film = { boost: 0, alarm: 0, dead: 0, heat: 0 };
+
+  function updateFilm(dt) {
+    const k = (cur, target, rate) => cur + (target - cur) * Math.min(1, dt * rate);
+    const playing = (uiMode === 'playing' || uiMode === 'draft') &&
+      (game.mode === 'playing' || game.mode === 'dying');
+    const p = playing ? game.player : null;
+    const hurt = Math.min(1, hud.flash || 0);
+    film.boost = k(film.boost, p && p.alive && p.boosting ? 1 : 0, p && p.boosting ? 9 : 4);
+    film.alarm = k(film.alarm, playing && game.alarmT > 0 ? 1 : 0, 1.2);
+    film.dead = k(film.dead, playing && game.mode === 'dying' ? 1 : 0, 3);
+    // cannon heat bleeds into the image: the redline is visible on screen
+    const heat01 = p && p.maxHeat ? Math.min(1, (p.heat || 0) / p.maxHeat) : 0;
+    film.heat = k(film.heat, heat01 * heat01, 5);
+
+    const a = film.alarm, b = film.boost, d = film.dead, h = film.heat;
+    renderer.setPostFx({
+      exposure: 1.06 + a * 0.04 + b * 0.05 - hurt * 0.05 - d * 0.22,
+      // a hunt warms the arena, damage pushes it red, death bleaches it. The
+      // hurt terms stay restrained on purpose: the HUD paints its own red
+      // vignette over the top, and doubling them blinds the player at the
+      // exact moment they most need to see where the shot came from.
+      grade: [
+        1 + a * 0.10 + hurt * 0.16 + h * 0.06,
+        1 - a * 0.02 - hurt * 0.13 - d * 0.10,
+        1 - a * 0.07 - hurt * 0.11 - d * 0.05,
+      ],
+      flash: [hurt * 0.06, 0, hurt * 0.01],
+      saturation: 1.08 + a * 0.10 - d * 0.85,
+      vignette: 0.42 + hurt * 0.22 + b * 0.18 + d * 0.75,
+      aberration: 0.0016 + hurt * 0.0040 + b * 0.0035 + h * 0.0012,
+      radial: b * 0.9 + hurt * 0.20,
+      grain: 0.035 + hurt * 0.035 + d * 0.07,
+    });
   }
 
   // ---- dynamic lights ---------------------------------------------------------
@@ -1220,10 +1335,40 @@
     renderer.draw(M.mountains, model, { unlit: true, nofog: true, nodepth: true, tint: [g, g, g] });
   }
 
+  /* Scorch craters and tread prints, blended into the floor. The mesh carries
+   * an opacity mask in its vertex colour (solid core, feathered rim) and the
+   * tint scales that mask, so `a` is literally how much of the mark is left:
+   * it thins out over its life rather than blinking off. Drawn between the
+   * floor and everything standing on it, and skipped entirely when the pool
+   * is empty. */
+  function drawDecals(src) {
+    const decals = src.decals;
+    if (!decals || !decals.length) return;
+    for (const d of decals) {
+      const k = Math.min(1, d.life / Math.max(d.max, 0.001));
+      // ease the tail so the last seconds fade slowly rather than snapping out
+      const a = (1 - d.depth) * (k * k * (3 - 2 * k));
+      if (a < 0.015) continue;   // too faint to be worth a draw call
+      const dx = d.x - cam.x, dz = d.z - cam.z;
+      if (dx * dx + dz * dz > 150 * 150) continue;   // lost in the fog anyway
+      if (d.kind === 'tread') {
+        renderer.draw(M.decalQuad,
+          m4.trs(d.x, 0.035, d.z, d.a, d.r * 1.5, 1, d.r * 3.4, MTX),
+          { tint: [a, a, a], unlit: true, decal: true });
+      } else {
+        // scorch eats a touch more green and blue: a burn goes warm-black
+        renderer.draw(M.decalDisc,
+          m4.trs(d.x, 0.03, d.z, d.x * 0.7, d.r, 1, d.r, MTX),
+          { tint: [a * 0.88, a, a], unlit: true, decal: true });
+      }
+    }
+  }
+
   function drawArena(src) {
     drawSky();
     renderer.draw(M.ground);
     renderer.draw(M.grid, null, { unlit: true });
+    drawDecals(src);
     renderer.draw(M.arenaWall);
 
     for (const o of src.obstacles) {
@@ -1431,6 +1576,62 @@
     renderer.drawParticles(game.particles);
   }
 
+  /* ---- shadow caster pass ---------------------------------------------------
+   * Everything solid enough to block the sun, drawn depth-only from the sun's
+   * point of view. Deliberately a subset of the scene: the ground and grid are
+   * receivers only, and glow geometry (rings, beacons, tracers, particles)
+   * casts nothing — it is light, not matter. */
+  function drawCasters(src) {
+    // the sun's box only covers a slice of the arena — anything outside it
+    // renders into nothing, so cull against it before spending the draw call
+    const scx = renderer.shadowCenterX, scz = renderer.shadowCenterZ;
+    const cull2 = renderer.shadowCull * renderer.shadowCull;
+    const near = (x, z) => {
+      const dx = x - scx, dz = z - scz;
+      return dx * dx + dz * dz < cull2;
+    };
+    for (const o of src.obstacles) {
+      if (o.dead || !near(o.x, o.z)) continue;
+      const mesh = o.type === 'pyramid' ? M.pyramid : M.block;
+      renderer.draw(mesh, m4.trs(o.x, 0, o.z, 0, o.w, o.h, o.d, MTX));
+    }
+    renderer.draw(M.arenaWall);
+    for (const f of src.flags) {
+      if (f.taken || !near(f.x, f.z)) continue;
+      renderer.draw(M.flag, m4.trs(f.x, 0, f.z, f.spin, 1, 1, 1, MTX));
+    }
+    for (const d of (src.depots || [])) {
+      if (!near(d.x, d.z)) continue;
+      renderer.draw(M.depot, m4.trs(d.x, 0, d.z, 0, 1, 1, 1, MTX));
+    }
+    for (const e of (src.enemies || [])) {
+      // a cloaked phantom throws no shadow — that is the whole point of it
+      if ((e.cloak || 0) > 0.5 || !near(e.x, e.z)) continue;
+      const sc = (e.elite ? 1.18 : 1) *
+        (e.type === 'rusher' ? 0.82 : e.type === 'shellback' ? 1.22 : 1);
+      renderer.draw(tankMeshFor(e.type), m4.trs(e.x, 0, e.z, e.angle, sc, sc, sc, MTX));
+    }
+    for (const pl of (src.players || [])) {
+      if (!pl.alive || !near(pl.x, pl.z)) continue;
+      renderer.draw(M.tankPlayer, m4.trs(pl.x, 0, pl.z, pl.angle, 1, 1, 1, MTX));
+    }
+    const b = src.boss;
+    if (b && !b.dead && near(b.x, b.z)) {
+      renderer.draw(M.bossBody, m4.trs(b.x, 0, b.z, b.angle, 1, 1, 1, MTX));
+      for (const tu of b.turrets) {
+        if (tu.hp <= 0) continue;
+        const [wx, wz] = bossTurretWorld(b, tu);
+        renderer.draw(M.bossTurret, m4.trs(wx, BOSS_TURRET_Y, wz, tu.aim, 1, 1, 1, MTX));
+      }
+    }
+    for (const d of (src.debris || [])) {
+      if (!near(d.x, d.z)) continue;
+      renderer.draw(M.shard, m4.multiply(
+        m4.trs(d.x, d.y, d.z, d.yaw, d.scale, d.scale, d.scale, MTX2),
+        m4.rotationX(d.tumble, MTX3), MTX));
+    }
+  }
+
   // ---- settings screen -----------------------------------------------------
   const SETTING_DEFS = [
     { key: 'difficulty', max: 2, labels: ['RECRUIT', 'STANDARD', 'VETERAN'] },
@@ -1438,6 +1639,7 @@
     { key: 'music', max: 10 },
     { key: 'shake', max: 10 },
     { key: 'glow', bool: true },
+    { key: 'shadows', bool: true },
     { key: 'quality', max: 1, labels: ['LOW', 'HIGH'] },
     { key: 'crt', bool: true },
     { key: 'aimAssist', bool: true },
@@ -1665,14 +1867,25 @@
     }
   }
 
+  /* The ears ride the hull, not the camera: in chase view the camera sits
+   * behind and above, but the tank is where the player *is*, and panning off
+   * the camera would swing the whole mix every time the rig drifts. */
+  function updateListener() {
+    const lp = game.player;
+    if (uiMode === 'playing' && lp && lp.alive) AudioSys.setListener(lp.x, lp.z, lp.angle);
+    else AudioSys.clearListener();
+  }
+
   function updateEngine() {
     const lp = game.player;
     if (uiMode === 'playing' && lp && lp.alive && typeof lp.maxSpeed === 'number') {
       // small floor keeps the idle hum audible in-game; zero means silent
       // (menus/pause), so a stationary tank still sounds alive here
-      AudioSys.setEngine(Math.max(0.02, Math.min(1, Math.abs(lp.speed || 0) / lp.maxSpeed)));
+      AudioSys.setEngine(
+        Math.max(0.02, Math.min(1, Math.abs(lp.speed || 0) / lp.maxSpeed)),
+        lp.boosting ? 1 : 0);
     } else {
-      AudioSys.setEngine(0);
+      AudioSys.setEngine(0, 0);
     }
   }
 
@@ -1701,6 +1914,10 @@
     game.shake = Math.max(0, game.shake - dt * 3);
     game._updateParticles(dt);
     game._updateDebris(dt);
+    // decals are local-only cosmetics: a client grows its own set off the
+    // interpolated tank positions and the host's mirrored bursts
+    game._updateDecals(dt);
+    game._updateTreads(dt);
     for (const f of game.flags) f.spin += dt * 2.2;
     for (const u of game.powerups) { u.spin += dt * 2.5; u.bob += dt * 3; }
   }
@@ -1749,6 +1966,24 @@
       if (Net.role === 'host') hostNetTick(dt);
       if (game.mode === 'gameover') doGameOver();
     }
+  }
+
+  /* Time dilation. Solo only, and deliberately so: a co-op host that slowed
+   * its own clock would slow the whole session's world, and remote players
+   * would feel their inputs go syrupy for reasons happening on someone else's
+   * screen. Locally it buys the two effects a shooter lives on — a few frames
+   * of hit-stop on impact, so a kill lands with weight, and slow motion over
+   * the first beat of your own death. */
+  function simScale(dt) {
+    if (Net.role !== 'solo') return 1;
+    if (game.hitStop > 0) {
+      game.hitStop = Math.max(0, game.hitStop - dt);
+      return 0.08;
+    }
+    // the opening beat of the death sequence only; the rest plays out at
+    // normal speed so the game-over screen isn't held hostage to the drama
+    if (game.mode === 'dying' && game.deathTimer > 1.4) return 0.45;
+    return 1;
   }
 
   // A hidden tab stops requestAnimationFrame, which used to hard-freeze every
@@ -1809,6 +2044,10 @@
     Input.setPlayfieldActive(uiMode === 'playing' && game.mode === 'playing');
     handleScreens();
 
+    // before the sim runs: sounds emitted this step are placed against a
+    // listener that is current, not one frame stale
+    updateListener();
+
     if (uiMode === 'playing') {
       if (Net.role === 'client') {
         Net.sendInput(Input.axis());
@@ -1816,7 +2055,7 @@
         // smooth remote motion between the host's 30 Hz snapshots
         if (game.mode === 'playing' || game.mode === 'dying') Net.clientInterpolate(game);
       } else {
-        stepSim(dt);
+        stepSim(dt * simScale(dt));
       }
     }
 
@@ -1825,9 +2064,19 @@
     updateEngine();
     updateMusic();
     updateCamera(dt);
+    updateFilm(dt);
+
+    // sun pass first: the scene pass samples the map it fills in
+    const menu = inMenu();
+    const scene = menu ? demoGame : game;
+    if (renderer.beginShadow(cam)) {
+      drawCasters(scene);
+      renderer.endShadow();
+    }
+
     renderer.beginFrame(cam);
 
-    if (inMenu()) {
+    if (menu) {
       renderer.setLights([]);   // no stale battle lights under the menus
       drawArena(demoGame);
       for (const f of demoGame.flags) f.spin += dt * 2.2;

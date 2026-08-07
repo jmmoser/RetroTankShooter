@@ -36,6 +36,10 @@ const COMBO_WINDOW = 4;          // seconds between kills to keep the chain
 const BOSS_EVERY = 5;            // a WARLORD guards every Nth sector
 const CAP_RADIUS = 8.5;          // uplink zone radius — stand inside to capture
 const CAP_TIME = 3.2;            // seconds of uncontested holding per zone
+// Ground decals — one draw call each, so the cap is a frame-budget decision,
+// not a memory one. Tread prints are dropped per metre travelled.
+const DECAL_CAP = 110;
+const TREAD_SPACING = 2.6;
 
 // Heat cannon: no ammo — the gun rides a heat gauge. Hotter = faster and
 // harder (redline), overheat = locked out. A manual vent with a perfect-tap
@@ -270,6 +274,7 @@ class Game {
     this.particles = [];
     this.flashes = [];     // short-lived point lights from bursts (cosmetic)
     this.debris = [];      // tumbling polygon shards from destroyed tanks
+    this.decals = [];      // ground marks: scorch craters and tread prints
     this.depots = [];      // resupply pads: { x, z, type: 'coolant'|'shield' }
     this.players = [];     // all tanks in the run (co-op); player[0..n]
     this.player = null;    // alias to the LOCAL player (for HUD / camera)
@@ -314,12 +319,35 @@ class Game {
     this.puTimer = 0;      // versus: contested powerup respawn timer
     this.runStats = freshRunStats();
     this.levelUntouched = true; // local player unhit this sector (medal)
+    // ---- impact feedback ---------------------------------------------------
+    // Purely presentational, purely local: the camera layer in main.js reads
+    // these and they are never networked (see net.js on `sk`). Every client
+    // feels its own hits, which is the only way shake and hit-stop read right.
+    this.hitStop = 0;      // seconds of near-frozen time after a heavy impact
+    this.kickX = 0;        // directional camera shove (world units/s)
+    this.kickZ = 0;
   }
 
-  /* Queue a sound: plays locally and is mirrored to clients by the host. */
-  _sfx(key) {
-    this.frameSounds.push(key);
-    AudioSys.play(key);
+  /* One funnel for "that landed": screen trauma, a directional camera shove
+   * and an optional hit-stop. Callers pass the impulse in world space, so a
+   * cannon recoil pushes the view back down the barrel and a ram throws it
+   * forward through the wreck. */
+  _impact(trauma, kx, kz, stop) {
+    if (trauma) this.shake = Math.min(this.shake + trauma, 2);
+    this.kickX += kx || 0;
+    this.kickZ += kz || 0;
+    if (stop) this.hitStop = Math.max(this.hitStop, stop);
+  }
+
+  /* Queue a sound: plays locally and is mirrored to clients by the host.
+   * Pass a world position and the mix places it — panned, distance-rolled and
+   * sent to the arena reverb — for the local player and for co-op clients,
+   * each against their own listener. Over the wire a placed sound travels as
+   * [key, x, z]; a flat one stays a bare string. */
+  _sfx(key, x, z) {
+    const placed = Number.isFinite(x) && Number.isFinite(z);
+    this.frameSounds.push(placed ? [key, Math.round(x), Math.round(z)] : key);
+    AudioSys.play(key, placed ? { x, z } : null);
   }
 
   /* Award a one-time medal to the LOCAL player: toast + jingle on first
@@ -447,10 +475,13 @@ class Game {
     this.particles = [];
     this.flashes = [];
     this.debris = [];
+    this.decals = [];
     this.depots = [];
     this.mines = [];
     this._flagSites = null;
     this.shake = 0;
+    this.hitStop = 0;
+    this.kickX = 0; this.kickZ = 0;
     this.killsThisLevel = 0;
     this.combo = 0; this.comboT = 0; this.mult = 1;
     this.alert = 0; this.alertTier = 0;
@@ -875,6 +906,8 @@ class Game {
     this._updateDepots(dt);
     this._updateParticles(dt);
     this._updateDebris(dt);
+    this._updateDecals(dt);
+    this._updateTreads(dt);
 
     for (const f of this.flags) f.spin += dt * 2.2;
 
@@ -1017,7 +1050,7 @@ class Game {
         this.score += pts;
         this._bankPot();   // the capture is the cash-out
         this._burst(f.x, 2.5, f.z, 18, [0.3, 1, 0.5], 8);
-        this._sfx('flag');
+        this._sfx('flag', f.x, f.z);
         for (const h of holders) this._awardTech(h, 40);
         const isLocal = holders.some((h) => h.id === this.localId);
         if (isLocal) {
@@ -1476,7 +1509,7 @@ class Game {
       this._sfx('bounce');
       this._noise(p.x, p.z, 26, 0.35);   // slamming a slab rings out
       this._burst(p.x + fwdX(p.angle) * 2.5, 1.2, p.z + fwdZ(p.angle) * 2.5, 8, [0.9, 0.9, 0.7], 6);
-      if (isLocal) this.shake = Math.min(this.shake + 0.45, 1.2);
+      if (isLocal) this._impact(0.45, -fwdX(p.angle) * 4, -fwdZ(p.angle) * 4, 0.05);
     } else if (hit) {
       p.speed *= 0.5;
       p.vx *= 0.5; p.vz *= 0.5;
@@ -1496,7 +1529,7 @@ class Game {
         p.speed *= 0.5;
         if (!(p.up && p.up.ram > 0)) p.shields = Math.max(1, p.shields - 8);
         this._sfx('bounce');
-        if (isLocal) this.shake = Math.min(this.shake + 0.5, 1.2);
+        if (isLocal) this._impact(0.5, fwdX(p.angle) * 5, fwdZ(p.angle) * 5, 0.085);
         break;
       }
     }
@@ -1570,9 +1603,16 @@ class Game {
         const bx = p.x + fwdX(shotAngle) * 3.2;
         const bz = p.z + fwdZ(shotAngle) * 3.2;
         this._burst(bx, 1.6, bz, superShot ? 8 : 4, superShot ? [0.5, 1, 0.9] : [1, 0.9, 0.5], 5);
-        this._sfx('fire');
+        this._sfx('fire', p.x, p.z);
         this._noise(p.x, p.z, NOISE_SHOT, 0.55);   // the report carries
-        if (isLocal) this.shake = Math.min(this.shake + 0.12, 0.5);
+        if (isLocal) {
+          // firing keeps its own tighter trauma ceiling — rapid fire must not
+          // stack its way up to explosion-grade shake — but the recoil kick
+          // goes through the shared impulse spring
+          this.shake = Math.min(this.shake + 0.12, 0.5);
+          this._impact(0, -fwdX(shotAngle) * (superShot ? 3.4 : 2.0),
+            -fwdZ(shotAngle) * (superShot ? 3.4 : 2.0), 0);
+        }
       } else {
         p.fireCd = 0.25;
         this._sfx('select'); // thermal-lock click
@@ -2044,7 +2084,7 @@ class Game {
             y: 1.6, angle: e.angle,
             speed: e.shotSpeed, from: 'enemy', dmg: e.dmg, life: 4,
           });
-          this._sfx('enemyFire');
+          this._sfx('enemyFire', e.x, e.z);
           if (e.type === 'sniper') {
             // shoot-and-scoot: slide to a flanking perch so return fire
             // arrives where the sniper was, not where it is
@@ -2089,7 +2129,8 @@ class Game {
     this._burst(e.x, 1.2, e.z, 30, [1, 0.35, 0.5], 13);
     this._burst(e.x, 2.0, e.z, 12, [1, 0.85, 0.6], 8);
     this._spawnShards(e.x, e.z, DEBRIS_COLORS.rusher);
-    this._sfx('nadeBoom');
+    this._sfx('nadeBoom', e.x, e.z);
+    this._addDecal(e.x, e.z, 5.5, 26, 'scorch', 0, 0.6);
     this._noise(e.x, e.z, NOISE_BOOM, 0.7);
     this.shake = Math.min(this.shake + 0.4, 1.2);
     for (const pl of this.players) {
@@ -2159,7 +2200,7 @@ class Game {
           } else {
             dead = true;
             this._burst(pr.x, 1.6, pr.z, 8, [1, 0.8, 0.4], 6);
-            this._sfx('hitWall');
+            this._sfx('hitWall', pr.x, pr.z);
           }
         }
       }
@@ -2271,9 +2312,10 @@ class Game {
     const R = pr.child ? 7 : 10;
     this._burst(pr.x, 1.2, pr.z, pr.child ? 24 : 40, [1, 0.7, 0.25], pr.child ? 11 : 16);
     this._burst(pr.x, 2.2, pr.z, pr.child ? 10 : 18, [1, 0.95, 0.7], pr.child ? 7 : 10);
-    this._sfx('nadeBoom');
+    this._sfx('nadeBoom', pr.x, pr.z);
+    this._addDecal(pr.x, pr.z, pr.child ? 4 : 6.5, 30, 'scorch', 0, 0.55);
     this._noise(pr.x, pr.z, NOISE_BOOM, 0.7);
-    this.shake = Math.min(this.shake + 0.5, 1.2);
+    this._impact(0.5, 0, 0, 0.05);
     // CLUSTER CHARGES: the shell splits into three arcing bomblets
     if (!pr.child) {
       const owner = this._playerById(pr.owner);
@@ -2353,7 +2395,8 @@ class Game {
     const R = 9, DMG = 70;
     this._burst(m.x, 1.0, m.z, 34, [1, 0.45, 0.6], 15);
     this._burst(m.x, 2.0, m.z, 14, [1, 0.9, 0.7], 9);
-    this._sfx('nadeBoom');
+    this._sfx('nadeBoom', m.x, m.z);
+    this._addDecal(m.x, m.z, 5.5, 28, 'scorch', 0, 0.55);
     this._noise(m.x, m.z, NOISE_BOOM, 0.7);
     this.shake = Math.min(this.shake + 0.4, 1.2);
     const falloff = (d) => DMG * (d < 3 ? 1 : 1 - (d - 3) / (R - 3) * 0.75);
@@ -2425,7 +2468,7 @@ class Game {
       this._alertEnemy(e, a ? a.x : e.x, a ? a.z : e.z);
     }
     if (e.hp <= 0) this._killEnemy(index, ownerId, via);
-    else this._sfx('hitEnemy');
+    else this._sfx('hitEnemy', e.x, e.z);
   }
 
   _killEnemy(index, ownerId, via) {
@@ -2459,8 +2502,9 @@ class Game {
     this._burst(e.x, 1.5, e.z, 34, [1, 0.55, 0.15], 14);
     this._burst(e.x, 1.5, e.z, 16, [0.9, 0.9, 0.9], 9);
     this._spawnShards(e.x, e.z, DEBRIS_COLORS[e.type] || DEBRIS_COLORS.drone);
-    this._sfx('explosion');
-    this.shake = Math.min(this.shake + 0.4, 1);
+    this._sfx('explosion', e.x, e.z);
+    this._addDecal(e.x, e.z, 4.2, 24, 'scorch', 0, 0.62);
+    this._impact(0.4, 0, 0, 0.05);
     // SHIELD SIPHON: kills feed the killer's shields
     const owner = this._playerById(ownerId);
     if (owner && owner.up && owner.up.siphon) {
@@ -2506,9 +2550,9 @@ class Game {
     if (isLocal) this.levelUntouched = false;
     if (isLocal) {
       this.hud.damage(Math.min(0.8, dmg / 30));
-      this.shake = Math.min(this.shake + 0.5, 1.2);
+      this._impact(0.5, 0, 0, Math.min(0.09, 0.03 + dmg / 400));
     }
-    this._sfx('hitPlayer');
+    this._sfx('hitPlayer', p.x, p.z);
     this._burst(p.x, 1.5, p.z, 12, [1, 0.4, 0.2], 8);
     if (p.shields <= 0) {
       p.shields = 0;
@@ -2517,8 +2561,9 @@ class Game {
       this._burst(p.x, 1.5, p.z, 60, [1, 0.5, 0.1], 18);
       this._burst(p.x, 2.5, p.z, 30, [1, 0.9, 0.6], 12);
       this._spawnShards(p.x, p.z, DEBRIS_COLORS.player);
-      this._sfx('bigExplosion');
-      if (isLocal) this.shake = 2;
+      this._sfx('bigExplosion', p.x, p.z);
+      this._addDecal(p.x, p.z, 6, 40, 'scorch', 0, 0.5);
+      if (isLocal) { this.shake = 2; this.hitStop = 0.32; }
       // versus: credit the killer
       if (this.versus && attackerId && attackerId !== p.id) {
         this.killCounts[attackerId] = (this.killCounts[attackerId] || 0) + 1;
@@ -2604,7 +2649,7 @@ class Game {
     }
     this._awardTech(p, 5);
     this.score += 50;
-    this._sfx('powerup');
+    this._sfx('powerup', p.x, p.z);
     if (p.id === this.localId) {
       this.hud.pickup();
       this.hud.message(spec.label, '#ffd24a', 1.4);
@@ -2691,7 +2736,7 @@ class Game {
         if (b.chargeCd <= 0 && distP > 35 && distP < 160) {
           b.state = 'telegraph';
           b.stateT = 1.15;
-          this._sfx('charge');
+          this._sfx('charge', b.x, b.z);
         }
       }
     } else if (b.state === 'telegraph') {
@@ -2734,7 +2779,7 @@ class Game {
         b.x = Math.max(-lim, Math.min(lim, b.x));
         b.z = Math.max(-lim, Math.min(lim, b.z));
         this._spawnRing(b.x, b.z, 22);
-        this.shake = Math.min(this.shake + 0.8, 1.6);
+        this._impact(0.8, 0, 0, 0.1);
         this._sfx('bounce');
       }
       if (slammed || b.stateT <= 0) {
@@ -2793,7 +2838,7 @@ class Game {
           y: 1.6, angle: tu.aim,
           speed: 55, from: 'enemy', dmg: b.dmg, life: 4,
         });
-        this._sfx('enemyFire');
+        this._sfx('enemyFire', wx, wz);
       }
     }
   }
@@ -2811,8 +2856,9 @@ class Game {
       this._bankPot();   // boss milestones are cash-outs too
       this._burst(wx, 3.4, wz, 30, [1, 0.55, 0.15], 13);
       this._spawnShards(wx, wz, [1.0, 0.5, 0.2]);
-      this._sfx('explosion');
-      this.shake = Math.min(this.shake + 0.4, 1);
+      this._sfx('explosion', wx, wz);
+      this._addDecal(wx, wz, 5, 30, 'scorch', 0, 0.6);
+      this._impact(0.4, 0, 0, 0.07);
       if (!b.turrets.some((t) => t.hp > 0)) {
         b.vulnerable = true;
         b.speed *= 1.35;   // enraged
@@ -2851,8 +2897,10 @@ class Game {
     this._spawnShards(b.x, b.z, [0.85, 0.16, 0.28]);
     this._spawnShards(b.x + 3, b.z, [0.55, 0.10, 0.18]);
     this._spawnShards(b.x - 3, b.z, [1.0, 0.45, 0.25]);
-    this._sfx('bossDown');
+    this._sfx('bossDown', b.x, b.z);
+    this._addDecal(b.x, b.z, 16, 60, 'scorch', 0, 0.45);
     this.shake = 2;
+    this.hitStop = 0.42;
     this.hud.message('WARLORD DESTROYED', '#3cff78', 3);
     this._medal('giantkiller');
   }
@@ -2946,6 +2994,54 @@ class Game {
       });
     }
     if (this.debris.length > 220) this.debris.splice(0, this.debris.length - 220);
+  }
+
+  /* ---- ground decals -------------------------------------------------------
+   * The arena remembers the fight: every detonation burns a crater into the
+   * floor and every hull that drives leaves tread prints behind it, both
+   * fading out over the next half minute. Purely cosmetic, so it is never
+   * networked — each machine grows its own set from the events it sees, and
+   * the pool is hard-capped because these are draw calls, not particles.
+   *
+   * kind: 'scorch' (round, dark, wide) | 'tread' (thin oriented rectangle) */
+  _addDecal(x, z, r, life, kind, angle, depth) {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+    const cap = DECAL_CAP;
+    if (this.decals.length >= cap) this.decals.splice(0, this.decals.length - cap + 1);
+    this.decals.push({
+      x, z, r, life, max: life, kind: kind || 'scorch',
+      a: angle || 0, depth: depth === undefined ? 0.55 : depth,
+    });
+  }
+
+  _updateDecals(dt) {
+    for (let i = this.decals.length - 1; i >= 0; i--) {
+      const d = this.decals[i];
+      d.life -= dt;
+      if (d.life <= 0) this.decals.splice(i, 1);
+    }
+  }
+
+  /* Tread prints, dropped on a distance cadence rather than a time one, so
+   * marks are evenly spaced whether a hull is crawling or flat out. */
+  _updateTreads(dt) {
+    const drop = (t) => {
+      if (!t || t.alive === false || t.dead) return;
+      const sp = Math.abs(t.speed || 0);
+      if (sp < 3) return;
+      if (t.treadAcc === undefined) { t.treadAcc = 0; t.treadX = t.x; t.treadZ = t.z; }
+      t.treadAcc += Math.hypot(t.x - t.treadX, t.z - t.treadZ);
+      t.treadX = t.x; t.treadZ = t.z;
+      if (t.treadAcc < TREAD_SPACING) return;
+      t.treadAcc = 0;
+      // one print per tread, offset either side of the hull's centre line
+      const rx = Math.cos(t.angle), rz = -Math.sin(t.angle);
+      for (const side of [-1.35, 1.35]) {
+        this._addDecal(t.x + rx * side, t.z + rz * side, 0.55, 9, 'tread', t.angle, 0.84);
+      }
+    };
+    for (const p of this.players) drop(p);
+    for (const e of this.enemies) if (!(e.cloak > 0.5)) drop(e);
   }
 
   _updateDebris(dt) {
@@ -3061,6 +3157,8 @@ class Game {
     this.shake = Math.max(0, this.shake - dt * 1.2);
     this._updateParticles(dt);
     this._updateDebris(dt);
+    this._updateDecals(dt);
+    this._updateTreads(dt);
     this._updateProjectiles(dt);
     this._updateRings(dt);
     for (const f of this.flags) f.spin += dt * 2.2;

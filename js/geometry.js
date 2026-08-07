@@ -329,6 +329,66 @@ const Geometry = (() => {
     return new Float32Array(verts);
   }
 
+  /* ---- ground decals ------------------------------------------------------
+   * Flat shapes laid on the floor and drawn with the "decal" blend
+   * (dst * (1 - src)), so vertex colour reads as an opacity mask: white
+   * darkens fully, black leaves the floor untouched. That is what lets a
+   * mark feather at its edge instead of stamping a hard-edged polygon into
+   * the arena — and it means the per-draw tint doubles as the fade, since
+   * scaling the mask toward black scales the mark toward invisible.
+   *
+   * It also fogs out for free: at distance the fragment fogs toward the
+   * near-black void colour, which is a zero mask, so far-off scars quietly
+   * stop darkening instead of floating in the haze. */
+  function decalDisc() {
+    const verts = [];
+    const seg = 18;
+    const solid = [1, 1, 1];   // fully darkening
+    const clear = [0, 0, 0];   // no effect
+    // a slightly irregular rim keeps overlapping scorches from reading as
+    // stamped circles
+    const jitter = [];
+    for (let i = 0; i < seg; i++) jitter.push(0.86 + 0.14 * (((i * 7919) % 13) / 13));
+    const CORE = 0.45;         // solid out to here, then feathered to nothing
+    const push = (x, z, c) => verts.push(x, 0, z, 0, 1, 0, c[0], c[1], c[2]);
+    for (let i = 0; i < seg; i++) {
+      const j = (i + 1) % seg;
+      const a0 = (i / seg) * Math.PI * 2, a1 = (j / seg) * Math.PI * 2;
+      const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+      const r0 = jitter[i], r1 = jitter[j];
+      // solid core fan
+      push(0, 0, solid);
+      push(c1 * CORE, s1 * CORE, solid);
+      push(c0 * CORE, s0 * CORE, solid);
+      // feathered rim band
+      push(c0 * CORE, s0 * CORE, solid);
+      push(c1 * CORE, s1 * CORE, solid);
+      push(c1 * r1, s1 * r1, clear);
+      push(c0 * CORE, s0 * CORE, solid);
+      push(c1 * r1, s1 * r1, clear);
+      push(c0 * r0, s0 * r0, clear);
+    }
+    return new Float32Array(verts);
+  }
+
+  /* Unit tread print: +X wide, +Z long, feathered along both long edges so a
+   * track reads as a pressed mark rather than a black rectangle. */
+  function decalQuad() {
+    const verts = [];
+    const solid = [1, 1, 1], clear = [0, 0, 0];
+    const push = (x, z, c) => verts.push(x, 0, z, 0, 1, 0, c[0], c[1], c[2]);
+    // three strips: clear edge -> solid centre -> clear edge, plus feathered
+    // ends so a print does not stop dead
+    const bands = [[-0.5, clear], [-0.28, solid], [0.28, solid], [0.5, clear]];
+    for (let i = 0; i < bands.length - 1; i++) {
+      const [x0, c0] = bands[i], [x1, c1] = bands[i + 1];
+      // wound to face +Y, matching the ground plane
+      push(x0, -0.5, c0); push(x0, 0.5, c0); push(x1, 0.5, c1);
+      push(x0, -0.5, c0); push(x1, 0.5, c1); push(x1, -0.5, c1);
+    }
+    return new Float32Array(verts);
+  }
+
   function wallSegment() {
     const b = new MeshBuilder();
     b.box(0, 1.0, 0, 1, 2.0, 1, C.wall);
@@ -448,7 +508,11 @@ const Geometry = (() => {
    * over it are a separate mesh — see gridLines. */
   function ground(half) {
     const b = new MeshBuilder();
-    const g = [0.015, 0.035, 0.030]; // almost void, faint cold tint
+    // The floor used to be near-black, which read as void but also meant the
+    // sun had nothing to paint and cast shadows were mathematically invisible.
+    // Lifted to a dark polished slate: fog still swallows it at range, but up
+    // close it takes light, takes shadow, and catches the specular sheen.
+    const g = [0.052, 0.100, 0.092];
     b.quad([-half, 0, -half], [-half, 0, half], [half, 0, half], [half, 0, -half], g);
     return b.build();
   }
@@ -488,5 +552,5 @@ const Geometry = (() => {
     return b.build();
   }
 
-  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, arenaWall, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring };
+  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, arenaWall, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring, decalDisc, decalQuad };
 })();

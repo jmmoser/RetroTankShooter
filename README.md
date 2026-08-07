@@ -17,7 +17,11 @@ shellbacks, shield-warden packs, long-eyed snipers and tanks that shatter
 into tumbling polygon shards.
 
 Built with **plain WebGL, Canvas 2D and Web Audio** — no build step, no
-assets, no CDNs. Even the **synthwave soundtrack is synthesized live** by a
+assets, no CDNs. Every hull and slab casts a **real-time shadow** across the
+arena floor, the fight leaves **scorch craters and tread prints** behind it,
+and the whole frame runs through a film pipeline — bloom, ACES tonemapping,
+chromatic aberration, radial speed blur under boost and a grade that warms
+when the grid starts hunting and floods red when you take a hit. Even the **synthwave soundtrack is synthesized live** by a
 tiny sequencer: a brooding loop under the menus, a driving groove in combat
 that opens up as the sector alert and your combo climb, and a harder mix
 while a WARLORD is on the field. Single-player makes no network requests at
@@ -190,6 +194,34 @@ score turns gold with a **RECORD PACE** tag (dailies chase today's best,
 campaign runs chase the all-time high). Fall just short and the game-over
 screen tells you exactly how far — *"ONLY 340 FROM YOUR RECORD"*.
 
+### Presentation — how it feels to be hit
+
+The arena is lit, not just drawn. A directional **shadow map** puts every
+hull, slab and shard onto the floor; a specular highlight rakes across the
+facets as tanks turn; a cold fresnel rim reads their silhouettes against the
+void. The floor keeps score of the fight — every detonation burns a **scorch
+crater** into it and every hull that drives lays **tread prints** that fade
+out over the next half-minute.
+
+The camera is a rig, not a mount. Impacts shove it and a spring pulls it
+back, so the cannon's recoil kicks the view down the barrel and a boost-ram
+throws it forward through the wreck. Trauma shakes all six axes on smooth
+noise — the lens twists, it doesn't just rattle — and the FOV breathes open
+with speed and slams shut for the death cam. A landed kill buys a few frames
+of **hit-stop**, and the first beat of your own death plays in slow motion.
+(Solo only: a co-op host that slowed its own clock would slow everyone's.)
+
+The mix is a desk, not a pile of oscillators. Every shot, wreck and blast is
+**placed in the arena** — panned off your hull's facing, rolled off with
+distance, its highs eaten by the air, and sent to a procedurally generated
+**reverb** that gets wetter the further away it happened. Detonations duck
+the soundtrack under themselves, a limiter keeps stacked explosions from
+clipping, and the engine is four layers — sub, a detuned resonant body,
+tread clatter riding speed, and a turbine whine that only shows up on boost.
+
+None of it costs an asset file: the shadow map, the impulse response, the
+scorch decals and the grade are all generated at runtime.
+
 ### Daily Ops
 
 **DAILY OPS** on the title screen deals one seeded arena per UTC day — the
@@ -228,8 +260,11 @@ browser. Two things are earned:
 
 The **SETTINGS** screen has the campaign **DIFFICULTY** preset (RECRUIT /
 STANDARD / VETERAN), SFX and music volume, screen-shake intensity,
-the **GLOW FX** post-processing pipeline (bloom, dynamic explosion lighting
-and FXAA — turn it off on weak GPUs), the CRT
+the **GLOW FX** post-processing pipeline (bloom, dynamic explosion lighting,
+ACES tonemapping, aberration, grain and FXAA — turn it off on weak GPUs),
+**DYNAMIC SHADOWS** (the sun's depth pass; off is a straight fill-rate
+refund), **RENDER QUALITY** (HIGH multisamples the scene and runs a 1024²
+shadow map, LOW halves the map and leans on FXAA), the CRT
 scanline overlay, aim assist, and a **colorblind hull palette**
 (deuteranopia-safe enemy colors; the radar also gives every enemy type its
 own blip shape regardless).
@@ -381,13 +416,17 @@ style.css       retro CRT styling
 sw.js           offline cache (installable PWA; single-player works offline)
 js/settings.js  persistent settings + career progress, XP/ranks, medals,
                 daily streak (localStorage)
-js/audio.js     synthesized SFX, engine hum & the procedural synthwave
-                soundtrack (Web Audio lookahead sequencer, no sound files)
+js/audio.js     synthesized SFX with positional panning/distance/reverb
+                sends, a four-layer engine, a master limiter, music ducking,
+                and the procedural synthwave soundtrack (Web Audio lookahead
+                sequencer, no sound files)
 js/input.js     keyboard / mouse / touch / gamepad
 js/geometry.js  procedural low-poly meshes
-js/renderer.js  WebGL renderer + mat4 helpers: flat-shaded forward pass,
-                dynamic point lights, additive glow draws, and the bloom /
-                FXAA / vignette post-processing chain
+js/renderer.js  WebGL renderer + mat4 helpers: flat-shaded forward pass with
+                specular + fresnel rim, a packed-RGBA directional shadow map
+                with PCF, dynamic point lights, additive and multiply
+                (decal) draws, and the bloom / ACES / FXAA / aberration /
+                grain / vignette post chain
 js/hud.js       radar, shield/heat/vent bars, pot & bounty, scoreboard (Canvas 2D)
 js/game.js      arena generation (four terrain layouts), players, per-type
                 enemy AI with stealth detection states, noise + signature
@@ -395,7 +434,9 @@ js/game.js      arena generation (four terrain layouts), players, per-type
                 arenas, versus rules, TECH drafts, uplink zones, extraction
 js/net.js       WebRTC co-op/versus networking (host-authoritative, PeerJS,
                 client-side snapshot interpolation)
-js/main.js      screen flow, camera, scene drawing, main loop
+js/main.js      screen flow, the camera rig (spring impacts, trauma shake,
+                dynamic FOV, hit-stop), the film grade, scene + shadow-caster
+                drawing, main loop
 js/vendor/      bundled third-party code (PeerJS, MIT licensed)
 ```
 
