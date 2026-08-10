@@ -22,6 +22,8 @@
  *  - ALARM — get spotted and the grid hunts you: converge waves warp in
  *    until you break contact and the alarm decays. Quiet is the default,
  *    the old everything-hunts-you game is the punishment for sloppy play.
+ *  - UPLINKS — objectives are spiked on contact and finish on their own,
+ *    so the tank never parks; the hack's noise is what you pay for it.
  *  - EXTRACTION — the last uplink wakes the whole sector; the run ends at
  *    a far-side extraction gate, not on a mop-up.
  *  - TECH drafts — kills/captures pay tech; each level deals a 3-choice
@@ -30,12 +32,20 @@
  *    double as the silent assassination tool.
  */
 
-const ARENA_HALF = 175;          // arena is a square, +/- ARENA_HALF
+// Arena size is a pace knob, not a scenery one: a tighter box means less
+// dead transit between fights, so contacts happen sooner and the terrain
+// stays in frame. Slab counts below fill the smaller floor denser, not
+// sparser — the arena reads busier AND crosses faster.
+const ARENA_HALF = 148;          // arena is a square, +/- ARENA_HALF
 const WALL_PAD = 3;              // keep tanks this far from the wall
 const COMBO_WINDOW = 4;          // seconds between kills to keep the chain
 const BOSS_EVERY = 5;            // a WARLORD guards every Nth sector
-const CAP_RADIUS = 8.5;          // uplink zone radius — stand inside to capture
-const CAP_TIME = 3.2;            // seconds of uncontested holding per zone
+const CAP_RADIUS = 11;           // uplink zone radius — clip the ring to spike it
+// Uplink zones are DRIVE-THROUGH: touching the ring plants a spike and the
+// hack runs itself from there, wherever you are. Standing in the ring still
+// helps (SPIKE_HOLD_MUL), but parking on an objective is never the play.
+const SPIKE_TIME = 3.4;          // seconds for a planted spike to finish alone
+const SPIKE_HOLD_MUL = 2.2;      // ...times this while a tank sits in the ring
 // Ground decals — one draw call each, so the cap is a frame-budget decision,
 // not a memory one. Tread prints are dropped per metre travelled.
 const DECAL_CAP = 110;
@@ -44,11 +54,11 @@ const TREAD_SPACING = 2.6;
 // Heat cannon: no ammo — the gun rides a heat gauge. Hotter = faster and
 // harder (redline), overheat = locked out. A manual vent with a perfect-tap
 // window (Gears-style) is the rhythm skill at the center of every fight.
-const SHELL_SPEED = 72;          // player cannon muzzle velocity (units/s)
+const SHELL_SPEED = 88;          // player cannon muzzle velocity (units/s)
 const SHOT_HEAT = 7;             // heat per shell
 const VENT_TIME = 1.1;           // full manual vent duration (seconds)
 const VENT_WIN = [0.38, 0.58];   // perfect-tap window inside the vent sweep
-const OVERHEAT_LOCK = 2.6;       // forced cooldown after redlining past max
+const OVERHEAT_LOCK = 2;         // forced cooldown after redlining past max
 const GRAZE_R = 4.2;             // enemy shots passing this close (but not
                                  // hitting) refund boost and pay tech
 
@@ -63,7 +73,7 @@ const NOISE_BOOM = 70;     // grenade / mine / rusher blast radius
 const NOISE_WRECK = 45;    // a packmate shattering nearby is a tell
 const NOISE_RAM = 22;      // boost-ram kill: the assassin's quiet tool
 const ALERT_RADIUS = 45;   // an alerted hull radios packmates this close
-const EXIT_RADIUS = 10;    // extraction gate: park inside to warp out
+const EXIT_RADIUS = 13;    // extraction gate: cross the ring to warp out
 
 /* Campaign difficulty presets (SETTINGS → DIFFICULTY). dmg scales what
  * enemies do to the squad, pressure stretches/shrinks the spawn-pressure
@@ -79,7 +89,7 @@ const DIFFICULTY = [
   { dmg: 1,    pressure: 1,    potSpill: 0.7,  waves: 0,  regen: 5, regenTo: 0.65, detect: 1,    alarm: 14 },  // STANDARD — as designed
   { dmg: 1.2,  pressure: 0.85, potSpill: 0.6,  waves: 0,  regen: 0, regenTo: 0,    detect: 1.35, alarm: 20 },  // VETERAN — the arena bites back
 ];
-const REGEN_DELAY = 5;   // seconds without taking a hit before the trickle starts
+const REGEN_DELAY = 4;   // seconds without taking a hit before the trickle starts
 
 /* Sector gate mutators: after a clear you pick the NEXT sector's ruleset.
  * Riskier gates pay a tech signing bonus the moment you deploy. */
@@ -129,15 +139,19 @@ const LOADOUTS = [
 //  - frontArmor: half-angle (radians) of the deflecting faceplate.
 //  - aura: radius of the cannon-proof umbrella (the renderer draws this same
 //    number as the warden's ground ring).
+//
+// Hull speeds are pegged to the player's: a grid that can't keep up with a
+// boosting tank turns every engagement into a kite, which is slow. These
+// close the gap enough that disengaging is a decision, not a formality.
 const ENEMY_TYPES = {
-  drone:     { hp: 60,  speed: 14, turn: 1.6, fireRange: 95,  fireCd: 2.2, score: 150, shotSpeed: 50, dmg: 14, lead: 0,   sight: 55 },
-  rusher:    { hp: 22,  speed: 26, turn: 3.4, fireRange: 0,   fireCd: 9,   score: 100, shotSpeed: 0,  dmg: 30, lead: 0,   sight: 45 },
-  hunter:    { hp: 85,  speed: 22, turn: 2.4, fireRange: 70,  fireCd: 1.5, score: 300, shotSpeed: 58, dmg: 18, lead: 0.8, sight: 70 },
-  sniper:    { hp: 75,  speed: 7,  turn: 1.2, fireRange: 160, fireCd: 3.2, score: 400, shotSpeed: 85, dmg: 26, lead: 0.9, sight: 150 },
-  phantom:   { hp: 110, speed: 19, turn: 2.2, fireRange: 100, fireCd: 2.3, score: 600, shotSpeed: 66, dmg: 22, lead: 0.8, sight: 85, cloaks: true },
+  drone:     { hp: 60,  speed: 17, turn: 1.8, fireRange: 95,  fireCd: 2.0, score: 150, shotSpeed: 56, dmg: 14, lead: 0,   sight: 55 },
+  rusher:    { hp: 22,  speed: 31, turn: 3.6, fireRange: 0,   fireCd: 9,   score: 100, shotSpeed: 0,  dmg: 30, lead: 0,   sight: 45 },
+  hunter:    { hp: 85,  speed: 26, turn: 2.6, fireRange: 70,  fireCd: 1.4, score: 300, shotSpeed: 64, dmg: 18, lead: 0.8, sight: 70 },
+  sniper:    { hp: 75,  speed: 9,  turn: 1.3, fireRange: 160, fireCd: 3.0, score: 400, shotSpeed: 92, dmg: 26, lead: 0.9, sight: 150 },
+  phantom:   { hp: 110, speed: 23, turn: 2.4, fireRange: 100, fireCd: 2.1, score: 600, shotSpeed: 72, dmg: 22, lead: 0.8, sight: 85, cloaks: true },
   // counterplay hulls: reading the fight matters more than holding fire
-  shellback: { hp: 150, speed: 9,  turn: 1.1, fireRange: 75,  fireCd: 2.6, score: 350, shotSpeed: 48, dmg: 20, lead: 0.4, sight: 50, frontArmor: 1.05 },
-  warden:    { hp: 90,  speed: 8,  turn: 1.4, fireRange: 70,  fireCd: 3.0, score: 500, shotSpeed: 46, dmg: 12, lead: 0.3, sight: 55, aura: 16 },
+  shellback: { hp: 150, speed: 11, turn: 1.2, fireRange: 75,  fireCd: 2.4, score: 350, shotSpeed: 54, dmg: 20, lead: 0.4, sight: 50, frontArmor: 1.05 },
+  warden:    { hp: 90,  speed: 10, turn: 1.5, fireRange: 70,  fireCd: 2.8, score: 500, shotSpeed: 52, dmg: 12, lead: 0.3, sight: 55, aura: 16 },
 };
 
 /* In-run TECH upgrade pool: kills and zone captures pay tech, each tech level
@@ -370,9 +384,11 @@ class Game {
       x: 0, z: 0, angle: 0,
       speed: 0,            // throttle scalar (hull-axis intent)
       vx: 0, vz: 0,        // true velocity — drifts decouple it from facing
-      maxSpeed: 14 + lo.speed * 3.2,
-      accel: 26 + lo.speed * 5,
-      turnRate: 1.7 + lo.speed * 0.14,
+      // the hull is quick by default now — the slowest chassis in the garage
+      // outruns what the fastest one used to manage
+      maxSpeed: 19 + lo.speed * 3.6,
+      accel: 36 + lo.speed * 6,
+      turnRate: 2.0 + lo.speed * 0.16,
       maxShields: 50 + lo.armor * 22,
       shields: 0,
       // heat cannon: the loadout's old ammo stat is now its cooling plant
@@ -395,7 +411,7 @@ class Game {
       initNades: lo.nades,
       initMines: lo.mines || 0,
       fireCd: 0,
-      fireDelay: 0.38,
+      fireDelay: 0.32,
       fx: { overdrive: 0, rapid: 0 },
       alive: true,
       respawnT: 0,
@@ -407,7 +423,7 @@ class Game {
       // in-run TECH build: kills/captures pay tech, levels deal upgrade drafts
       up: {},              // upgradeId -> stacks owned
       tech: 0,             // points toward the next level
-      techNext: 50,        // points needed for the next level
+      techNext: 40,        // points needed for the next level
       techLvl: 0,
       tech01: 0,           // progress fraction, mirrored to HUD/net
       pendingOffers: null, // [upgradeId x3] while a draft is waiting on a pick
@@ -438,10 +454,9 @@ class Game {
     this.mutator = null;
     this.gates = null;
     this.runStats = freshRunStats();
-    // one-shot coaching lines: zones are HELD, not touched — say so the
-    // first time the local tank starts (and abandons) a capture this run
-    this._hintHold = false;
-    this._hintDrain = false;
+    // one-shot coaching lines: the first spike explains that zones finish
+    // themselves, so nobody sits on a ring waiting for a bar that isn't there
+    this._hintSpike = false;
     this._hintSpotted = false;
     this.players = defs.map((d, i) => this._makePlayer(d, i));
     for (const p of this.players) this.killCounts[p.id] = 0;
@@ -538,13 +553,13 @@ class Game {
 
     if (this.versus) {
       // deathmatch arena: cover and contested resupply, no AI
-      this._genObstacles(34, RNG() < 0.5 ? 'scatter' : 'corridors');
+      this._genObstacles(44, RNG() < 0.5 ? 'scatter' : 'corridors');
       this._genDepots();
       this.puTimer = 6;
     } else if (this.bossLevel) {
       // boss arena: no flags, more open ground, a small escort — the WARLORD
       // itself is the objective.
-      this._genObstacles(30);
+      this._genObstacles(38);
       this._genDepots();
       this._spawnBoss();
       const escorts = Math.min(2 + Math.floor(L / BOSS_EVERY), 5);
@@ -555,11 +570,12 @@ class Game {
       this._sfx('alarm');
       this.hud.message('WARLORD DETECTED — DESTROY IT', '#ff4a3c', 3.5);
     } else {
-      // fewer, harder objectives: each zone is a held fight, not a waypoint.
-      // The count ramps from 3 so the first sectors are short campaigns,
-      // not marathons.
-      this._genObstacles(40 + Math.min(L * 3, 28), this._pickLayout());
-      this._genFlags(Math.min(2 + L, 10));
+      // objectives are a route, not a checklist: the count tops out at five
+      // so a late sector is a fast loop through the grid, not a ten-stop
+      // errand. Slabs, meanwhile, keep climbing — denser cover in a tighter
+      // arena is what makes the extra speed readable.
+      this._genObstacles(52 + Math.min(L * 4, 36), this._pickLayout());
+      this._genFlags(Math.min(3 + Math.floor(L / 3), 5));
       this._genEnemies();
       this._genDepots();
     }
@@ -571,10 +587,10 @@ class Game {
     RNG = Math.random;   // seeded window ends with generation
     this.mode = 'playing';
     // first sector of a fresh campaign: spell out the two rules that changed
-    // everything — you are invisible until seen, and zones are held
+    // everything — you are invisible until seen, and zones spike on contact
     if (!this.versus && !this.bossLevel && L === 1) {
       this.hud.message('YOU ARE THE PHANTOM — STAY SLOW AND COLD, STRIKE FIRST', '#4fd6bb', 4);
-      this.hud.message('DRIVE INTO A ZONE RING AND HOLD IT TO CAPTURE', '#8ecbff', 3.4);
+      this.hud.message('CLIP A ZONE RING TO SPIKE IT — THE HACK FINISHES ITSELF', '#8ecbff', 3.4);
     }
     if (this.mutator) {
       const m = MUTATORS.find((x) => x.id === this.mutator);
@@ -722,7 +738,7 @@ class Game {
         run += len + rand(12, 20);
       }
     }
-    this._genScatter(Math.floor(count / 4));
+    this._genScatter(Math.floor(count / 3));
   }
 
   /* A walled keep in the middle of the arena with a gate on each side and
@@ -770,7 +786,7 @@ class Game {
       sites.push([cx, cz]);
     }
     this._flagSites = sites;
-    this._genScatter(Math.floor(count / 3));
+    this._genScatter(Math.floor(count * 0.42));
   }
 
   _genFlags(count) {
@@ -782,7 +798,9 @@ class Game {
       if (pos) {
         this.flags.push({
           x: pos[0], z: pos[1], taken: false, spin: rand(0, Math.PI * 2),
-          cap: 0, contested: false, pulseT: 0,   // uplink zone state
+          // uplink zone state: `spiked` latches on the first touch and the
+          // hack runs from there — `owners` is who gets paid when it lands
+          cap: 0, contested: false, pulseT: 0, spiked: false, spikeUp: 0, owners: null,
         });
       }
     }
@@ -848,10 +866,10 @@ class Game {
   }
 
   _genEnemies() {
-    // a handful of patrols, not a swarm: every hull is a stalk-and-kill
-    // problem, and alarm converge waves feed the field if you get loud
+    // enough hulls that the sector always has something to run into: with
+    // fewer zones to visit, patrol density is what keeps a sector eventful
     const L = this.level;
-    let total = Math.min(3 + Math.floor(L * 0.9), 9);
+    let total = Math.min(5 + Math.floor(L * 1.1), 12);
     if (this.mutator === 'swarm') total += 3;        // thin hulls, more of them
     if (this.mutator === 'gauntlet') total -= 2;     // all elites — fewer, harder
     for (let i = 0; i < total; i++) {
@@ -970,11 +988,11 @@ class Game {
       if (!this.boss || this.boss.dead) return;
       this.pressureT -= dt;
       if (this.pressureT <= 0) {
-        this.pressureT = 13;
-        if (this.enemies.length + this.pendingSpawns.length < 5) {
+        this.pressureT = 9;
+        if (this.enemies.length + this.pendingSpawns.length < 6) {
           const p = this._nearestPlayer(this.boss.x, this.boss.z) || this.player;
           const pos = this._findSpotNear(p.x, p.z, 45, 80, 4, 40);
-          if (pos) this.pendingSpawns.push({ x: pos[0], z: pos[1], type: RNG() < 0.6 ? 'rusher' : 'hunter', t: 1.8, tick: 0, al: 1 });
+          if (pos) this.pendingSpawns.push({ x: pos[0], z: pos[1], type: RNG() < 0.6 ? 'rusher' : 'hunter', t: 1.1, tick: 0, al: 1 });
         }
       }
       return;
@@ -982,16 +1000,16 @@ class Game {
     if (this.alarmT <= 0) { this.pressureT = Math.min(this.pressureT, 4); return; }
     this.pressureT -= dt;
     if (this.pressureT > 0) return;
-    this.pressureT = Math.max(4, 10 - this.level * 0.5) *
+    this.pressureT = Math.max(2.8, 7 - this.level * 0.4) *
       (this.mutator === 'swarm' ? 0.55 : 1) * this._diff().pressure *
       (this.exit ? 0.7 : 1);   // the getaway keeps the screws on
-    const cap = Math.min(6 + this.level, 13);
+    const cap = Math.min(9 + this.level, 16);
     if (this.enemies.length + this.pendingSpawns.length >= cap) return;
     const n = 1 + (this.level > 3 ? 1 : 0);
     for (let i = 0; i < n; i++) {
       // waves converge on the grid's last contact with the squad
       const pos = this._findSpotNear(this.lastKnownX, this.lastKnownZ, 40, 75, 4, 38);
-      if (pos) this.pendingSpawns.push({ x: pos[0], z: pos[1], type: this._pressureType(), t: 1.8, tick: 0, al: 1 });
+      if (pos) this.pendingSpawns.push({ x: pos[0], z: pos[1], type: this._pressureType(), t: 1.1, tick: 0, al: 1 });
     }
   }
 
@@ -1002,10 +1020,12 @@ class Game {
   }
 
   // ---- uplink zones -------------------------------------------------------------
-  // Objectives are held, not touched: stand in the zone while its uplink
-  // fills. Hacking an uplink is NOISY — it pulses and nearby patrols come
-  // looking. The stealth play is clearing the local patrol first; the loud
-  // play is holding the ring against whatever the pulses drag in.
+  // Objectives are SPIKED, not squatted: clip the ring once and the spike is
+  // planted — the hack then runs itself while you drive on to the next thing.
+  // Sitting in the ring only makes it finish sooner. What you pay for the
+  // shortcut is noise: a running spike pulses, and every patrol in earshot
+  // comes to look, so the sector heats up behind you while you're already
+  // three zones away. Nothing in this game should ever be a parking brake.
 
   _updateZones(dt) {
     for (const f of this.flags) {
@@ -1014,32 +1034,32 @@ class Game {
       for (const p of this.players) {
         if (p.alive && dist2(p.x, p.z, f.x, f.z) < CAP_RADIUS * CAP_RADIUS) holders.push(p);
       }
-      const localIn = holders.some((h) => h.id === this.localId);
-      if (!holders.length) {
-        f.contested = false;
-        // coach the drain the first time the local tank walks away mid-capture
-        if (!this._hintDrain && f.localWas && f.cap > 0.08) {
-          this._hintDrain = true;
-          this.hud.message('UPLINK DRAINING — GET BACK IN THE RING', '#ffd24a', 2.6);
+      // one touch arms it for good — no drain, no coming back to babysit
+      if (holders.length && !f.spiked) {
+        f.spiked = true;
+        f.pulseT = 0;
+        // whoever planted it owns the upgrade bonus for the rest of the hack
+        let spike = 0;
+        for (const h of holders) spike = Math.max(spike, h.up ? (h.up.uplink || 0) : 0);
+        f.spikeUp = spike;
+        f.owners = holders.map((h) => h.id);
+        this._burst(f.x, 1.6, f.z, 10, [0.4, 0.9, 1], 7);
+        this._sfx('select', f.x, f.z);
+        if (holders.some((h) => h.id === this.localId)) {
+          this.hud.message(this._hintSpike ? 'UPLINK SPIKED' : 'UPLINK SPIKED — KEEP MOVING, IT RUNS ITSELF', '#4fd6bb', this._hintSpike ? 1.2 : 3);
+          this._hintSpike = true;
         }
-        f.localWas = false;
-        f.cap = Math.max(0, (f.cap || 0) - dt / 6);   // uplink decays if abandoned
-        continue;
       }
-      if (!this._hintHold && localIn) {
-        this._hintHold = true;
-        this.hud.message('HOLD THE RING UNTIL THE UPLINK FILLS', '#4fd6bb', 3);
-      }
-      f.localWas = localIn;
-      f.contested = true;
-      let spike = 0;
-      for (const h of holders) spike = Math.max(spike, h.up ? (h.up.uplink || 0) : 0);
-      const rate = (1 + 0.35 * (holders.length - 1)) * (1 + 0.3 * spike);
-      f.cap = (f.cap || 0) + (dt / CAP_TIME) * rate;
+      if (!f.spiked) continue;
+      f.contested = true;   // "uplink running" — the HUD/renderer tell
+      // holding the ring is a speed-up, never a requirement
+      const rate = (1 + 0.3 * (f.spikeUp || 0)) *
+        (holders.length ? SPIKE_HOLD_MUL + 0.35 * (holders.length - 1) : 1);
+      f.cap = (f.cap || 0) + (dt / SPIKE_TIME) * rate;
       // the hack pulses: every beat, patrols in earshot turn to investigate
       f.pulseT = (f.pulseT || 0) - dt;
       if (f.pulseT <= 0) {
-        f.pulseT = 1.6;
+        f.pulseT = 1.1;
         this._noise(f.x, f.z, 55, 0.55);
       }
       if (f.cap >= 1) {
@@ -1051,8 +1071,10 @@ class Game {
         this._bankPot();   // the capture is the cash-out
         this._burst(f.x, 2.5, f.z, 18, [0.3, 1, 0.5], 8);
         this._sfx('flag', f.x, f.z);
-        for (const h of holders) this._awardTech(h, 40);
-        const isLocal = holders.some((h) => h.id === this.localId);
+        // the spike pays whoever planted it, wherever they are by now
+        const paid = (f.owners && f.owners.length ? f.owners : this.players.map((p) => p.id));
+        for (const id of paid) this._awardTech(this._playerById(id), 40);
+        const isLocal = paid.indexOf(this.localId) >= 0;
         if (isLocal) {
           this.hud.pickup();
           this.hud.scorePop('+' + pts + (this.mult > 1 ? ' ×' + this.mult : ''));
@@ -1143,7 +1165,7 @@ class Game {
     while (p.tech >= p.techNext) {
       p.tech -= p.techNext;
       p.techLvl++;
-      p.techNext = 50 + p.techLvl * 45;
+      p.techNext = 40 + p.techLvl * 34;
       if (p.pendingOffers) p.pendingLevels++;
       else this._rollOffers(p);
       if (p.id === this.localId && p.pendingOffers) {
@@ -1222,7 +1244,7 @@ class Game {
         const f = live[(RNG() * live.length) | 0];
         const pos = this._findSpotNear(f.x, f.z, 12, 30, 4, 45);
         if (!pos) continue;
-        this.pendingSpawns.push({ x: pos[0], z: pos[1], type: this._reinforcementType(), t: 1.8, tick: 0, al: this.alarmT > 0 ? 1 : 0 });
+        this.pendingSpawns.push({ x: pos[0], z: pos[1], type: this._reinforcementType(), t: 1.1, tick: 0, al: this.alarmT > 0 ? 1 : 0 });
         queued++;
       }
       if (queued > 0) {
@@ -1457,8 +1479,10 @@ class Game {
     }
     p.boostHeld = wantBoost ? (p.boostHeld || 0) + dt : 0;
     p.boosting = wantBoost;
-    const regen = 13 * (1 + 0.25 * ((p.up && p.up.overcharge) || 0));
-    if (p.boosting) p.boost = Math.max(0, p.boost - dt * 34);
+    // boost is the pace pedal: it drains slower and comes back faster than it
+    // used to, so the answer to "should I boost?" is nearly always yes
+    const regen = 19 * (1 + 0.25 * ((p.up && p.up.overcharge) || 0));
+    if (p.boosting) p.boost = Math.max(0, p.boost - dt * 30);
     else p.boost = Math.min(p.maxBoost, p.boost + dt * regen);
 
     // ---- movement: velocity-vector physics with drift ----------------------
@@ -1623,7 +1647,7 @@ class Game {
     if (input.nade && p.nadeCd <= 0) {
       if (p.nades > 0) {
         p.nades--;
-        p.nadeCd = 0.8;
+        p.nadeCd = 0.6;
         const bx = p.x + fwdX(p.angle) * 3.0;
         const bz = p.z + fwdZ(p.angle) * 3.0;
         this.projectiles.push({
@@ -1897,8 +1921,9 @@ class Game {
       // a patrol only fights what its sensors actually found
       if (!this.bossLevel) this._senseUpdate(e, dt);
       const hunting = !!p && e.alerted;
-      // unaware patrols roll slow; an investigating hull picks up the pace
-      let moveMul = e.alerted ? 1 : (e.invT > 0 ? 0.8 : 0.55);
+      // unaware patrols still cover ground — a grid of near-parked hulls read
+      // as scenery, and sneaking past scenery isn't a decision
+      let moveMul = e.alerted ? 1 : (e.invT > 0 ? 1 : 0.8);
 
       // phantoms shimmer out of visibility once the hunt is on, decloak to fire
       if (spec.cloaks) {
@@ -2529,7 +2554,7 @@ class Game {
       for (const o of hits) this._hurtEnemyRef(o, 30, ownerId, via);
     }
     // chance to drop a pickup
-    if (RNG() < 0.35) {
+    if (RNG() < 0.42) {
       const keys = Object.keys(POWERUP_TYPES);
       this._spawnPowerup(e.x, e.z, keys[(RNG() * keys.length) | 0]);
     }

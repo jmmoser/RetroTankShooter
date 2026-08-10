@@ -3,7 +3,8 @@
 const { loadScripts, fakeHud, check, assert } = require('./helpers');
 
 loadScripts(['game.js'],
-  'global.Game = Game; global.__UPGRADES = UPGRADES; global.ENEMY_TYPES = ENEMY_TYPES;');
+  'global.Game = Game; global.__UPGRADES = UPGRADES; global.ENEMY_TYPES = ENEMY_TYPES;' +
+  ' global.CAP_RADIUS = CAP_RADIUS; global.SPIKE_TIME = SPIKE_TIME;');
 const hud = fakeHud();
 
 check('boss sector (level 5): 3000-frame fight does not throw', () => {
@@ -81,6 +82,61 @@ check('campaign: three sectors clear through warp gates', () => {
     g.nextLevel(g.gates ? g.gates[1].id : 'standard');
     assert(g.mode === 'playing', 'nextLevel did not resume play');
   }
+});
+
+// Uplink zones are drive-through: one frame of contact plants the spike and
+// the hack finishes on its own. Nothing here may require the tank to stay.
+check('uplink: a single touch spikes the zone and it captures unattended', () => {
+  const g = new Game(hud);
+  g.newRun([{ id: 'solo', loadoutIndex: 1 }], 'solo', {});
+  const f = g.flags[0], p = g.player;
+  p.x = f.x; p.z = f.z;
+  g._updateZones(1 / 60);
+  assert(f.spiked, 'one frame in the ring did not plant the spike');
+  // drive to the far side of the arena and never come back
+  p.x = f.x + 120; p.z = f.z + 120;
+  let t = 0;
+  while (!f.taken && t < SPIKE_TIME * 3) { g._updateZones(1 / 60); t += 1 / 60; }
+  assert(f.taken, 'unattended spike never completed');
+  assert(t <= SPIKE_TIME * 1.2, 'unattended capture took ' + t.toFixed(2) + 's');
+});
+
+check('uplink: a planted spike never drains, and holding only speeds it up', () => {
+  const g = new Game(hud);
+  g.newRun([{ id: 'solo', loadoutIndex: 1 }], 'solo', {});
+  const f = g.flags[0], p = g.player;
+  p.x = f.x; p.z = f.z;
+  g._updateZones(1 / 60);
+  p.x = f.x + 120; p.z = f.z + 120;
+  let prev = f.cap;
+  for (let i = 0; i < 30; i++) {
+    g._updateZones(1 / 60);
+    assert(f.cap >= prev, 'uplink progress went backwards while unattended');
+    prev = f.cap;
+  }
+  // a second zone, held the whole way, must land faster than the free run
+  const g2 = new Game(hud);
+  g2.newRun([{ id: 'solo', loadoutIndex: 1 }], 'solo', {});
+  const f2 = g2.flags[0], p2 = g2.player;
+  p2.x = f2.x; p2.z = f2.z;
+  let held = 0;
+  while (!f2.taken && held < SPIKE_TIME * 3) { g2._updateZones(1 / 60); held += 1 / 60; }
+  assert(f2.taken && held < SPIKE_TIME, 'holding the ring did not beat ' + SPIKE_TIME + 's');
+});
+
+check('uplink: the spike pays the tank that planted it, not one standing there', () => {
+  const g = new Game(hud);
+  g.newRun([{ id: 'a', loadoutIndex: 1 }, { id: 'b', loadoutIndex: 1 }], 'a', {});
+  const f = g.flags[0], [a, b] = g.players;
+  a.x = f.x; a.z = f.z;
+  b.x = f.x + 120; b.z = f.z + 120;
+  g._updateZones(1 / 60);
+  a.x = f.x + 120; a.z = f.z + 120;   // planter leaves immediately
+  b.x = f.x; b.z = f.z;               // freeloader parks on the ring
+  const techA = a.tech + a.techLvl * 1000, techB = b.tech + b.techLvl * 1000;
+  while (!f.taken) g._updateZones(1 / 60);
+  assert(a.tech + a.techLvl * 1000 > techA, 'planter was not paid');
+  assert(b.tech + b.techLvl * 1000 === techB, 'a non-planter was paid');
 });
 
 check('daily seed: identical seed generates identical arenas', () => {

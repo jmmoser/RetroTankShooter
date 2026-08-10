@@ -419,7 +419,7 @@ const Net = (() => {
     game.level = msg.level;
     game.score = msg.score;
     game.obstacles = msg.obstacles;
-    game.flags = msg.flags.map((f) => ({ x: f.x, z: f.z, taken: f.taken, spin: f.spin || 0, cap: 0, contested: false }));
+    game.flags = msg.flags.map((f) => ({ x: f.x, z: f.z, taken: f.taken, spin: f.spin || 0, cap: 0, contested: false, spiked: false }));
     game.depots = msg.depots || [];
     game.enemies = [];
     game.projectiles = [];
@@ -506,8 +506,11 @@ const Net = (() => {
     if (msg.fc) {
       for (let i = 0; i < game.flags.length && i < msg.fc.length; i++) {
         const f = game.flags[i];
-        f.contested = (msg.fc[i] || 0) > (f.cap || 0);   // rising uplink = being held
+        // any progress at all means the spike is planted and running — the
+        // hack no longer needs a tank in the ring, so "rising" is not the tell
         f.cap = msg.fc[i] || 0;
+        f.spiked = f.cap > 0;
+        f.contested = f.spiked;
       }
     }
 
