@@ -2,7 +2,7 @@
  * piercing shells, and a long combat soak. */
 const { loadScripts, fakeHud, check, assert } = require('./helpers');
 
-loadScripts(['game.js'], 'global.Game = Game;');
+loadScripts(['game.js'], 'global.Game = Game; global.SHELL_SPEED = SHELL_SPEED;');
 const hud = fakeHud();
 
 function freshGame() {
@@ -92,7 +92,7 @@ check('aim assist leads a crossing target to the intercept point', () => {
   // fly the shell and the target forward; the snap must produce a hit
   let minD = Infinity;
   for (let t = 0; t < 2; t += 1 / 240) {
-    const sx = -Math.sin(a) * 72 * t, sz = -Math.cos(a) * 72 * t;
+    const sx = -Math.sin(a) * SHELL_SPEED * t, sz = -Math.cos(a) * SHELL_SPEED * t;
     minD = Math.min(minD, Math.hypot(sx - (e.x + e.vx * t), sz - (e.z + e.vz * t)));
   }
   assert(minD < 2, 'shell missed the crossing target by ' + minD.toFixed(1));
@@ -100,7 +100,7 @@ check('aim assist leads a crossing target to the intercept point', () => {
   const live = 0;   // bearing straight at the spawn position
   let liveD = Infinity;
   for (let t = 0; t < 2; t += 1 / 240) {
-    const sx = -Math.sin(live) * 72 * t, sz = -Math.cos(live) * 72 * t;
+    const sx = -Math.sin(live) * SHELL_SPEED * t, sz = -Math.cos(live) * SHELL_SPEED * t;
     liveD = Math.min(liveD, Math.hypot(sx - (e.x + e.vx * t), sz - (e.z + e.vz * t)));
   }
   assert(liveD > 10, 'test premise broken: live-position snap should miss');

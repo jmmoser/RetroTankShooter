@@ -890,14 +890,42 @@
   });
 
   // ---- TECH draft overlay ------------------------------------------------------
-  // In-run upgrade picks. Solo: the sim pauses while you choose (uiMode
-  // 'draft'). Co-op: the fight doesn't pause — the overlay floats over live
-  // gameplay (nonmodal) and you pick under fire. Clients get their offers
+  // In-run upgrade picks. THE FIGHT NEVER STOPS FOR ONE: the overlay always
+  // floats over live gameplay (nonmodal), solo included, and if you don't
+  // answer inside DRAFT_AUTO seconds the tank installs a random offer for
+  // you and the card goes away. Nothing about levelling up should be a
+  // full stop — the pick is a bonus for players who want to steer the build,
+  // never a toll every other player has to pay. Clients get their offers
   // relayed from the host and answer with a 'pick' message.
+  const DRAFT_AUTO = 6;    // seconds on the card before it auto-installs
   const draftEl = document.getElementById('screen-draft');
   const draftChoicesEl = document.getElementById('draft-choices');
+  const draftTimerEl = document.getElementById('draft-timer');
   let draftOpen = false;
   let draftOpenedAt = 0;   // nonmodal Enter-picks need a settle delay (see draftKeys)
+  let draftAutoT = 0;      // seconds left before the auto-install fires
+  let draftIds = [];       // the ids currently on the card, for the auto-pick
+
+  /* Nobody's answering — install one of the offers at random and move on.
+   * Wired to real time, not sim time, so hit-stop can't stretch the wait. */
+  function draftAutoPick() {
+    if (!draftOpen || !draftIds.length) return;
+    const id = draftIds[(Math.random() * draftIds.length) | 0];
+    hud.message('AUTO-INSTALLED', '#e8c75a', 1.2);
+    draftPick(id);
+  }
+
+  /* Runs every frame, gameplay or not: the card only belongs over a live
+   * arena, so the pause and sector-clear screens hide it and freeze its
+   * clock rather than letting it stack on top of another panel. */
+  function tickDraft(dt) {
+    const live = draftOpen && uiMode === 'playing';
+    draftEl.classList.toggle('hidden', !live);
+    if (!live) return;
+    draftAutoT = Math.max(0, draftAutoT - dt);
+    if (draftTimerEl) draftTimerEl.style.width = (draftAutoT / DRAFT_AUTO) * 100 + '%';
+    if (draftAutoT <= 0) draftAutoPick();
+  }
 
   function draftPick(id) {
     if (!draftOpen) return;
@@ -928,6 +956,9 @@
 
   function buildDraft(offers) {
     draftOpenedAt = performance.now();   // banked follow-up drafts re-arm the settle gate too
+    draftAutoT = DRAFT_AUTO;             // ...and re-arm the auto-install clock
+    if (draftTimerEl) draftTimerEl.style.width = '100%';
+    draftIds = offers.map((o) => o.id);
     draftChoicesEl.innerHTML = '';
     offers.forEach((o, i) => {
       const def = UPGRADES.find((u) => u.id === o.id);
@@ -947,29 +978,24 @@
   function openDraft(offers) {
     draftOpen = true;
     buildDraft(normalizeOffers(offers));
-    if (Net.role === 'solo') {
-      uiMode = 'draft';               // the war waits while you fit the new part
-      draftEl.classList.remove('nonmodal');
-    } else {
-      draftEl.classList.add('nonmodal');
-    }
-    draftEl.classList.remove('hidden');
+    draftEl.classList.add('nonmodal');   // the war never waits, solo included
+    draftEl.classList.remove('hidden');   // tickDraft owns it from here
   }
 
   function closeDraft() {
-    if (!draftOpen && draftEl.classList.contains('hidden')) return;
     draftOpen = false;
+    draftIds = [];
     draftEl.classList.add('hidden');
-    if (uiMode === 'draft') uiMode = 'playing';
   }
 
-  /* modal = solo (sim paused): Space may confirm. In co-op Space is the fire
-   * key, so only digits / arrows+Enter / click / tap pick there — and Enter
-   * needs the overlay to have been visible for a beat first: the gamepad
-   * synthesizes Enter edges from the A button, which is ALSO the fire button,
-   * so a pad player firing the moment the draft appeared used to spend the
-   * pick without ever seeing the options. */
-  function draftKeys(modal) {
+  /* The card is always live over a running fight, so Space stays the fire key
+   * and never confirms: only digits / arrows+Enter / click / tap pick — and
+   * Enter needs the overlay to have been visible for a beat first, because
+   * the gamepad synthesizes Enter edges from the A button, which is ALSO the
+   * fire button; a pad player firing the moment the draft appeared used to
+   * spend the pick without ever seeing the options. Arrow keys are shared
+   * with steering, so they only move the cursor, never commit. */
+  function draftKeys() {
     const list = draftChoiceNodes;
     for (let i = 0; i < list.length; i++) {
       if (Input.consume('Digit' + (i + 1))) { list[i].click(); return; }
@@ -977,9 +1003,8 @@
     const m = menus.draft;
     if (Input.consume('ArrowUp')) m.move(-1);
     if (Input.consume('ArrowDown')) m.move(1);
-    const settled = modal || performance.now() - draftOpenedAt > 800;
-    if (Input.consume('Enter') || Input.consume('NumpadEnter') || (modal && Input.consume('Space'))) {
-      if (settled) m.activate();
+    if (Input.consume('Enter') || Input.consume('NumpadEnter')) {
+      if (performance.now() - draftOpenedAt > 800) m.activate();
     }
   }
 
@@ -1235,7 +1260,7 @@
 
   function updateFilm(dt) {
     const k = (cur, target, rate) => cur + (target - cur) * Math.min(1, dt * rate);
-    const playing = (uiMode === 'playing' || uiMode === 'draft') &&
+    const playing = uiMode === 'playing' &&
       (game.mode === 'playing' || game.mode === 'dying');
     const p = playing ? game.player : null;
     const hurt = Math.min(1, hud.flash || 0);
@@ -1382,9 +1407,10 @@
       if (f.taken) continue;
       renderer.draw(M.flag, m4.trs(f.x, 0, f.z, f.spin, 1, 1, 1, MTX));
       // uplink zone: boundary ring on the ground, plus a growing progress
-      // ring while the capture is being held — amber pulse when contested
+      // ring once the spike is in — the amber strobe is "hack running", which
+      // is also the tell that patrols are being pulled toward this spot
       const cap = f.cap || 0;
-      const hot = !!f.contested;
+      const hot = !!(f.contested || f.spiked);
       const pulse = hot ? 0.75 + 0.25 * Math.sin(zt * 9) : 0.35 + 0.12 * Math.sin(zt * 2.5 + f.x);
       const bc = hot
         ? [1.0 * pulse, 0.75 * pulse, 0.2 * pulse]
@@ -1782,7 +1808,7 @@
         break;
 
       case 'playing':
-        if (draftOpen) draftKeys(false);   // co-op: pick under fire
+        if (draftOpen) draftKeys();   // always under fire — the sim never stops
         if (Input.consume('cam')) { chaseCam = !chaseCam; chaseCamUserSet = true; }
         if (Input.consume('pause') || Input.consume('Escape')) {
           // no pausing mid-death-cam: the gamepad synthesizes Escape from B
@@ -1792,10 +1818,6 @@
           if (Net.role === 'solo') pauseGame();
           else hud.message('PAUSE UNAVAILABLE IN CO-OP', '#ffd24a', 1.6);
         }
-        break;
-
-      case 'draft':
-        draftKeys(true);   // solo: the sim is paused while you choose
         break;
 
       case 'paused':
@@ -1895,8 +1917,7 @@
   // a ghost, the full groove only once the grid is hunting.
   function updateMusic() {
     let mood = 'menu';
-    // a solo TECH draft pauses the sim but shouldn't drop the combat groove
-    if ((uiMode === 'playing' || uiMode === 'draft') && (game.mode === 'playing' || game.mode === 'dying')) {
+    if (uiMode === 'playing' && (game.mode === 'playing' || game.mode === 'dying')) {
       if (game.bossLevel && game.boss && !game.boss.dead) {
         mood = 'boss';
         AudioSys.setMusicIntensity(1);
@@ -2058,6 +2079,10 @@
         stepSim(dt * simScale(dt));
       }
     }
+
+    // real dt on purpose: hit-stop and the death-cam slow-mo must not stretch
+    // the countdown on the upgrade card
+    tickDraft(dt);
 
     if (uiMode === 'playing' && game.mode === 'playing') checkRecordChase();
 

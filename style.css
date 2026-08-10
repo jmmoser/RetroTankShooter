@@ -602,6 +602,21 @@ body.touch-ui .mbtn { padding: 10px 20px; }
   color: #e8c75a;
 }
 .mbtn.draft-choice.focus::before { content: none; }
+/* the card never stops the fight: this bar is how long you have before the
+   tank picks one at random and gets back to work */
+.draft-timer-track {
+  width: min(380px, 86vw);
+  height: 3px;
+  margin-top: 10px;
+  background: rgba(232, 199, 90, 0.16);
+}
+.draft-timer-fill {
+  height: 100%;
+  width: 100%;
+  background: #e8c75a;
+  box-shadow: 0 0 8px rgba(232, 199, 90, 0.7);
+}
+.draft-auto-note { color: rgba(232, 199, 90, 0.75); margin-left: 10px; }
 /* co-op: the draft floats over live gameplay — dim panel, playfield stays hot */
 .screen.nonmodal { pointer-events: none; justify-content: flex-end; padding-bottom: 8vh; }
 .screen.nonmodal .panel { pointer-events: auto; background: rgba(8, 22, 18, 0.84); }

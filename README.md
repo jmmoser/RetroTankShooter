@@ -66,12 +66,14 @@ quiet enough that only close packmates notice the wreck. A hull that
 *survives* a hit is instantly hostile, so commit: one clean ram, a mine
 under a patrol route, an isolated straggler deleted at range.
 
-Secure **all uplink zones** to open the way out. A zone isn't a
-touch-and-go flag: drive into its ring and **hold it** while the uplink
-fills — and the hack **pulses**, dragging every patrol in earshot over to
-look. The stealth play is clearing the local patrol first; the loud play
-is holding the ring against whatever shows up. Leave, and the progress
-drains away.
+Secure **all uplink zones** to open the way out. Zones are **spiked on
+contact**: clip the ring once — a drive-by is enough — and the hack runs
+itself from there while you're already gone. Progress never drains, you
+never have to come back, and sitting in the ring only makes it land
+sooner. What you pay is noise: a running spike **pulses**, dragging every
+patrol in earshot toward it. Spike three zones in one pass and you've
+lit three fires behind you at once; the sector gets loud while you're
+still moving.
 
 When the last uplink falls, there's no mop-up — the grid knows, every
 hull in the sector wakes up, and an **EXTRACTION GATE** opens across the
@@ -102,6 +104,13 @@ And because heat is *signature*, the vent is double-edged gold: clear the
 bar and you drop off enemy sensors.
 
 ### Momentum is everything
+
+Every hull in the garage is quick — the slowest chassis outruns what the
+fastest one used to manage — and the arena is a **tight, densely built
+box** rather than a field you commute across. Boost drains slower and
+comes back faster, so the honest answer to "should I boost?" is nearly
+always yes. Patrols move at a real clip too, alerted or not: disengaging
+is a decision now, not a formality.
 
 The hull points where you steer; your **velocity** has its own ideas.
 Boosting drops the tread grip so the tank **drifts** — swing the gun
@@ -142,9 +151,12 @@ Kills, captures and salvage pay **TECH**. Each tech level deals a
 cluster grenades, shock discharges, ram plating, ghost plating (slower
 enemy sensors), shield siphons and more — nineteen stackable upgrades that
 compound into a build: full assassin, full brawler, or the drift-happy
-something in between. Solo, the war waits while you choose; in co-op the
-fight doesn't pause, so you pick under fire (press `1 2 3`, tap, or
-click). By sector 5 no two runs fight alike.
+something in between. **The fight never stops for one.** The card floats
+over live gameplay — solo included — and a gold bar counts down: pick with
+`1 2 3`, a tap or a click if you want to steer the build, or ignore it
+entirely and the tank **auto-installs one of the three** and gets back to
+work. Levelling up is a bonus, never a toll. By sector 5 no two runs
+fight alike.
 
 **Movement is a weapon.** Slam into a hostile at boost speed and it
 shatters — a boost-ram costs a scratch of shields (nothing with RAM
