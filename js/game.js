@@ -67,6 +67,9 @@ const GRAZE_R = 4.2;             // enemy shots passing this close (but not
  * off to investigate, at 1 they alert and the sector alarm rises. Loud
  * actions register NOISE events that pull patrols to the spot. */
 const SENSE_SUS = 0.4;     // detection meter: patrol -> investigating
+const SENSE_RAMP = 0.55;   // sight-fill rate above SUSPICIOUS — a glimpse is
+                           // a telegraph, not a verdict; the slower climb is
+                           // the reaction beat the counterplay lives in
 const SIGHT_CONE = 1.05;   // half-angle of a patrolling hull's vision cone
 const NOISE_SHOT = 60;     // cannon report radius
 const NOISE_BOOM = 70;     // grenade / mine / rusher blast radius
@@ -207,6 +210,16 @@ const POWERUP_TYPES = {
   overdrive: { tint: [0.3, 0.7, 1.0],   label: 'OVERDRIVE' },
   rapid:     { tint: [1.0, 0.45, 0.2],  label: 'RAPID FIRE' },
 };
+
+/* Live sensor reach of a hull type against a tank reading at signature
+ * `sig`. This is the sim's single source of truth — the HUD radar cones and
+ * the in-world gaze beams draw THIS number, so what the player sees is
+ * exactly what a patrol can see, never an artist's sketch of it. */
+function senseRange(type, sig) {
+  const spec = ENEMY_TYPES[type];
+  if (!spec) return 0;
+  return spec.sight * (0.35 + 0.65 * (sig != null ? sig : 1));
+}
 
 function fwdX(a) { return -Math.sin(a); }
 function fwdZ(a) { return -Math.cos(a); }
@@ -1878,6 +1891,7 @@ class Game {
       }
       return;
     }
+    const wasSus = e.sense >= SENSE_SUS;
     for (const n of this.noises) {
       if (dist2(e.x, e.z, n.x, n.z) < n.r * n.r) {
         e.sense = Math.min(0.99, e.sense + n.mag);
@@ -1889,7 +1903,7 @@ class Game {
       if (!pl.alive) continue;
       const d = Math.hypot(pl.x - e.x, pl.z - e.z);
       const sig = pl.sig != null ? pl.sig : 1;
-      const sightR = spec.sight * (0.35 + 0.65 * sig);
+      const sightR = senseRange(e.type, sig);
       if (d > sightR) continue;
       const bearing = Math.abs(wrapAngle(angleTo(pl.x - e.x, pl.z - e.z) - e.angle));
       if (bearing > SIGHT_CONE && d > 9 + sig * 16) continue;   // behind it, and too far to hear
@@ -1899,13 +1913,21 @@ class Game {
       if (f > fill) { fill = f; sx = pl.x; sz = pl.z; }
     }
     if (fill > 0) {
-      e.sense += fill * dt;
+      // two-stage meter: the glimpse fills fast, the CONFIRM needs sustained
+      // eyes-on — that gap is where breaking line of sight or running cold
+      // actually saves you, instead of "SPOTTED" landing with the glimpse
+      e.sense += fill * (wasSus ? SENSE_RAMP : 1) * dt;
       e.invX = sx; e.invZ = sz; e.invT = 6;
       if (e.sense >= 1) { this._alertEnemy(e, sx, sz); return; }
     } else {
       e.sense = Math.max(0, e.sense - dt * 0.22);
     }
-    if (e.sense >= SENSE_SUS) this.suspicion = true;
+    if (e.sense >= SENSE_SUS) {
+      // first crossing pings, placed at the hull that noticed — the sound IS
+      // the direction, so heads-down players still know where to not be
+      if (!wasSus) this._sfx('ping', e.x, e.z);
+      this.suspicion = true;
+    }
   }
 
   _updateEnemies(dt) {

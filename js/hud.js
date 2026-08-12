@@ -422,6 +422,32 @@ class HUD {
       ctx.fillRect(bx - 1.5 * s, by - 1.5 * s, 3 * s, 3 * s);
     }
 
+    // sensor cones: what each hull can SEE, drawn under the blips. Direction
+    // is the hull's facing, reach is the sim's own senseRange against your
+    // CURRENT signature — throttle down and every cone on the dish visibly
+    // shrinks. A cone you are outside of cannot fill; the dish is the route
+    // planner, not just a threat list. Alerted hulls hunt, they don't scan,
+    // so they carry no cone — brightness already says they know.
+    if (!game.versus && typeof senseRange === 'function') {
+      for (const e of game.enemies) {
+        if (e.alerted || e.cloak > 0.6) continue;
+        const reach = (senseRange(e.type, p.sig) / range) * R;
+        if (reach <= 0) continue;
+        const [bx, by] = toRadar(e.x, e.z);
+        // facing through the same world->radar rotation the blips ride
+        const fx = -Math.sin(e.angle), fz = -Math.cos(e.angle);
+        const ca = Math.cos(p.angle), sa = Math.sin(p.angle);
+        const ang = Math.atan2(fx * sa + fz * ca, fx * ca - fz * sa);
+        const sus = (e.sense || 0) >= 0.4;
+        ctx.fillStyle = sus ? 'rgba(255,200,74,0.16)' : 'rgba(110,190,170,0.09)';
+        ctx.beginPath();
+        ctx.moveTo(bx, by);
+        ctx.arc(bx, by, reach, ang - SIGHT_CONE, ang + SIGHT_CONE);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
     const flagPulse = 0.6 + 0.4 * Math.sin(t * 5);
     const beaconOn = game.flagsLeft() <= 2;   // last flags: clamp to the rim
     ctx.fillStyle = `rgba(60,255,120,${flagPulse})`;

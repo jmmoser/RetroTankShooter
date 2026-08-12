@@ -62,6 +62,7 @@
     bossTurret: renderer.createMesh(Geometry.bossTurret()),
     bossCore: renderer.createMesh(Geometry.bossCore()),
     ring: renderer.createMesh(Geometry.ring(), renderer.gl.LINES),
+    gaze: renderer.createMesh(Geometry.gazeCone()),
     // ominous backdrop, camera-anchored so it sits at infinity
     sky: renderer.createMesh(Geometry.skyDome(660)),
     mountains: renderer.createMesh(Geometry.mountains(600)),
@@ -1524,9 +1525,25 @@
       const sc = (e.elite ? 1.18 : 1) *
         (e.type === 'rusher' ? 0.82 : e.type === 'shellback' ? 1.22 : 1);
       renderer.draw(tankMeshFor(e.type), m4.trs(e.x, 0, e.z, e.angle, sc, sc, sc, MTX), { tint });
+      const aware = e.alerted ? 2 : ((e.sense || 0) >= 0.4 ? 1 : 0);
+      // the hull's sensor beam, laid on the ground it is actually watching:
+      // direction is the hull's facing, reach is the sim's live senseRange
+      // against YOUR current signature — run colder and every beam in the
+      // arena visibly pulls back. Alerted hulls aren't scanning (they
+      // know), so a beam always means "this one can still be threaded".
+      if (aware < 2 && e.cloak < 0.6 && !game.versus) {
+        const reach = senseRange(e.type, game.player ? game.player.sig : 1);
+        const gp = aware === 1
+          ? 0.11 + 0.035 * Math.sin(now / 160)
+          : 0.085 + 0.02 * Math.sin(now / 420);   // slow breath: a live scan, not floor tint
+        const gt = aware === 1
+          ? [1.0 * gp, 0.72 * gp, 0.2 * gp]
+          : [0.4 * gp, 0.85 * gp, 0.75 * gp];
+        renderer.draw(M.gaze, m4.trs(e.x, 0.22, e.z, e.angle, reach, 1, reach, MTX),
+          { tint: gt, unlit: true, additive: true });
+      }
       // awareness telltale on the ground: amber = investigating, strobing
       // red = it knows — readable at a glance across the whole arena
-      const aware = e.alerted ? 2 : ((e.sense || 0) >= 0.4 ? 1 : 0);
       if (aware && e.cloak < 0.6) {
         const ap = aware === 2 ? 0.5 + 0.4 * Math.sin(now / 90) : 0.28 + 0.14 * Math.sin(now / 230);
         const at = aware === 2

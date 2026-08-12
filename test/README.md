@@ -20,6 +20,7 @@ context — `helpers.js` loads the needed `js/` files into a vm per process).
 | `t-net.js` | lobby full-rejection (host and client sides), mid-game roster pruning, snapshot serialize→apply round-trip, snapshot interpolation |
 | `t-presentation.js` | impact/hit-stop funnel, ground-decal pool (cap, fade, reaping), tread-print cadence, positional-sound encoding |
 | `t-settings-daily.js` | daily best/streak persistence incl. UTC-midnight straddles and corrupted-storage hardening |
+| `t-stealth.js` | `senseRange` as the shared sensor truth, the two-stage detect meter (glimpse telegraph vs confirm), the first-suspicion ping |
 
 ## Browser end-to-end
 
