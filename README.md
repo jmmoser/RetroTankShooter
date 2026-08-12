@@ -60,6 +60,19 @@ dark**. Sound matters too: the cannon's report, grenade and mine blasts,
 even slamming a slab at speed all pull patrols toward the source — but
 noise only makes them *look*. Only eyes-on makes them shoot.
 
+**You can see what they can see.** Every patrol paints its **sensor
+cone** — a translucent wedge on the radar, and a faint scanning beam laid
+on the arena floor (amber once the hull turns suspicious). The cones are
+drawn at the sim's own live reach against *your current signature*:
+throttle down and every cone in the sector visibly pulls back, redline
+and they stretch across the map — the signature bar is something you can
+*see on the ground* and steer through, not just a number. Alerted hulls
+carry no cone; they aren't scanning, they **know**. And a first glimpse
+is a telegraph, not a verdict: the instant any sensor crosses into
+SUSPICIOUS it chirps a **sonar ping** from the hull that noticed, and the
+meter needs sustained eyes-on to confirm — that beat is your window to
+break the cone, delete the witness, or go cold.
+
 **Kill them before they know.** A hull that never alerted pays **half
 again the score** as a **SILENT KILL** — and a boost-ram execution is
 quiet enough that only close packmates notice the wreck. A hull that
@@ -439,7 +452,8 @@ js/renderer.js  WebGL renderer + mat4 helpers: flat-shaded forward pass with
                 with PCF, dynamic point lights, additive and multiply
                 (decal) draws, and the bloom / ACES / FXAA / aberration /
                 grain / vignette post chain
-js/hud.js       radar, shield/heat/vent bars, pot & bounty, scoreboard (Canvas 2D)
+js/hud.js       radar (with live enemy sensor cones), shield/heat/vent bars,
+                pot & bounty, scoreboard (Canvas 2D)
 js/game.js      arena generation (four terrain layouts), players, per-type
                 enemy AI with stealth detection states, noise + signature
                 model, sector alarm, projectiles, pickups, seeded daily

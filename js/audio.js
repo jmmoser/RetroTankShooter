@@ -299,6 +299,9 @@ const AudioSys = (() => {
       tone('triangle', 1600, 400, 0.5, 0.18);
       tone('triangle', 1900, 500, 0.5, 0.12, 0.06);
     },
+    // a patrol's sensor just crossed SUSPICIOUS on you: one sonar chirp,
+    // placed at the hull that noticed — quiet enough to live under combat
+    ping()       { tone('sine', 1560, 1040, 0.11, 0.15); tone('sine', 2340, 1560, 0.06, 0.05, 0.06); },
     select()     { tone('square', 880, 880, 0.05, 0.2); },
     pause()      { tone('square', 660, 660, 0.06, 0.2); tone('square', 440, 440, 0.09, 0.2, 0.07); },
     sectorStart() {

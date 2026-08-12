@@ -329,6 +329,28 @@ const Geometry = (() => {
     return new Float32Array(verts);
   }
 
+  /* Flat ground wedge showing a patrol's sensor cone: apex at the origin,
+   * unit reach toward -Z (the hull's facing), spanning the sim's vision
+   * half-angle (SIGHT_CONE in game.js — keep them in step). Vertex colour
+   * fades to black toward the rim, so the additive draw reads as a beam
+   * losing power with distance instead of a hard-edged slab. Scaled per
+   * draw to the hull's live senseRange against the player's signature. */
+  function gazeCone() {
+    const verts = [];
+    const HALF = 1.05;   // matches SIGHT_CONE in game.js
+    const seg = 14;
+    const push = (x, z, c) => verts.push(x, 0, z, 0, 1, 0, c, c, c);
+    for (let i = 0; i < seg; i++) {
+      const a0 = -HALF + (i / seg) * HALF * 2;
+      const a1 = -HALF + ((i + 1) / seg) * HALF * 2;
+      // wound to face +Y (see decalDisc): apex, then increasing angle
+      push(0, 0, 1);
+      push(-Math.sin(a0), -Math.cos(a0), 0);
+      push(-Math.sin(a1), -Math.cos(a1), 0);
+    }
+    return new Float32Array(verts);
+  }
+
   /* ---- ground decals ------------------------------------------------------
    * Flat shapes laid on the floor and drawn with the "decal" blend
    * (dst * (1 - src)), so vertex colour reads as an opacity mask: white
@@ -552,5 +574,5 @@ const Geometry = (() => {
     return b.build();
   }
 
-  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, arenaWall, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring, decalDisc, decalQuad };
+  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, arenaWall, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring, gazeCone, decalDisc, decalQuad };
 })();
