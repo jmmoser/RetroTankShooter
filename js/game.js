@@ -75,6 +75,10 @@ const NOISE_SHOT = 60;     // cannon report radius
 const NOISE_BOOM = 70;     // grenade / mine / rusher blast radius
 const NOISE_WRECK = 45;    // a packmate shattering nearby is a tell
 const NOISE_RAM = 22;      // boost-ram kill: the assassin's quiet tool
+const AMBUSH_MUL = 3;      // cannon damage vs a hull that never saw you — the
+                           // ranged opener that lets the heat cannon play the
+                           // stealth game; heat tiers ride along, so a hotter
+                           // gun one-shots bigger prey (and glows brighter)
 const ALERT_RADIUS = 45;   // an alerted hull radios packmates this close
 const EXIT_RADIUS = 13;    // extraction gate: cross the ring to warp out
 
@@ -471,6 +475,7 @@ class Game {
     // themselves, so nobody sits on a ring waiting for a bar that isn't there
     this._hintSpike = false;
     this._hintSpotted = false;
+    this._hintAmbush = false;
     this.players = defs.map((d, i) => this._makePlayer(d, i));
     for (const p of this.players) this.killCounts[p.id] = 0;
     this.localId = localId != null ? localId : this.players[0].id;
@@ -2505,6 +2510,18 @@ class Game {
         }
       }
     }
+    // AMBUSH: a shell landing on a hull that never saw you coming hits ×3 —
+    // the cannon's way into the stealth game, so ranged assassination is a
+    // real alternative to the ram. The hot-tier damage rides along, which
+    // makes the redline the assassin's dial: a cold shell deletes a drone, a
+    // hot gun a hunter, a supercharged vent shell a phantom — but heat is
+    // signature, so one-shot power on bigger prey costs sensor reach. A
+    // survivor alerts (below), so commit to shells that kill.
+    const ambush = via === 'cannon' && !e.alerted && !this.versus;
+    if (ambush) {
+      dmg *= AMBUSH_MUL;
+      this._burst(e.x, 2.0, e.z, 8, [0.35, 1.0, 0.85], 7);
+    }
     e.hp -= dmg;
     e.hitFlash = 1;
     if (ENEMY_TYPES[e.type].cloaks) e.decloakT = Math.max(e.decloakT, 1.2);
@@ -2531,7 +2548,16 @@ class Game {
       this.runStats.silentKills++;
       this._bountyTick('silent');
       if (ownerId === this.localId) {
-        this.hud.message('SILENT KILL', '#4fd6bb', 1.1);
+        // a cannon ambush announces itself — and spells out the ×3 rule the
+        // first time one lands, so the mechanic teaches at the moment of use
+        if (via === 'cannon') {
+          this.hud.message(this._hintAmbush ? 'AMBUSH KILL'
+            : 'AMBUSH KILL — UNAWARE HULLS TAKE ×' + AMBUSH_MUL + ' CANNON DAMAGE',
+            '#4fd6bb', this._hintAmbush ? 1.1 : 3);
+          this._hintAmbush = true;
+        } else {
+          this.hud.message('SILENT KILL', '#4fd6bb', 1.1);
+        }
         if (this.runStats.silentKills >= 5) this._medal('assassin');
       }
     }
