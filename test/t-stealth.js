@@ -6,7 +6,7 @@ const { loadScripts, fakeHud, check, assert } = require('./helpers');
 loadScripts(['game.js'],
   'global.Game = Game; global.senseRange = senseRange; ' +
   'global.ENEMY_TYPES = ENEMY_TYPES; global.SENSE_SUS = SENSE_SUS; ' +
-  'global.SENSE_RAMP = SENSE_RAMP;');
+  'global.SENSE_RAMP = SENSE_RAMP; global.AMBUSH_MUL = AMBUSH_MUL;');
 const hud = fakeHud();
 
 function freshGame() {
@@ -90,4 +90,50 @@ check('a hull looking away stays blind beyond hearing range', () => {
   e.angle = 0;   // facing -Z: player is dead astern, 20 > hearing (9 + 0.5*16)
   for (let i = 0; i < 240; i++) g._senseUpdate(e, 1 / 60);
   assert(e.sense === 0 && !e.alerted, 'filled from outside the vision cone');
+});
+
+/* AMBUSH: the cannon's way into the stealth game — a shell on a hull that
+ * never alerted hits at AMBUSH_MUL, so a base shell (25) one-shots an
+ * unaware drone (60 hp) and the kill counts as silent. */
+
+function fieldWith(type) {
+  const g = freshGame();
+  g.enemies.length = 0;
+  g.obstacles.length = 0;
+  g._spawnEnemy(type, 40, 40);
+  return { g, e: g.enemies[0] };
+}
+
+check('AMBUSH: one cold shell deletes an unaware drone, silently', () => {
+  const { g } = fieldWith('drone');
+  g._hurtEnemy(0, 25, 'solo', 'cannon');
+  assert(g.enemies.length === 0, 'unaware drone survived an ambush shell');
+  assert(g.runStats.silentKills === 1, 'ambush kill not counted as silent');
+  assert(g.alarmT <= 0, 'a clean ambush kill raised the alarm');
+});
+
+check('AMBUSH: an alerted hull takes plain cannon damage', () => {
+  const { g, e } = fieldWith('drone');
+  e.alerted = true; e.sense = 1;
+  g._hurtEnemy(0, 25, 'solo', 'cannon');
+  assert(g.enemies.length === 1, 'alerted drone died to one plain shell');
+  assert(Math.abs(e.hp - (e.maxHp - 25)) < 1e-9,
+    'expected plain damage, hp = ' + e.hp);
+});
+
+check('AMBUSH is cannon-only: grenades on unaware hulls stay at listed damage', () => {
+  const { g, e } = fieldWith('drone');
+  g._hurtEnemy(0, 25, 'solo', 'nade');
+  assert(g.enemies.length === 1 && Math.abs(e.hp - (e.maxHp - 25)) < 1e-9,
+    'nade damage was multiplied');
+});
+
+check('AMBUSH survivor still alerts and raises the alarm — commit to kills', () => {
+  const { g, e } = fieldWith('hunter');   // 85 hp: a cold ambush (75) wounds
+  g._hurtEnemy(0, 25, 'solo', 'cannon');
+  assert(g.enemies.length === 1, 'hunter should survive a cold ambush shell');
+  assert(Math.abs(e.hp - (e.maxHp - 25 * AMBUSH_MUL)) < 1e-9,
+    'ambush shell not multiplied, hp = ' + e.hp);
+  assert(e.alerted, 'surviving an ambush must alert the hull');
+  assert(g.alarmT > 0, 'a failed ambush must raise the sector alarm');
 });

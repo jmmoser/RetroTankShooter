@@ -75,9 +75,14 @@ break the cone, delete the witness, or go cold.
 
 **Kill them before they know.** A hull that never alerted pays **half
 again the score** as a **SILENT KILL** — and a boost-ram execution is
-quiet enough that only close packmates notice the wreck. A hull that
-*survives* a hit is instantly hostile, so commit: one clean ram, a mine
-under a patrol route, an isolated straggler deleted at range.
+quiet enough that only close packmates notice the wreck. The cannon is
+an assassin's weapon too: a shell landing on a hull that never saw you
+coming is an **AMBUSH** and hits at **triple damage**, so one cold shell
+deletes a drone or a sniper from across the map — the report still
+carries, so patrols come looking at where you *were*. A hull that
+*survives* a hit is instantly hostile and sounds the alarm, so commit:
+one clean ram, a mine under a patrol route, an isolated straggler
+deleted at range with a shell hot enough to kill.
 
 Secure **all uplink zones** to open the way out. Zones are **spiked on
 contact**: clip the ring once — a drive-by is enough — and the hack runs
@@ -115,6 +120,13 @@ clear plus a burst of supercharged shells. Coolant depots and pickups vent
 for you; the COOLANT LOOP and VENT TUNING upgrades tune the whole system.
 And because heat is *signature*, the vent is double-edged gold: clear the
 bar and you drop off enemy sensors.
+
+Heat is also the assassin's dial. Ambush shells ride the same hot-tier
+damage as everything else, so the redline decides how big a hull one
+shell can delete: cold poaches a drone, a hot gun a hunter, a redlined
+one a warden or an elite, and a supercharged perfect-vent shell drops a
+phantom — but the heat that buys the one-shot is signature, and every
+sensor cone on the map stretches toward you while you carry it.
 
 ### Momentum is everything
 
