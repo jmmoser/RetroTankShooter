@@ -1540,21 +1540,31 @@ class Game {
     p.x += p.vx * dt;
     p.z += p.vz * dt;
 
-    // bouncy walls: slam into a slab or the perimeter and you rebound
+    // bouncy walls: SLAM into a slab head-on and you rebound. Graze one and
+    // you slide: only the into-the-surface velocity is shed, the tangential
+    // component carries you along the face instead of grinding you to a halt.
     const hit = this._collideTank(p, 1.9);
-    if (hit && Math.hypot(p.vx, p.vz) > p.maxSpeed * 0.45 && p.bounceCd <= 0) {
-      p.bounceCd = 0.35;
-      p.speed *= -0.45;
-      p.vx = fwdX(p.angle) * p.speed;
-      p.vz = fwdZ(p.angle) * p.speed;
-      p.boosting = false;
-      this._sfx('bounce');
-      this._noise(p.x, p.z, 26, 0.35);   // slamming a slab rings out
-      this._burst(p.x + fwdX(p.angle) * 2.5, 1.2, p.z + fwdZ(p.angle) * 2.5, 8, [0.9, 0.9, 0.7], 6);
-      if (isLocal) this._impact(0.45, -fwdX(p.angle) * 4, -fwdZ(p.angle) * 4, 0.05);
-    } else if (hit) {
-      p.speed *= 0.5;
-      p.vx *= 0.5; p.vz *= 0.5;
+    if (hit) {
+      const nx = p.colNx, nz = p.colNz;
+      const vn = p.vx * nx + p.vz * nz;   // < 0 means moving into the surface
+      if (-vn > p.maxSpeed * 0.45 && p.bounceCd <= 0) {
+        p.bounceCd = 0.35;
+        p.speed *= -0.45;
+        p.vx = fwdX(p.angle) * p.speed;
+        p.vz = fwdZ(p.angle) * p.speed;
+        p.boosting = false;
+        this._sfx('bounce');
+        this._noise(p.x, p.z, 26, 0.35);   // slamming a slab rings out
+        this._burst(p.x + fwdX(p.angle) * 2.5, 1.2, p.z + fwdZ(p.angle) * 2.5, 8, [0.9, 0.9, 0.7], 6);
+        if (isLocal) this._impact(0.45, -fwdX(p.angle) * 4, -fwdZ(p.angle) * 4, 0.05);
+      } else if (vn < 0) {
+        p.vx -= nx * vn;
+        p.vz -= nz * vn;
+        // scrubbing the hull against a wall costs a little throttle, scaled
+        // by how hard you're pointed into it — a light graze is nearly free
+        const into = Math.max(0, -(fwdX(p.angle) * nx + fwdZ(p.angle) * nz));
+        p.speed *= Math.max(0, 1 - 2.5 * into * dt);
+      }
     }
 
     // BOOST RAM: movement is a weapon — hammering a hostile at boost speed
@@ -1768,20 +1778,24 @@ class Game {
   }
 
   /* Clamp a tank inside the arena and outside obstacles. Returns true if a
-   * correction was applied (used for the player bounce). */
+   * correction was applied (used for the player bounce), and leaves the
+   * unit surface normal of the contact in t.colNx/t.colNz so the caller
+   * can tell a head-on slam from a graze. */
   _collideTank(t, radius) {
-    let hit = false;
+    let hit = false, nx = 0, nz = 0;
     const lim = ARENA_HALF - WALL_PAD;
-    if (t.x < -lim || t.x > lim) { t.x = Math.max(-lim, Math.min(lim, t.x)); hit = true; }
-    if (t.z < -lim || t.z > lim) { t.z = Math.max(-lim, Math.min(lim, t.z)); hit = true; }
+    if (t.x < -lim) { t.x = -lim; nx += 1; hit = true; }
+    else if (t.x > lim) { t.x = lim; nx -= 1; hit = true; }
+    if (t.z < -lim) { t.z = -lim; nz += 1; hit = true; }
+    else if (t.z > lim) { t.z = lim; nz -= 1; hit = true; }
     for (const o of this.obstacles) {
       if (o.dead) continue;
       const hx = o.w / 2 + radius, hz = o.d / 2 + radius;
       const dx = t.x - o.x, dz = t.z - o.z;
       if (Math.abs(dx) < hx && Math.abs(dz) < hz) {
         const px = hx - Math.abs(dx), pz = hz - Math.abs(dz);
-        if (px < pz) t.x = o.x + Math.sign(dx || 1) * hx;
-        else t.z = o.z + Math.sign(dz || 1) * hz;
+        if (px < pz) { const s = Math.sign(dx || 1); t.x = o.x + s * hx; nx += s; }
+        else { const s = Math.sign(dz || 1); t.z = o.z + s * hz; nz += s; }
         hit = true;
       }
     }
@@ -1796,13 +1810,19 @@ class Game {
           // and the tank stays buried in the hull. Eject along the hull axis.
           t.x = b.x + fwdX(b.angle) * min;
           t.z = b.z + fwdZ(b.angle) * min;
+          nx += fwdX(b.angle); nz += fwdZ(b.angle);
         } else {
           const f = (min - d) / d;
           t.x += dx * f;
           t.z += dz * f;
+          nx += dx / d; nz += dz / d;
         }
         hit = true;
       }
+    }
+    if (hit) {
+      const m = Math.hypot(nx, nz) || 1;
+      t.colNx = nx / m; t.colNz = nz / m;
     }
     return hit;
   }
