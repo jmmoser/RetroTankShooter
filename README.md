@@ -454,28 +454,34 @@ Every hostile starts out **blind**: patrols amble their routes at half
 speed until something fills their sensor — then they investigate, then
 they hunt. Alerted, each type fights its own way, and all of them steer
 around cover and scatter from a grenade in the air instead of sitting
-under it:
+under it.
+
+**One new hull type per sector, all the way up.** Sector 1 is drones and
+nothing else; every sector after it introduces exactly one thing you have not
+had to answer yet, and the WARLORD sectors step around the sequence. Drones
+stay the readable baseline the rest are measured against until the deep end,
+where they thin out and the specials become the sector:
 
 - **Drone** (red) — patroller, guards the zones; shot-up drones break off
   and fall back on the nearest packmate, so wounded stragglers regroup into
   clusters instead of trickling in
-- **Rusher** (hot pink, sector 2+) — kamikaze hull that strobes like a lit
+- **Rusher** (hot pink, sector 3+) — kamikaze hull that strobes like a lit
   fuse and beelines straight at you; it detonates on contact, dies to a
   single shell, chain-pops into anything beside it — and a boost-ram
   defuses it entirely
-- **Shellback** (gunmetal, sector 3+) — slow siege hull whose frontal
+- **Shellback** (gunmetal, sector 4+) — slow siege hull whose frontal
   plate deflects shells; flank the arc, lob over it, or ram straight
   through it
-- **Warden** (gold, sector 4+) — projects a cannon-proof umbrella over
+- **Warden** (gold, sector 7+) — projects a cannon-proof umbrella over
   every packmate near it and shepherds the pack; grenades, mines, rams and
   shockwaves ignore the dome — or kill the warden and shoot what's left
 - **Hunter** (amber, sector 2+) — weaves between wide flanking arcs and
   straight lunges; it can only line up a shot during the lunge, so the
   rhythm is readable — and punishable
-- **Sniper** (violet, sector 4+) — holds range, hits hard from far away,
+- **Sniper** (violet, sector 6+) — holds range, hits hard from far away,
   and **relocates after every shot**: return fire arrives where the sniper
   was, not where it is
-- **Phantom** (ice, sector 5+) — cloaked stalker; shimmers into view a moment
+- **Phantom** (ice, sector 8+) — cloaked stalker; shimmers into view a moment
   before it fires, and vanishes from radar while cloaked
 - **Warlord** (crimson, every 5th sector) — boss hovercruiser; four turrets
   shield its core, it crushes cover, rams, and emits shockwave rings

@@ -171,9 +171,9 @@ const LOADOUTS = [
 // boosting tank turns every engagement into a kite, which is slow. These
 // close the gap enough that disengaging is a decision, not a formality.
 const ENEMY_TYPES = {
-  drone:     { hp: 60,  speed: 17, turn: 1.8, fireRange: 95,  fireCd: 2.0, score: 150, shotSpeed: 56, dmg: 14, lead: 0,   sight: 55 },
+  drone:     { hp: 60,  speed: 17, turn: 1.8, fireRange: 95,  fireCd: 2.0, score: 150, shotSpeed: 56, dmg: 14, lead: 0.3, sight: 55 },
   rusher:    { hp: 22,  speed: 31, turn: 3.6, fireRange: 0,   fireCd: 9,   score: 100, shotSpeed: 0,  dmg: 30, lead: 0,   sight: 45 },
-  hunter:    { hp: 85,  speed: 26, turn: 2.6, fireRange: 70,  fireCd: 1.4, score: 300, shotSpeed: 64, dmg: 18, lead: 0.8, sight: 70 },
+  hunter:    { hp: 85,  speed: 26, turn: 2.6, fireRange: 70,  fireCd: 1.4, score: 300, shotSpeed: 64, dmg: 18, lead: 0.7, sight: 70 },
   sniper:    { hp: 75,  speed: 9,  turn: 1.3, fireRange: 160, fireCd: 3.0, score: 400, shotSpeed: 92, dmg: 26, lead: 0.9, sight: 150 },
   phantom:   { hp: 110, speed: 23, turn: 2.4, fireRange: 100, fireCd: 2.1, score: 600, shotSpeed: 72, dmg: 22, lead: 0.8, sight: 85, cloaks: true },
   // counterplay hulls: reading the fight matters more than holding fire
@@ -956,6 +956,48 @@ class Game {
     });
   }
 
+  /* What a sector is MADE of. This used to be a stack of modulo rules
+   * (`if (L >= 2 && i % 3 === 1) type = 'hunter'`) evaluated in order, so a
+   * slot's type depended on which later rule happened to overwrite it — and
+   * retiring one rule silently promoted its slots to whatever matched next.
+   * Composition is a difficulty curve, so it is written down as one.
+   *
+   * `from` is the sector a type first appears; `n` is how many that sector
+   * gets. Everything not claimed by a special is a drone, and drones never
+   * fall below a third of the sector — they are the readable baseline the
+   * other types are read against. */
+  _roster(L, total) {
+    // One new hull type per sector, all the way up. Sectors 5 and 10 are
+    // WARLORD sectors and field no roster, so the debuts step around them.
+    const SPECIALS = [
+      { type: 'hunter',    from: 2, n: (l) => 1 + Math.floor((l - 2) / 3) },
+      { type: 'rusher',    from: 3, n: (l) => 1 + Math.floor((l - 3) / 3) },
+      { type: 'shellback', from: 4, n: (l) => 1 + Math.floor((l - 4) / 4) },
+      { type: 'sniper',    from: 6, n: (l) => 1 + Math.floor((l - 6) / 4) },
+      { type: 'warden',    from: 7, n: (l) => 1 + Math.floor((l - 7) / 5) },
+      { type: 'phantom',   from: 8, n: (l) => 1 + Math.floor((l - 8) / 4) },
+    ];
+    const out = [];
+    // the drone floor thins out as the campaign goes deep: early sectors want
+    // a readable baseline to measure the specials against, sector 10 wants the
+    // specials to BE the sector
+    const floorFrac = L >= 9 ? 0.12 : L >= 7 ? 0.22 : 1 / 3;
+    const budget = Math.max(0, total - Math.max(1, Math.ceil(total * floorFrac)));
+    // one of each first, then depth — a sector reads as "these types, some of
+    // them doubled" rather than "four of whatever came first in the list"
+    for (let pass = 0; ; pass++) {
+      let added = false;
+      for (const sp of SPECIALS) {
+        if (L < sp.from || pass >= sp.n(L)) continue;
+        added = true;
+        if (out.length < budget) out.push(sp.type);
+      }
+      if (!added || out.length >= budget) break;
+    }
+    while (out.length < total) out.push('drone');
+    return out;
+  }
+
   _genEnemies() {
     // enough hulls that the sector always has something to run into: with
     // fewer zones to visit, patrol density is what keeps a sector eventful
@@ -963,14 +1005,7 @@ class Game {
     let total = Math.min(5 + Math.floor(L * 1.1), 12);
     if (this.mutator === 'swarm') total += 3;        // thin hulls, more of them
     if (this.mutator === 'gauntlet') total -= 2;     // all elites — fewer, harder
-    for (let i = 0; i < total; i++) {
-      let type = 'drone';
-      if (L >= 2 && i % 3 === 1) type = 'hunter';
-      if (L >= 4 && i % 4 === 2) type = 'sniper';
-      if (L >= 5 && i % 5 === 3) type = 'phantom';
-      if (L >= 2 && i % 5 === 4) type = 'rusher';
-      if (L >= 3 && i % 6 === 5) type = 'shellback';
-      if (L >= 4 && i % 7 === 3) type = 'warden';
+    for (const type of this._roster(L, total)) {
       const pos = this._findSpot(4, 65);
       if (!pos) continue;
       this._spawnEnemy(type, pos[0], pos[1]);
@@ -1131,8 +1166,10 @@ class Game {
   }
 
   _pressureType() {
-    // rusher-heavy: pressure waves should force movement, not add snipers
-    if (this.level >= 2 && RNG() < 0.4) return 'rusher';
+    // rusher-heavy: pressure waves should force movement, not add snipers.
+    // Not before sector 3 — a converge wave is no place to meet a hull type
+    // for the first time.
+    if (this.level >= 3 && RNG() < 0.4) return 'rusher';
     return this._reinforcementType();
   }
 
@@ -1421,12 +1458,14 @@ class Game {
   _reinforcementType() {
     const L = this.level, r = RNG();
     if (this.mutator === 'swarm') return r < 0.6 ? 'rusher' : 'drone';
-    if (L >= 5 && r < 0.15) return 'phantom';
-    if (L >= 4 && r < 0.28) return 'sniper';
-    if (L >= 4 && r < 0.38) return 'warden';
-    if (L >= 3 && r < 0.52) return 'shellback';
+    // waves mirror the roster's debut sectors — a converge wave is no place
+    // to meet a hull type for the first time
+    if (L >= 8 && r < 0.15) return 'phantom';
+    if (L >= 6 && r < 0.28) return 'sniper';
+    if (L >= 7 && r < 0.38) return 'warden';
+    if (L >= 4 && r < 0.52) return 'shellback';
     if (L >= 2 && r < 0.72) return 'hunter';
-    if (L >= 2 && r < 0.86) return 'rusher';
+    if (L >= 3 && r < 0.86) return 'rusher';
     return 'drone';
   }
 
@@ -2278,9 +2317,16 @@ class Game {
         e.vz = (e.z - ez0) / dt;
       }
 
-      // fire at player — smarter types lead a moving target
+      // fire at player — smarter types lead a moving target.
+      // A hunter only shoots on its LUNGE. That is the whole counterplay the
+      // type is built around: the wide flanking arc is the beat where it
+      // cannot hurt you, the straight run-in is the beat where it can, and a
+      // readable rhythm is what separates a hard enemy from an unfair one.
+      // (It used to fire in both phases, so the tell described in the manual
+      // did not exist and the hunter was just a drone that hits.)
+      const canShoot = e.type !== 'hunter' || e.phase === 'lunge';
       e.fireCd -= dt;
-      if (hunting && distP < e.fireRange && e.fireCd <= 0) {
+      if (hunting && canShoot && distP < e.fireRange && e.fireCd <= 0) {
         let aimX = p.x, aimZ = p.z;
         // lead the target's TRUE velocity — a drifting hull's facing lies
         if (e.lead > 0 && Math.hypot(p.vx || 0, p.vz || 0) > 1) {
@@ -2321,12 +2367,19 @@ class Game {
 
     this.noises.length = 0;   // every patrol has had its chance to hear
 
-    // resolve rusher contacts queued during the loop — AFTER the noise flush,
+    // Resolve rusher contacts queued during the loop — AFTER the noise flush,
     // so the blast/ram noises these emit survive to next frame's sense pass
-    // (they used to be wiped in the same tick, deaf to every patrol)
-    for (let i = this.enemies.length - 1; i >= 0; i--) {
-      const e = this.enemies[i];
-      if (!e._boom) continue;
+    // (they used to be wiped in the same tick, deaf to every patrol).
+    //
+    // Collect-then-resolve, by reference: ram-killing a rusher runs its
+    // chain-pop, which splices the array underneath an index-walking loop.
+    // Two rushers landing in one frame could shrink `enemies` past the walking
+    // index, and the next read was `undefined._boom` — a hard throw out of the
+    // game loop. Same pattern the chain-pop itself already uses.
+    const booms = this.enemies.filter((e) => e._boom);
+    for (const e of booms) {
+      const i = this.enemies.indexOf(e);
+      if (i < 0) continue;   // a chain already took this one
       if (e._boom === 'ram') {
         this._killEnemy(i, e._boomBy, 'ram');
       } else {
@@ -2706,6 +2759,7 @@ class Game {
 
   _killEnemy(index, ownerId, via) {
     const e = this.enemies[index];
+    if (!e) return;   // a chain reaction already removed it
     this.enemies.splice(index, 1);
     this.killsThisLevel++;
     // SILENT KILL: it never saw you coming — half again the score, and a
