@@ -438,6 +438,63 @@
     return { html, earned };
   }
 
+  /* ---- run debrief ------------------------------------------------------
+   * A stealth run is not summarised by a score. The sim tracks silent kills,
+   * ghost extractions, zones, the best chain, and how much of the run the grid
+   * had you — and none of it used to be reported back, so a player dying on
+   * sector 1 for the fifth time learned nothing from the fifth death either.
+   *
+   * Two parts. The tally is what happened. The verdict is the single thing
+   * most worth changing next run, picked by whichever gap is widest — because
+   * a wall of numbers is not advice. */
+  function debriefTally(rs) {
+    const pct = rs.playT > 0 ? Math.round((rs.undetectedT / rs.playT) * 100) : 0;
+    const cells = [
+      ['KILLS', rs.kills],
+      ['SILENT', rs.silentKills],
+      ['ZONES', rs.flags],
+      ['BEST CHAIN', '×' + (rs.bestMult || 1)],
+      ['UNDETECTED', pct + '%'],
+    ];
+    if (rs.ghosts) cells.push(['GHOST EXITS', rs.ghosts]);
+    return '<div class="debrief">' + cells
+      .map(([k, v]) => `<div class="db-cell"><span class="db-k">${k}</span><span class="db-v">${v}</span></div>`)
+      .join('') + '</div>';
+  }
+
+  /* Ordered by how much it would change the next run; first match wins. */
+  function debriefVerdict(rs, level) {
+    const pct = rs.playT > 0 ? rs.undetectedT / rs.playT : 1;
+    const hunted = rs.playT > 0 ? rs.huntedT / rs.playT : 0;
+    if (rs.playT < 20) return null;                 // too short to diagnose
+    if (hunted > 0.5) {
+      return 'THE GRID HAD YOU FOR ' + Math.round(hunted * 100) +
+        '% OF THAT RUN — BREAK LINE OF SIGHT AND RUN COLD, AND THE HUNT LETS GO';
+    }
+    if (rs.kills > 0 && rs.silentKills === 0) {
+      return 'NO SILENT KILLS — A SHELL ON A HULL THAT NEVER SAW YOU HITS FOR TRIPLE';
+    }
+    if (rs.kills === 0 && rs.flags <= 1) {
+      return 'THE SECTOR OPENS WHEN THE LAST UPLINK FALLS — CLIP EACH RING ONCE AND KEEP MOVING';
+    }
+    if (pct > 0.7 && rs.flags === 0) {
+      return 'QUIET, BUT NOTHING SECURED — A DRIVE-BY THROUGH A ZONE RING IS ENOUGH TO SPIKE IT';
+    }
+    if ((rs.bestMult || 1) < 3 && rs.kills >= 4) {
+      return 'THE CHAIN RUNS ON VARIETY — MIX CANNON, RAM, GRENADE AND MINE KILLS TO CLIMB TO ×5';
+    }
+    if (level >= 3 && pct > 0.5) return null;       // playing it well; say nothing
+    return null;
+  }
+
+  function buildDebrief(rs, level, deathLine) {
+    let html = debriefTally(rs);
+    if (deathLine) html += `<div class="db-death">${deathLine}</div>`;
+    const v = debriefVerdict(rs, level);
+    if (v) html += `<div class="db-verdict">${v}</div>`;
+    return html;
+  }
+
   function gameOver() {
     closeDraft();
     uiMode = 'gameover';
@@ -474,6 +531,14 @@
       updateTitleHigh();
     }
     if (res.marauder) html += '<br><span class="gold">MARAUDER CHASSIS UNLOCKED</span>';
+    {
+      const rs = game.runStats;
+      const death = rs.deathBy
+        ? 'DESTROYED BY ' + rs.deathBy +
+          (rs.deathHunted ? ' WITH THE GRID HUNTING' : ' BEFORE THE ALARM EVER WENT UP')
+        : null;
+      html += buildDebrief(rs, game.level, death);
+    }
     const extras = buildOverExtras(res);
     earned = earned || extras.earned;
     html += extras.html;
@@ -804,7 +869,8 @@
       (game.ghostRun && !game.bossLevel ? '<span class="gold">&#9733; GHOST EXTRACTION — NEVER DETECTED &#9733;</span><br>' : '') +
       `BONUS <span class="gold">+${game.levelBonus}</span><br>` +
       `SCORE ${game.score}` +
-      (bossNext ? `<br><span class="red">WARLORD SIGNATURE IN SECTOR ${next}</span>` : '');
+      (bossNext ? `<br><span class="red">WARLORD SIGNATURE IN SECTOR ${next}</span>` : '') +
+      debriefTally(game.runStats);
     // warp gates: the strategic beat — pick the next sector's ruleset.
     // Risky routes flash their tech signing bonus. Clients watch the host.
     const gatesEl = document.getElementById('gate-choices');

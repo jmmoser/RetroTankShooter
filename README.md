@@ -255,6 +255,16 @@ they arm after a beat and detonate on anything hostile that rolls over them —
 the perfect parting gift when you boost out of a furball, and they work on
 the WARLORD too.
 
+### The debrief — every run tells you something
+
+A score does not summarise a stealth run, so the sector-clear and game-over
+screens carry a **debrief**: kills, silent kills, zones, best chain, and the
+share of the run you spent genuinely **UNDETECTED**. Death names itself —
+*DESTROYED BY A HUNTER WITH THE GRID HUNTING* — and one line underneath names
+the single thing most worth changing next time, picked from whichever gap is
+widest: the run you spent hunted, the kills you took loudly, the zones you
+drove past. It says nothing when you are playing well.
+
 While you fight, the HUD races your own past self: pass your record and the
 score turns gold with a **RECORD PACE** tag (dailies chase today's best,
 campaign runs chase the all-time high). Fall just short and the game-over

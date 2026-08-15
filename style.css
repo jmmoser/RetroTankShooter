@@ -674,3 +674,32 @@ body.touch-ui .mbtn { padding: 10px 20px; }
   box-shadow: 0 0 14px rgba(232, 199, 90, 0.35);
 }
 .gate-choice .gate-pay { color: #e8c75a; }
+
+/* ---------- run debrief ---------- */
+/* The numbers a stealth run is actually judged on. A grid rather than a
+ * paragraph: the point is to scan it, spot the zero, and go again. */
+.debrief {
+  display: flex; flex-wrap: wrap; justify-content: center;
+  gap: 6px 18px;
+  margin: 12px 0 2px;
+}
+.db-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.db-k {
+  font-size: 9px; letter-spacing: 2px;
+  color: rgba(79, 214, 187, 0.55);
+}
+.db-v {
+  font-size: 16px; font-weight: bold; letter-spacing: 1px;
+  color: var(--teal-bright);
+}
+.db-death {
+  margin-top: 10px;
+  font-size: 11px; letter-spacing: 2px;
+  color: #ff7a6a;
+}
+.db-verdict {
+  margin-top: 8px;
+  max-width: 340px;
+  font-size: 10px; line-height: 1.6; letter-spacing: 1px;
+  color: #e8c75a;
+}

@@ -314,6 +314,15 @@ function freshRunStats() {
   return {
     kills: 0, flags: 0, warlords: 0, bestMult: 1,
     localKills: 0, nadeKills: 0, mineKills: 0, silentKills: 0,
+    // the debrief: a stealth run is not summarised by a score. These are the
+    // numbers the game actually plays for, and the ones a player has to see to
+    // get better at it.
+    playT: 0,          // seconds of live sector time
+    undetectedT: 0,    // ...of which nobody had even a suspicion
+    huntedT: 0,        // ...of which the sector alarm was up
+    ghosts: 0,         // ghost extractions (cleared, never detected)
+    deathBy: null,     // what finally did it
+    deathHunted: false,// ...and whether the grid had you at the time
   };
 }
 
@@ -1013,6 +1022,16 @@ class Game {
     this._updateTreads(dt);
 
     for (const f of this.flags) f.spin += dt * 2.2;
+
+    // the run's stealth timeline, for the debrief. Recorded here rather than
+    // derived later because "how much of that run were you a ghost" is not
+    // recoverable from a final score.
+    if (!this.versus) {
+      const rs = this.runStats;
+      rs.playT += dt;
+      if (this.alarmT > 0) rs.huntedT += dt;
+      else if (!this.suspicion) rs.undetectedT += dt;
+    }
 
     // the coach reads the finished frame, so its "you did it" lands the same
     // tick as the thing it was asking for
@@ -2283,6 +2302,7 @@ class Game {
             z: e.z + fwdZ(e.angle) * 3.2,
             y: 1.6, angle: e.angle,
             speed: e.shotSpeed, from: 'enemy', dmg: e.dmg, life: 4,
+            src: 'A ' + e.type.toUpperCase(),   // for the debrief
           });
           this._sfx('enemyFire', e.x, e.z);
           if (e.type === 'sniper') {
@@ -2336,7 +2356,8 @@ class Game {
     for (const pl of this.players) {
       if (!pl.alive) continue;
       const d = Math.hypot(e.x - pl.x, e.z - pl.z);
-      if (d < R) this._damagePlayer(pl, e.dmg * (d < 2.5 ? 1 : 1 - ((d - 2.5) / (R - 2.5)) * 0.6));
+      if (d < R) this._damagePlayer(pl, e.dmg * (d < 2.5 ? 1 : 1 - ((d - 2.5) / (R - 2.5)) * 0.6),
+        null, 'A RUSHER');
     }
   }
 
@@ -2477,7 +2498,7 @@ class Game {
           if (!pl.alive) continue;
           if (segDist2(sx, sz, pr.x, pr.z, pl.x, pl.z) < 2.4 * 2.4) {
             dead = true;
-            this._damagePlayer(pl, pr.dmg);
+            this._damagePlayer(pl, pr.dmg, null, pr.src || 'ENEMY FIRE');
             break;
           }
         }
@@ -2535,7 +2556,7 @@ class Game {
         const d = Math.hypot(pr.x - pl.x, pr.z - pl.z);
         if (d < R) {
           const dmg = pr.dmg * (d < 3 ? 1 : 1 - (d - 3) / (R - 3) * 0.75);
-          this._damagePlayer(pl, dmg, pr.owner);
+          this._damagePlayer(pl, dmg, pr.owner, 'A GRENADE');
         }
       }
     }
@@ -2604,7 +2625,7 @@ class Game {
       for (const pl of this.players) {
         if (!pl.alive || pl.id === m.owner) continue;
         const d = Math.hypot(m.x - pl.x, m.z - pl.z);
-        if (d < R) this._damagePlayer(pl, falloff(d), m.owner);
+        if (d < R) this._damagePlayer(pl, falloff(d), m.owner, 'A MINE');
       }
     }
     const hits = [];
@@ -2744,7 +2765,7 @@ class Game {
       this._burst(e.x, 1.2, e.z, 18, [1, 0.6, 0.2], 10);
       for (const pl of this.players) {
         if (!pl.alive) continue;
-        if (dist2(e.x, e.z, pl.x, pl.z) < 36) this._damagePlayer(pl, 16);
+        if (dist2(e.x, e.z, pl.x, pl.z) < 36) this._damagePlayer(pl, 16, null, 'A VOLATILE HULL');
       }
       const hits = this.enemies.filter((o) => dist2(e.x, e.z, o.x, o.z) < 36);
       for (const o of hits) this._hurtEnemyRef(o, 30, ownerId, via);
@@ -2756,7 +2777,10 @@ class Game {
     }
   }
 
-  _damagePlayer(p, dmg, attackerId) {
+  /* `src` names what landed the hit, for the debrief. It is a label, not a
+   * reference: a hull that dies in the same frame still has to be nameable
+   * on the game-over screen. */
+  _damagePlayer(p, dmg, attackerId, src) {
     const isLocal = p.id === this.localId;
     dmg *= this._diff().dmg;   // versus stays 1:1 — _diff() is STANDARD there
     // SPEED IS ARMOR: above 70% of rated speed the hull sheds a third of the
@@ -2779,6 +2803,12 @@ class Game {
       p.shields = 0;
       p.alive = false;
       p.respawnT = this.versus ? 3 : 4;
+      if (isLocal && !this.versus) {
+        // last write wins: a squad that dies and respawns should be described
+        // by whatever finally ended the run
+        this.runStats.deathBy = src || 'ENEMY FIRE';
+        this.runStats.deathHunted = this.alarmT > 0;
+      }
       this._burst(p.x, 1.5, p.z, 60, [1, 0.5, 0.1], 18);
       this._burst(p.x, 2.5, p.z, 30, [1, 0.9, 0.6], 12);
       this._spawnShards(p.x, p.z, DEBRIS_COLORS.player);
@@ -2985,7 +3015,7 @@ class Game {
         if (!pl.alive || b.chargeHits[pl.id]) continue;
         if (dist2(pl.x, pl.z, b.x, b.z) < (b.radius + 2.5) * (b.radius + 2.5)) {
           b.chargeHits[pl.id] = true;
-          this._damagePlayer(pl, 30);
+          this._damagePlayer(pl, 30, null, 'THE WARLORD');
           const dx = pl.x - b.x, dz = pl.z - b.z;
           const d = Math.hypot(dx, dz) || 1;
           pl.x += (dx / d) * 6;
@@ -3057,7 +3087,7 @@ class Game {
         this.projectiles.push({
           x: wx + fwdX(tu.aim) * 2.8, z: wz + fwdZ(tu.aim) * 2.8,
           y: 1.6, angle: tu.aim,
-          speed: 55, from: 'enemy', dmg: b.dmg, life: 4,
+          speed: 55, from: 'enemy', dmg: b.dmg, life: 4, src: 'A WARLORD TURRET',
         });
         this._sfx('enemyFire', wx, wz);
       }
@@ -3167,7 +3197,7 @@ class Game {
           const d = Math.hypot(p.x - r.x, p.z - r.z);
           if (Math.abs(d - r.r) < 2.4) {
             r.hit[p.id] = true;   // the wave passed — cover decides if it hurt
-            if (this._losClear(r.x, r.z, p.x, p.z)) this._damagePlayer(p, r.dmg);
+            if (this._losClear(r.x, r.z, p.x, p.z)) this._damagePlayer(p, r.dmg, null, 'A SHOCKWAVE');
           }
         }
       }
@@ -3314,6 +3344,7 @@ class Game {
     // the purest way to play the sector, paid accordingly
     if (this.ghostRun && !this.bossLevel) {
       this.levelBonus += 500 * this.level;
+      this.runStats.ghosts++;
       this._medal('ghost');
     }
     this.score += this.levelBonus;
