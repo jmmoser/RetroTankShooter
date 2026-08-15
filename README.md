@@ -43,6 +43,15 @@ game is **installable as a PWA and fully playable offline** (co-op excepted).
 
 ## How to play
 
+**Nothing here is taught by a manual.** Your first sortie runs a **FIELD
+COACH**: it walks you through the loop inside a live sector — roll out, run
+cold, take a hull that never saw you, spike an uplink, extract — one prompt
+at a time, gated on you actually doing it, and it never pauses the fight or
+blocks a thing. Do something out of order and it skips that lesson instead of
+teaching it late. It retires after your first cleared sector. **BRIEFING** on
+the title screen (`B`) is the manual proper, re-readable whenever, and it can
+re-arm the coach.
+
 **You are invisible until the grid finds you.** Every patrol runs a
 sensor: inside its vision cone, with line of sight, it *fills a detection
 meter* — faster the closer and louder you are. At the first threshold it
@@ -51,6 +60,15 @@ its packmates, and the sector **ALARM** goes up: converge waves warp in
 on your last known position until you break line of sight, run cold, and
 the hunt stands down. The HUD tells you where you stand at all times —
 **UNDETECTED / PATROLS SUSPICIOUS / ALARM**.
+
+**Getting spotted is a setback, not a sentence.** A hunter chases the grid's
+*last known contact*, not you — break its line of sight and it drives to
+where you were. Its reach still answers to your signature, so coasting cold
+shortens what it can hold you at. A hull that has had nothing for a few
+seconds gives up its lock and goes back to searching, the converge waves stop
+the moment the grid has nobody to converge on, and once the last hunter has
+let go the alarm times out. The HUD counts that window down for you:
+**BREAKING CONTACT — 6**. Stay dark and you are a rumor again.
 
 Your **SIGNATURE** bar is how loud you read on those sensors: speed is
 noise, the hot cannon is a beacon, boost is a flare. Slow and cold, a
@@ -61,17 +79,23 @@ even slamming a slab at speed all pull patrols toward the source — but
 noise only makes them *look*. Only eyes-on makes them shoot.
 
 **You can see what they can see.** Every patrol paints its **sensor
-cone** — a translucent wedge on the radar, and a faint scanning beam laid
-on the arena floor (amber once the hull turns suspicious). The cones are
-drawn at the sim's own live reach against *your current signature*:
-throttle down and every cone in the sector visibly pulls back, redline
-and they stretch across the map — the signature bar is something you can
-*see on the ground* and steer through, not just a number. Alerted hulls
-carry no cone; they aren't scanning, they **know**. And a first glimpse
-is a telegraph, not a verdict: the instant any sensor crosses into
-SUSPICIOUS it chirps a **sonar ping** from the hull that noticed, and the
-meter needs sustained eyes-on to confirm — that beat is your window to
-break the cone, delete the witness, or go cold.
+cone** — a wedge on the radar, and a lit boundary drawn on the arena floor
+(amber once the hull turns suspicious). The cone's *edge* is the part that
+matters and the part you can see: a line on the ground saying "past here it
+cannot find you". Both are drawn at the sim's own live reach against *your
+current signature*, so throttling down visibly walks that line inward and
+redlining stretches it across the map — the signature bar is something you
+steer through on the ground, not just a number. Alerted hulls carry no cone;
+they aren't scanning, they **know**.
+
+And you always know when you are being looked at. The moment any sensor has
+live eyes on you, an **exposure arc** lights up around the crosshair, sitting
+on the *bearing of the hull doing the looking* — one mark for am I seen, how
+far along is it, and from where. A first glimpse is a telegraph, not a
+verdict: crossing into SUSPICIOUS chirps a **sonar ping** from the hull that
+noticed, the arc strobes **EYES ON**, and the meter still needs sustained
+contact to confirm. That beat is your window to break the cone, delete the
+witness, or go cold.
 
 **Kill them before they know.** A hull that never alerted pays **half
 again the score** as a **SILENT KILL** — and a boost-ram execution is
@@ -296,7 +320,8 @@ browser. Two things are earned:
 ### Settings
 
 The **SETTINGS** screen has the campaign **DIFFICULTY** preset (RECRUIT /
-STANDARD / VETERAN), SFX and music volume, screen-shake intensity,
+STANDARD / VETERAN), the **FIELD COACH** toggle, SFX and music volume,
+screen-shake intensity,
 the **GLOW FX** post-processing pipeline (bloom, dynamic explosion lighting,
 ACES tonemapping, aberration, grain and FXAA — turn it off on weak GPUs),
 **DYNAMIC SHADOWS** (the sun's depth pass; off is a straight fill-rate
@@ -322,6 +347,7 @@ and **gamepad** alike — pick whatever is closest to hand.
 | `C` | Toggle first-person / chase camera |
 | `P` / `Esc` | Pause (single-player) |
 | `M` | Toggle sound |
+| `B` | Mission briefing (the manual) |
 | `D` | Start today's Daily Ops |
 | `H` | Host an online co-op / versus game |
 | `J` | Join a game by room code |
@@ -465,7 +491,9 @@ js/renderer.js  WebGL renderer + mat4 helpers: flat-shaded forward pass with
                 (decal) draws, and the bloom / ACES / FXAA / aberration /
                 grain / vignette post chain
 js/hud.js       radar (with live enemy sensor cones), shield/heat/vent bars,
-                pot & bounty, scoreboard (Canvas 2D)
+                the exposure arc, pot & bounty, scoreboard (Canvas 2D)
+js/tutorial.js  the field coach: an ordered walk through the loop driven by
+                what the player actually does, plus situational callouts
 js/game.js      arena generation (four terrain layouts), players, per-type
                 enemy AI with stealth detection states, noise + signature
                 model, sector alarm, projectiles, pickups, seeded daily

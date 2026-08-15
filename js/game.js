@@ -82,6 +82,26 @@ const AMBUSH_MUL = 3;      // cannon damage vs a hull that never saw you — the
 const ALERT_RADIUS = 45;   // an alerted hull radios packmates this close
 const EXIT_RADIUS = 13;    // extraction gate: cross the ring to warp out
 
+/* Losing a hunt. Getting seen has to be a setback you can PLAY OUT OF, not a
+ * one-way door into a shooting gallery — otherwise "break line of sight and
+ * run cold" is a sentence in a manual rather than a move.
+ *
+ * An alerted hull is actively looking, so it re-acquires further than a bored
+ * patrol scanning its route: REACQUIRE_MUL times its live senseRange against
+ * your CURRENT signature, floored so nobody is invisible at point-blank. The
+ * key part is that it scales with signature at all — a hunter that holds
+ * contact at the same range whether you are redlining or coasting cold makes
+ * the throttle meaningless the moment the alarm goes up.
+ *
+ * A hull that has had nothing for LOSE_CONTACT seconds gives up its lock and
+ * drops back to searching the last place it had you. That is what drains a
+ * pack one hull at a time instead of leaving the whole sector permanently
+ * awake, and it is what lets the sector alarm ever time out. */
+const LOSE_CONTACT = 6;    // seconds of nothing before a hunter breaks lock
+const PRESSURE_GRACE = 3;  // seconds of no contact before converge waves stop
+const REACQUIRE_MUL = 1.35;
+const REACQUIRE_MIN = 0.45; // ...times raw sight: the floor nobody sneaks past
+
 /* Campaign difficulty presets (SETTINGS → DIFFICULTY). dmg scales what
  * enemies do to the squad, pressure stretches/shrinks the spawn-pressure
  * timer, potSpill is the pot fraction KEPT after a hit, waves trims the
@@ -334,6 +354,10 @@ class Game {
     this.suspicion = false; // any patrol currently investigating (HUD tell)
     this.exposure = null;  // { level, x, z, rate }: a hull with live eyes on
                            // the LOCAL tank and how full its meter is
+    this.hunted = false;   // an ALERTED hull has contact this frame — the
+                           // difference between "they're hunting" and
+                           // "they've lost you and the clock is running"
+    this.contactT = 999;   // seconds since the grid last had eyes on the squad
     this.everAlarmed = false; // the alarm went off at least once this sector
     this.ghostRun = false; // extraction reached with the alarm never raised
     this.exit = null;      // extraction gate { x, z } once the uplinks fall
@@ -544,6 +568,8 @@ class Game {
     this.levelTime = 0;
     this.noises.length = 0;
     this.suspicion = false;
+    this.hunted = false;
+    this.contactT = 999;
     this.exit = null;
     this.ghostRun = false;
     // boss sectors are set-piece fights: the WARLORD's grid is already
@@ -892,7 +918,11 @@ class Game {
       // stealth: patrols start blind; sense fills as they see/hear you
       sense: alerted || this.bossLevel ? 1 : 0,
       alerted: !!alerted || this.bossLevel,
-      seenT: 999,                 // seconds since this hull last had contact
+      // seconds since this hull last had contact. A wave warps in already
+      // hunting, so it starts with a full LOSE_CONTACT window to search with
+      // rather than the never-had-contact sentinel, which would expire on
+      // arrival and hand the player a free stand-down.
+      seenT: alerted ? 0 : 999,
       invX: x, invZ: z, invT: 0,  // investigation point + time left searching
       // per-type maneuver state: hunters weave between flanking arcs and
       // lunges, snipers relocate after every shot, drones regroup when hurt
@@ -949,6 +979,9 @@ class Game {
     for (const p of this.players) this._updatePlayer(p, dt);
     if (!this.versus) {
       this.levelTime += dt;
+      // last frame's contact result ages here, before _updateEnemies rebuilds
+      // it — so pressure and the HUD read the same number the sim just proved
+      this.contactT = this.hunted ? 0 : this.contactT + dt;
       this._updatePressure(dt);
       this._updateZones(dt);
       this._updateEnemies(dt);
@@ -1039,7 +1072,16 @@ class Game {
       }
       return;
     }
-    if (this.alarmT <= 0) { this.pressureT = Math.min(this.pressureT, 4); return; }
+    // Converge waves need something to converge ON. While the grid has live
+    // contact they keep warping in on your last known position; once every
+    // hunter has lost you they stop, because otherwise the alarm feeds itself:
+    // waves arrive hunting, re-establish contact, re-arm the clock, forever.
+    // That loop is what made "break line of sight and run cold" unplayable —
+    // the hunt could not time out because the sector kept refilling.
+    if (this.alarmT <= 0 || this.contactT > PRESSURE_GRACE) {
+      this.pressureT = Math.min(this.pressureT, 4);
+      return;
+    }
     this.pressureT -= dt;
     if (this.pressureT > 0) return;
     this.pressureT = Math.max(2.8, 7 - this.level * 0.4) *
@@ -1174,6 +1216,19 @@ class Game {
 
   /* The alarm ran out: hunters fall back to searching the last known
    * position, and the sector goes quiet again. */
+  /* One hull gives up its lock: back to searching the last place it had you,
+   * jumpy rather than blind. This is _standDown's per-hull half — the pack
+   * drains through here, and the sector alarm times out once the last one has
+   * been through it. */
+  _loseContact(e) {
+    e.alerted = false;
+    e.seenT = 999;
+    e.sense = SENSE_SUS + 0.2;
+    e.invX = this.lastKnownX + rand(-14, 14);
+    e.invZ = this.lastKnownZ + rand(-14, 14);
+    e.invT = rand(6, 10);
+  }
+
   _standDown() {
     this.alarmT = 0;
     let any = false;
@@ -1925,7 +1980,11 @@ class Game {
       let seen = false;
       for (const pl of this.players) {
         if (!pl.alive) continue;
-        const r = spec.sight * 1.3;
+        // a hunter's reach still answers to how loud you are: coast cold and
+        // it has to come and look, redline and it holds you across the arena
+        const sig = pl.sig != null ? pl.sig : 1;
+        const r = Math.max(senseRange(e.type, sig) * REACQUIRE_MUL,
+                           spec.sight * REACQUIRE_MIN);
         if (dist2(e.x, e.z, pl.x, pl.z) < r * r && this._losClear(e.x, e.z, pl.x, pl.z)) {
           seen = true;
           this.lastKnownX = pl.x; this.lastKnownZ = pl.z;
@@ -1934,9 +1993,13 @@ class Game {
       }
       if (seen) {
         e.seenT = 0;
+        this.hunted = true;                              // somebody has you NOW
         this.alarmT = Math.max(this.alarmT, dr.alarm);   // fresh contact
       } else {
         e.seenT += dt;
+        // nothing for long enough: drop the lock and go back to searching the
+        // last place it had you. One hull at a time, the pack lets go.
+        if (e.seenT >= LOSE_CONTACT) this._loseContact(e);
       }
       return;
     }
@@ -1990,6 +2053,7 @@ class Game {
     // sector alert makes survivors faster and more trigger-happy
     const alertMul = 1 + this.alert * 0.4;
     this.suspicion = false;
+    this.hunted = false;    // some alerted hull has eyes on the squad RIGHT NOW
     this.exposure = null;   // rebuilt each frame by _senseUpdate
     for (const e of this.enemies) {
       const ex0 = e.x, ez0 = e.z;
@@ -2021,6 +2085,20 @@ class Game {
         continue;
       }
 
+      // THE HUNT POINT. An alerted hull that can actually see you chases YOU;
+      // one that has lost you chases the grid's last known contact. Every
+      // hunting branch below steers at this rather than at the player's live
+      // position, which is what makes breaking line of sight mean anything —
+      // omniscient pathing made "run cold and they lose you" unplayable,
+      // because they never needed to see you to find you.
+      const hasEyes = e.alerted && e.seenT < 0.001;
+      const hx = hasEyes || !p ? (p ? p.x : e.x) : this.lastKnownX;
+      const hz = hasEyes || !p ? (p ? p.z : e.z) : this.lastKnownZ;
+      const distH = p ? Math.hypot(hx - e.x, hz - e.z) : Infinity;
+      // arrived at a stale contact and found nothing: sweep on station like an
+      // investigator instead of parking on the spot the player used to be
+      const searching = e.alerted && !hasEyes && distH < 9;
+
       // pick a destination; forceMove keeps a maneuvering tank rolling even
       // when its hull isn't pointed at the player; hold parks the hull
       let tx, tz, forceMove = false, hold = false;
@@ -2043,9 +2121,13 @@ class Game {
           tx = e.x + fwdX(e.angle + 1.3) * 12;
           tz = e.z + fwdZ(e.angle + 1.3) * 12;
         }
+      } else if (searching) {
+        // nothing here — turn on the spot and look
+        tx = e.x + fwdX(e.angle + 1.3) * 12;
+        tz = e.z + fwdZ(e.angle + 1.3) * 12;
       } else if (hunting && e.type === 'rusher') {
         // suicidal commitment: straight at the target, no maneuvering
-        tx = p.x; tz = p.z;
+        tx = hx; tz = hz;
         forceMove = true;
       } else if (e.type === 'warden') {
         // wardens shepherd the pack: hug the nearest packmate and keep the
@@ -2066,7 +2148,7 @@ class Game {
           tx = e.x + fwdX(e.angle) * 12;
           tz = e.z + fwdZ(e.angle) * 12;
         } else if (hunting) {
-          tx = p.x; tz = p.z;
+          tx = hx; tz = hz;
         } else {
           tx = e.wanderX; tz = e.wanderZ;
         }
@@ -2079,13 +2161,13 @@ class Game {
           e.phaseT = e.phase === 'lunge' ? rand(1.1, 2.0) : rand(1.5, 2.6);
           if (e.phase === 'flank' && RNG() < 0.4) e.orbitDir *= -1;
         }
-        if (e.phase === 'flank' && distP < 60 && distP > 12) {
-          const a = angleTo(p.x - e.x, p.z - e.z) + e.orbitDir;
+        if (e.phase === 'flank' && distH < 60 && distH > 12) {
+          const a = angleTo(hx - e.x, hz - e.z) + e.orbitDir;
           tx = e.x + fwdX(a) * 24;
           tz = e.z + fwdZ(a) * 24;
           forceMove = true;
         } else {
-          tx = p.x; tz = p.z;
+          tx = hx; tz = hz;
         }
       } else if (hunting && e.type === 'drone' && e.hp < e.maxHp * 0.45) {
         // shot-up drones break off and fall back on the nearest packmate;
@@ -2100,7 +2182,7 @@ class Game {
           tx = ally.x; tz = ally.z;
           forceMove = true;
         } else {
-          tx = p.x; tz = p.z;
+          tx = hx; tz = hz;
         }
       } else if (hunting && e.type === 'sniper' && e.relocT > 0) {
         // displaced after firing — slide to the new perch before settling
@@ -2109,7 +2191,7 @@ class Game {
         forceMove = true;
         if (dist2(e.x, e.z, tx, tz) < 25) e.relocT = 0;
       } else if (hunting) {
-        tx = p.x; tz = p.z;
+        tx = hx; tz = hz;
       } else {
         e.wanderT -= dt;
         if (e.wanderT <= 0 || Math.hypot(e.wanderX - e.x, e.wanderZ - e.z) < 6) {
@@ -2138,7 +2220,7 @@ class Game {
       // a holding hull (warden umbrella) turns but never rolls
       const wantStop = e.type === 'sniper' && hunting && !forceMove &&
         e.relocT <= 0 && distP < e.fireRange * 0.8;
-      if (!hold && !wantStop && (forceMove || (Math.abs(diff) < 1.2 && !(hunting && distP < 9)))) {
+      if (!hold && !wantStop && (forceMove || (Math.abs(diff) < 1.2 && !(hunting && distH < 9)))) {
         e.x += fwdX(e.angle) * e.speed * alertMul * moveMul * dt;
         e.z += fwdZ(e.angle) * e.speed * alertMul * moveMul * dt;
       }

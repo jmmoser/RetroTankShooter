@@ -280,7 +280,14 @@ class HUD {
     {
       const t2 = performance.now() / 1000;
       let label, col;
-      if ((game.alarmT || 0) > 0) {
+      if ((game.alarmT || 0) > 0 && (game.alarmT || 0) < 1e8 && !game.hunted && !game.exit) {
+        // NOBODY has eyes on you and the alarm clock is running out. This is
+        // the whole counterplay — stay dark for these seconds and the hunt
+        // gives up — so it gets its own state and its own countdown instead
+        // of hiding inside a flat "ALARM".
+        label = 'BREAKING CONTACT — ' + Math.ceil(game.alarmT);
+        col = '#ffd24a';
+      } else if ((game.alarmT || 0) > 0) {
         label = game.exit ? 'GET TO THE GATE' : 'ALARM — GRID HUNTING';
         col = Math.sin(t2 * 9) > -0.2 ? '#ff4a3c' : '#8a2a20';
       } else if (game.suspicion) {
