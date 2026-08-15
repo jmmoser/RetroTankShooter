@@ -117,3 +117,58 @@ check('tankWire has no degenerate zero-length edges', () => {
     assert(dx * dx + dy * dy + dz * dz > 1e-9, 'zero-length edge at vertex ' + i / STRIDE);
   }
 });
+
+/* ---- the sensor cone's three parts ------------------------------------------
+ * The fill is watched ground, the edge is the boundary you steer against, and
+ * the curtain is that same boundary with height so the cockpit camera — which
+ * looks ALONG the floor rather than down at it — can see it too. All three are
+ * drawn at unit reach and scaled per hull, so they have to agree on scale. */
+
+check('the gaze cone stays lit at its rim instead of fading to nothing', () => {
+  const data = Geometry.gazeCone();
+  let rim = Infinity;
+  for (let i = 0; i < data.length; i += STRIDE) {
+    const r = Math.hypot(data[i], data[i + 2]);
+    if (r > 0.9) rim = Math.min(rim, data[i + 6]);
+  }
+  assert(rim > 0.05, 'rim vertices are black (' + rim + ') — the boundary vanishes');
+});
+
+check('the gaze edge is a thin band sitting on the cone reach', () => {
+  const data = Geometry.gazeEdge();
+  let onArc = 0, outside = 0;
+  for (let i = 0; i < data.length; i += STRIDE) {
+    const r = Math.hypot(data[i], data[i + 2]);
+    if (r > 0.9 && r < 1.1) onArc++;
+    if (r > 1.15) outside++;
+  }
+  assert(onArc > 0, 'nothing drawn at the reach arc');
+  assert(outside === 0, 'the edge band spills past the cone reach');
+});
+
+check('the gaze curtain stands up and is visible from both sides', () => {
+  const data = Geometry.gazeCurtain();
+  let maxY = 0;
+  for (let i = 0; i < data.length; i += STRIDE) maxY = Math.max(maxY, data[i + 1]);
+  assert(maxY > 0.02, 'the curtain is flat (max height ' + maxY + ')');
+  // a one-sided curtain disappears the moment you step inside the cone, which
+  // is exactly when you most need to see where its edge is
+  let up = 0, down = 0;
+  for (const [a, b, c] of tris(data)) {
+    const n = faceNormal(a, b, c);
+    // horizontal facing: sign of the cross product's Y-free component
+    const radial = n[0] * (a[0] || 1e-9) + n[2] * (a[2] || 1e-9);
+    if (radial > 0) up++; else if (radial < 0) down++;
+  }
+  assert(up > 0 && down > 0, 'curtain is one-sided (out ' + up + ', in ' + down + ')');
+});
+
+check('the curtain fades out at its top', () => {
+  const data = Geometry.gazeCurtain();
+  let top = -1, bottom = -1;
+  for (let i = 0; i < data.length; i += STRIDE) {
+    if (data[i + 1] > 0.05) top = Math.max(top, data[i + 6]);
+    else bottom = Math.max(bottom, data[i + 6]);
+  }
+  assert(bottom > top, 'the curtain is a solid slab (bottom ' + bottom + ', top ' + top + ')');
+});

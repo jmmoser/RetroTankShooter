@@ -64,6 +64,7 @@
     ring: renderer.createMesh(Geometry.ring(), renderer.gl.LINES),
     gaze: renderer.createMesh(Geometry.gazeCone()),
     gazeEdge: renderer.createMesh(Geometry.gazeEdge()),
+    gazeCurtain: renderer.createMesh(Geometry.gazeCurtain()),
     // ominous backdrop, camera-anchored so it sits at infinity
     sky: renderer.createMesh(Geometry.skyDome(660)),
     mountains: renderer.createMesh(Geometry.mountains(600)),
@@ -95,6 +96,12 @@
   }
 
   // ---- live settings ---------------------------------------------------------
+  // Third person by default, and remembered: the game's information — cone
+  // boundaries, awareness rings, tread prints, beacons — lives on the floor,
+  // and the cockpit eye sits 2.3 units above it looking along it. `C` still
+  // flips to first person for anyone who wants the 1990 shot.
+  let chaseCam = Settings.get('chase');
+
   function applySettings() {
     AudioSys.setVolume(Settings.get('volume') / 10);
     AudioSys.setMusicVolume(Settings.get('music') / 10);
@@ -103,6 +110,7 @@
     renderer.setGlow(Settings.get('glow'));
     renderer.setShadows(Settings.get('shadows'));
     renderer.setMsaa(Settings.get('quality') >= 1);
+    chaseCam = Settings.get('chase');   // the SETTINGS row and `C` share one value
   }
   Settings.onChange = () => { applySettings(); renderSettingVals(); };
   applySettings();
@@ -114,8 +122,6 @@
   let loadoutIndex = 1;   // solo loadout
   let lobbyLoadout = 1;   // co-op loadout
   let startSector = 1;    // checkpoint start (setup screen)
-  let chaseCam = false;
-  let chaseCamUserSet = false;   // stop the touch default from fighting the C toggle
   let runRecorded = true; // guards Progress.recordRun against double counting
   let highScore = 0;
   try { highScore = parseInt(localStorage.getItem('pa_high') || '0', 10) || 0; } catch (e) {}
@@ -303,11 +309,12 @@
   }
 
   // On touch devices, launching a run is the user gesture we spend on going
-  // fullscreen + landscape, and third person is the friendlier default camera.
+  // fullscreen + landscape. (The camera default is no longer decided here —
+  // chase is the default everywhere now, and it persists, so a touch player
+  // who chose the cockpit view keeps it.)
   // Everything here is best-effort: browsers that refuse just play windowed.
   function mobileImmersive() {
     if (!Input.touchUI().mode) return;
-    if (!chaseCamUserSet) chaseCam = true;
     try {
       const el = document.documentElement;
       if (!document.fullscreenElement && el.requestFullscreen) {
@@ -1558,6 +1565,10 @@
           : [0.3 * ep, 0.95 * ep, 0.8 * ep];
         renderer.draw(M.gazeEdge, m4.trs(e.x, 0.26, e.z, e.angle, reach, 1, reach, MTX),
           { tint: et, unlit: true, additive: true });
+        // ...and the same boundary standing up, so the cockpit view can see it
+        const ct = [et[0] * 0.55, et[1] * 0.55, et[2] * 0.55];
+        renderer.draw(M.gazeCurtain, m4.trs(e.x, 0.1, e.z, e.angle, reach, reach, reach, MTX),
+          { tint: ct, unlit: true, additive: true });
       }
       // awareness telltale on the ground: amber = investigating, strobing
       // red = it knows — readable at a glance across the whole arena
@@ -1704,6 +1715,7 @@
     { key: 'crt', bool: true },
     { key: 'aimAssist', bool: true },
     { key: 'coach', bool: true },
+    { key: 'chase', bool: true },
     { key: 'colorblind', bool: true },
     { key: 'fps', bool: true },
   ];
@@ -1867,7 +1879,9 @@
 
       case 'playing':
         if (draftOpen) draftKeys();   // always under fire — the sim never stops
-        if (Input.consume('cam')) { chaseCam = !chaseCam; chaseCamUserSet = true; }
+        // Settings.set fires onChange -> applySettings, which is what actually
+        // moves chaseCam, so the key and the SETTINGS row can never disagree
+        if (Input.consume('cam')) Settings.set('chase', !chaseCam);
         if (Input.consume('pause') || Input.consume('Escape')) {
           // no pausing mid-death-cam: the gamepad synthesizes Escape from B
           // once the playfield deactivates, so mashing grenade while dying

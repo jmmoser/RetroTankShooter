@@ -264,6 +264,14 @@ void. The floor keeps score of the fight — every detonation burns a **scorch
 crater** into it and every hull that drives lays **tread prints** that fade
 out over the next half-minute.
 
+The **chase camera is the default**, and your choice sticks. The sector talks
+to you on the ground — cone boundaries, the amber and red awareness rings under
+each hull, scorch craters, tread prints, beacon pillars — and the cockpit eye
+sits two units above that floor looking *along* it, which is the one angle that
+can't read any of it. Press `C` for the 1990 shot whenever you want it: every
+cone's boundary also stands up as a low curtain of light, so the read survives
+the switch.
+
 The camera is a rig, not a mount. Impacts shove it and a spring pulls it
 back, so the cannon's recoil kicks the view down the barrel and a boost-ram
 throws it forward through the wreck. Trauma shakes all six axes on smooth
@@ -322,7 +330,7 @@ browser. Two things are earned:
 The **SETTINGS** screen has the campaign **DIFFICULTY** preset (RECRUIT /
 STANDARD / VETERAN), the **FIELD COACH** toggle, SFX and music volume,
 screen-shake intensity,
-the **GLOW FX** post-processing pipeline (bloom, dynamic explosion lighting,
+the **CHASE CAMERA** toggle, the **GLOW FX** post-processing pipeline (bloom, dynamic explosion lighting,
 ACES tonemapping, aberration, grain and FXAA — turn it off on weak GPUs),
 **DYNAMIC SHADOWS** (the sun's depth pass; off is a straight fill-rate
 refund), **RENDER QUALITY** (HIGH multisamples the scene and runs a 1024²
@@ -344,7 +352,7 @@ and **gamepad** alike — pick whatever is closest to hand.
 | `V` / middle-click | Drop a proximity mine behind you |
 | `Shift` | Turbo boost (drains the gauge; low grip — the tank drifts) |
 | `S` + steer at speed | Handbrake slide (keep momentum, swing the gun) |
-| `C` | Toggle first-person / chase camera |
+| `C` | Toggle chase / first-person camera |
 | `P` / `Esc` | Pause (single-player) |
 | `M` | Toggle sound |
 | `B` | Mission briefing (the manual) |
@@ -374,8 +382,7 @@ On phones and tablets the game switches to a full touch scheme:
   almost lined up (it applies to all players equally, so co-op stays fair).
 - **On-screen buttons** — NADE (grenade, shows your count), BOOST (shows the
   gauge around its rim), CAM and pause in the top corner.
-- Launching a run goes fullscreen in landscape where the browser allows it,
-  and the chase camera becomes the default (toggle back with CAM).
+- Launching a run goes fullscreen in landscape where the browser allows it.
 
 ## Online co-op & versus
 

@@ -16,7 +16,11 @@ const Settings = (() => {
   // difficulty: 0 = RECRUIT (default), 1 = STANDARD, 2 = VETERAN (campaign
   // pacing; Daily Ops and versus always run STANDARD)
   // coach: the first-run field coach that walks the loop in a live sector
-  const DEFAULTS = { volume: 7, music: 6, shake: 10, glow: true, shadows: true, quality: 1, crt: true, aimAssist: true, colorblind: false, fps: false, difficulty: 0, coach: true };
+  // chase: third-person camera. Default ON — the stealth read (sensor cone
+  // boundaries, awareness rings, scorch, tread prints, beacon pillars) is all
+  // drawn on the ground plane, and a hull-height first-person eye cannot see
+  // any of it. `C` still flips to the cockpit view, and the choice sticks.
+  const DEFAULTS = { volume: 7, music: 6, shake: 10, glow: true, shadows: true, quality: 1, crt: true, aimAssist: true, colorblind: false, fps: false, difficulty: 0, coach: true, chase: true };
   const s = Object.assign({}, DEFAULTS);
   try {
     const raw = JSON.parse(localStorage.getItem('pa_settings') || '{}');

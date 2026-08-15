@@ -388,6 +388,37 @@ const Geometry = (() => {
     return new Float32Array(verts);
   }
 
+  /* The cone's boundary standing up: a low curtain of light along the reach
+   * arc. A line painted on the floor is perfectly legible from the chase rig
+   * and nearly invisible from the cockpit eye, which sits 2.3 units up and
+   * looks ALONG the floor rather than down at it — from there the same line is
+   * a smear on the horizon. The curtain is the same boundary with height, so
+   * "past here it cannot find you" reads from either camera.
+   *
+   * Unit reach like gazeCone; the vertex colour fades to black at the top so
+   * the additive draw is a haze rather than a wall you cannot see past. */
+  function gazeCurtain() {
+    const verts = [];
+    const seg = 16;
+    const H = 0.11;   // in reach units — a curtain, not a fence
+    const push = (x, y, z, c) => verts.push(x, y, z, 0, 0, 1, c, c, c);
+    for (let i = 0; i < seg; i++) {
+      const a0 = -GAZE_HALF + (i / seg) * GAZE_HALF * 2;
+      const a1 = -GAZE_HALF + ((i + 1) / seg) * GAZE_HALF * 2;
+      const x0 = -Math.sin(a0), z0 = -Math.cos(a0);
+      const x1 = -Math.sin(a1), z1 = -Math.cos(a1);
+      // two triangles per segment, drawn from both sides — the player can be
+      // inside the cone or outside it and the curtain has to read either way
+      for (const [p, q] of [[0, 1], [1, 0]]) {
+        const ax = p ? x1 : x0, az = p ? z1 : z0;
+        const bx = q ? x1 : x0, bz = q ? z1 : z0;
+        push(ax, 0, az, 1); push(bx, 0, bz, 1); push(bx, H, bz, 0);
+        push(ax, 0, az, 1); push(bx, H, bz, 0); push(ax, H, az, 0);
+      }
+    }
+    return new Float32Array(verts);
+  }
+
   /* ---- ground decals ------------------------------------------------------
    * Flat shapes laid on the floor and drawn with the "decal" blend
    * (dst * (1 - src)), so vertex colour reads as an opacity mask: white
@@ -611,5 +642,5 @@ const Geometry = (() => {
     return b.build();
   }
 
-  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, arenaWall, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring, gazeCone, gazeEdge, decalDisc, decalQuad };
+  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, arenaWall, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring, gazeCone, gazeEdge, gazeCurtain, decalDisc, decalQuad };
 })();
