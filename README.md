@@ -497,7 +497,11 @@ the pot you carried over the line. High score,
 daily bests, settings and your service record are all kept in your browser.
 
 Watch your speed near the arena's slabs: slam into one fast enough and your
-tank rebounds off it.
+tank rebounds off it — and if you just lean on one, the hull **slides along
+the face** rather than parking against it. Nothing you can hold on the
+controls brings the tank to a dead stop against geometry; in a sector where
+patrols are converging on your last known position, standing still is not a
+state the game will put you in without asking.
 
 ## Code layout
 

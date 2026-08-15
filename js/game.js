@@ -1715,6 +1715,41 @@ class Game {
         // by how hard you're pointed into it — a light graze is nearly free
         const into = Math.max(0, -(fwdX(p.angle) * nx + fwdZ(p.angle) * nz));
         p.speed *= Math.max(0, 1 - 2.5 * into * dt);
+
+        // WALL SLIDE. Dead-on into a flat face there is no tangential
+        // component to keep, so removing the normal one leaves nothing: the
+        // hull welds itself to the slab at zero velocity and full throttle,
+        // indefinitely, with no feedback. Measured at 9.6s and still going —
+        // in a game whose stated pillar is that momentum is everything, and
+        // in a stealth game where sitting still is how you die.
+        //
+        // The blocked throttle gets somewhere to go: a shove along the face,
+        // toward whichever side the hull is already easing (its own tangential
+        // drift first, then its facing, then a committed side so a perfectly
+        // square hit picks one instead of dithering). The hull still points
+        // where you steer — only the velocity slides, which is the model this
+        // file uses everywhere else.
+        // The trigger is the OUTCOME, not the angle: whenever the throttle is
+        // pushing into a surface and almost none of it is coming out along
+        // that surface, top the tangential component up. A shallow graze
+        // already carries most of its speed along the face, so `want` is
+        // already satisfied and nothing is added — this only ever fires where
+        // the hull would otherwise stall. Scaling by `into` keeps the assist
+        // proportional to how blocked the hull actually is, so it covers a
+        // corner (two normals, ~45 degrees) as well as a flat face.
+        const tx = -nz, tz = nx;
+        const tang = p.vx * tx + p.vz * tz;
+        const want = Math.abs(p.speed) * 0.5 * into;
+        if (into > 0.35 && Math.abs(tang) < want) {
+          let dir = Math.abs(tang) > 0.05 ? Math.sign(tang)
+            : Math.sign(fwdX(p.angle) * tx + fwdZ(p.angle) * tz);
+          if (!dir) dir = (p.wallSide || (p.wallSide = RNG() < 0.5 ? -1 : 1));
+          const add = want - Math.abs(tang);
+          p.vx += tx * dir * add;
+          p.vz += tz * dir * add;
+        } else {
+          p.wallSide = 0;   // moving along the face again: forget the side
+        }
       }
     }
 
