@@ -23,7 +23,8 @@ class HUD {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.messages = []; // {text, t, dur, color}
+    this.messages = []; // {text, t, dur, color, alert}
+    this.chatter = [];  // low-priority notices, drawn over the bars
     this.pops = [];     // floating score popups {text, t}
     this.flash = 0;     // red damage flash 0..1
     this.pickupFlash = 0;
@@ -42,8 +43,25 @@ class HUD {
     this.dpr = dpr;
   }
 
-  message(text, color = '#4fd6bb', dur = 2.2) {
-    this.messages.push({ text, t: 0, dur, color });
+  /* Toast a line. `tier` is what stops the HUD from shouting everything at
+   * once: fifty call sites feed this, and a run where SPOTTED and NO GRENADES
+   * arrive at the same size in the same place is a run where the player reads
+   * neither. Three weights, and they land in different parts of the frame:
+   *
+   *   'alert'   — the fight or the run just changed. Big, lit, up top.
+   *   'info'    — the default. You did the thing; here is the result.
+   *   'chatter' — routine, or already shown somewhere permanent (the combo
+   *               multiplier, the bounty line, the grenade pips). Small, and
+   *               tucked over the bars it refers to instead of over the
+   *               battlefield.
+   */
+  message(text, color = '#4fd6bb', dur = 2.2, tier = 'info') {
+    if (tier === 'chatter') {
+      this.chatter.push({ text, t: 0, dur, color });
+      if (this.chatter.length > 2) this.chatter.shift();
+      return;
+    }
+    this.messages.push({ text, t: 0, dur, color, alert: tier === 'alert' });
     if (this.messages.length > 3) this.messages.shift();
   }
 
@@ -109,6 +127,7 @@ class HUD {
     this._coach(ctx, W, H, s, game);
     this._scorePops(ctx, W, H, s, dt);
     this._touchControls(ctx, game);
+    this._renderChatter(ctx, W, H, s, dt);
     this._renderMessages(ctx, W, H, s, dt);
   }
 
@@ -947,22 +966,48 @@ class HUD {
     }
   }
 
+  /* The centre column: alerts and results. Rows stack DOWNWARD from a fixed
+   * top — stacking up used to walk the second and third message straight into
+   * the radar dish and its labels. Row height follows the tier, so a stack of
+   * chatter can no longer push an alert off its mark. */
   _renderMessages(ctx, W, H, s, dt) {
-    const font = (px) => `bold ${Math.round(px * s)}px "Courier New", monospace`;
     ctx.textAlign = 'center';
-    for (let i = this.messages.length - 1; i >= 0; i--) {
+    let y = H * 0.30;
+    for (let i = 0; i < this.messages.length; i++) {
       const m = this.messages[i];
       m.t += dt;
-      if (m.t > m.dur) { this.messages.splice(i, 1); continue; }
+      if (m.t > m.dur) { this.messages.splice(i--, 1); continue; }
       const a = Math.min(1, (m.dur - m.t) / 0.5) * Math.min(1, m.t / 0.1);
-      ctx.font = font(26);
+      const px = m.alert ? 24 : 16;
+      ctx.font = `bold ${Math.round(px * s)}px "Courier New", monospace`;
       ctx.globalAlpha = a;
       ctx.fillStyle = m.color;
       ctx.shadowColor = m.color;
-      ctx.shadowBlur = 14;
-      ctx.fillText(m.text, W / 2, H * 0.32 - i * 40 * s);
+      ctx.shadowBlur = m.alert ? 14 : 6;
+      ctx.fillText(m.text, W / 2, y);
       ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;
+      y += (px + 12) * s;
     }
+  }
+
+  /* Routine notices, parked just above the bars they are about to explain —
+   * NO GRENADES belongs next to the grenade pips, not across the arena. */
+  _renderChatter(ctx, W, H, s, dt) {
+    if (!this.chatter.length) return;
+    ctx.textAlign = 'left';
+    ctx.font = `${Math.round(12 * s)}px "Courier New", monospace`;
+    let y = H - 190 * s;
+    for (let i = 0; i < this.chatter.length; i++) {
+      const m = this.chatter[i];
+      m.t += dt;
+      if (m.t > m.dur) { this.chatter.splice(i--, 1); continue; }
+      ctx.globalAlpha = Math.min(1, (m.dur - m.t) / 0.4) * Math.min(1, m.t / 0.08);
+      ctx.fillStyle = m.color;
+      ctx.fillText(m.text, 18 * s, y);
+      ctx.globalAlpha = 1;
+      y += 16 * s;
+    }
+    ctx.textAlign = 'center';
   }
 }

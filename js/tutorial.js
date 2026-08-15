@@ -85,30 +85,35 @@ const COACH_TIPS = [
     when: (g, p) => p.heat > p.maxHeat * 0.55 && p.overheatT <= 0,
     text: 'NO AMMO — HEAT. TAP R TO VENT, TAP AGAIN IN THE BAND FOR SUPERCHARGED SHELLS',
     color: '#e8c75a',
+    tier: 'info',
   },
   {
     id: 'alarm',
     when: (g) => (g.alarmT || 0) > 0 && !g.exit,
     text: 'ALARM UP — BREAK LINE OF SIGHT AND RUN COLD AND THE HUNT STANDS DOWN',
     color: '#ff4a3c',
+    tier: 'alert',
   },
   {
     id: 'sus',
     when: (g) => g.suspicion && !g.everAlarmed,
     text: 'SOMETHING NOTICED YOU — A GLIMPSE IS NOT A LOCK. BREAK THE CONE NOW',
     color: '#ffd24a',
+    tier: 'alert',
   },
   {
     id: 'overheat',
     when: (g, p) => p.overheatT > 0,
     text: 'THE GUN LOCKED — VENT BEFORE THE REDLINE, NOT AFTER',
     color: '#ff4a3c',
+    tier: 'info',
   },
   {
     id: 'pot',
     when: (g, p) => (g.pot || 0) > 250,
     text: 'THAT POT IS UNBANKED — A HIT SPILLS IT. SECURE A ZONE TO CASH OUT',
     color: '#e8c75a',
+    tier: 'info',
   },
 ];
 
@@ -154,7 +159,7 @@ class Coach {
         if (this.tipsFired[tip.id] || !tip.when(g, p)) continue;
         this.tipsFired[tip.id] = true;
         this._tipCd = 3;   // never stack two callouts on top of each other
-        g.hud.message(tip.text, tip.color, 3.2);
+        g.hud.message(tip.text, tip.color, 3.2, tip.tier || 'info');
         break;
       }
     }

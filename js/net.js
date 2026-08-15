@@ -520,7 +520,7 @@ const Net = (() => {
     const hadExit = !!game.exit;
     game.exit = msg.ex ? { x: msg.ex.x, z: msg.ex.z } : null;
     if (!hadExit && game.exit) {
-      game.hud.message('UPLINK COMPLETE — REACH THE EXTRACTION GATE', '#4fd6bb', 3.2);
+      game.hud.message('UPLINK COMPLETE — REACH THE EXTRACTION GATE', '#4fd6bb', 3.2, 'alert');
     }
     game.combo = msg.cb || 0;
     game.comboT = msg.ct || 0;
@@ -570,7 +570,7 @@ const Net = (() => {
           ? { x: s[1], z: s[2] } : null);
         // clients don't run the sim — mirror the host's event banners off
         // the sounds that always accompany them
-        if (k === 'alarm') game.hud.message('ALARM — THE GRID IS HUNTING', '#ff4a3c', 2.4);
+        if (k === 'alarm') game.hud.message('ALARM — THE GRID IS HUNTING', '#ff4a3c', 2.4, 'alert');
         else if (k === 'coreExposed') game.hud.message('CORE EXPOSED — ATTACK', '#ffd24a', 3);
         else if (k === 'bossDown') game.hud.message('WARLORD DESTROYED', '#3cff78', 3);
         else if (k === 'comboBreak') game.hud.message('COMBO BROKEN', '#ff4a3c', 1.5);

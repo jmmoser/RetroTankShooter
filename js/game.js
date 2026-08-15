@@ -630,7 +630,7 @@ class Game {
         if (pos) this._spawnEnemy(i % 2 === 0 ? 'hunter' : 'drone', pos[0], pos[1]);
       }
       this._sfx('alarm');
-      this.hud.message('WARLORD DETECTED — DESTROY IT', '#ff4a3c', 3.5);
+      this.hud.message('WARLORD DETECTED — DESTROY IT', '#ff4a3c', 3.5, 'alert');
     } else {
       // objectives are a route, not a checklist: the count tops out at five
       // so a late sector is a fast loop through the grid, not a ten-stop
@@ -658,11 +658,10 @@ class Game {
     }
     if (this.mutator) {
       const m = MUTATORS.find((x) => x.id === this.mutator);
-      if (m) this.hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3);
+      if (m) this.hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3, 'chatter');
     }
-    if (this.bounty) {
-      this.hud.message('BOUNTY: ' + this.bounty.name, '#e8c75a', 2.4);
-    }
+    // no bounty toast: _objective already prints it under the radar, live,
+    // with its progress, for the whole sector. Saying it twice is noise.
   }
 
   /* Where tanks deploy: the home corridor in the campaign, spread corners in
@@ -1207,10 +1206,10 @@ class Game {
     this.everAlarmed = true;
     this.pressureT = Math.min(this.pressureT, 2.5);
     this._sfx('alarm');
-    this.hud.message('SPOTTED — THE GRID IS HUNTING', '#ff4a3c', 2.4);
+    this.hud.message('SPOTTED — THE GRID IS HUNTING', '#ff4a3c', 2.4, 'alert');
     if (!this._hintSpotted) {
       this._hintSpotted = true;
-      this.hud.message('BREAK LINE OF SIGHT AND RUN COLD TO SHAKE THEM', '#ffd24a', 3.2);
+      this.hud.message('BREAK LINE OF SIGHT AND RUN COLD TO SHAKE THEM', '#ffd24a', 3.2, 'alert');
     }
   }
 
@@ -1243,7 +1242,7 @@ class Game {
     }
     if (any) {
       this._sfx('cloak');
-      this.hud.message('CONTACT LOST — YOU ARE A GHOST AGAIN', '#4fd6bb', 2.4);
+      this.hud.message('CONTACT LOST — YOU ARE A GHOST AGAIN', '#4fd6bb', 2.4, 'alert');
     }
   }
 
@@ -1266,7 +1265,7 @@ class Game {
       if (p.pendingOffers) p.pendingLevels++;
       else this._rollOffers(p);
       if (p.id === this.localId && p.pendingOffers) {
-        this.hud.message('TECH LEVEL ' + p.techLvl + ' — CHOOSE UPGRADE', '#ffd24a', 2.2);
+        this.hud.message('TECH LEVEL ' + p.techLvl + ' — CHOOSE UPGRADE', '#ffd24a', 2.2, 'alert');
         AudioSys.play('unlock');
       }
     }
@@ -1308,7 +1307,7 @@ class Game {
     }
     const def = UPGRADES.find((u) => u.id === upgradeId);
     if (p.id === this.localId && def) {
-      this.hud.message(def.name + ' ONLINE', '#ffd24a', 1.8);
+      this.hud.message(def.name + ' ONLINE', '#ffd24a', 1.8, 'chatter');
       AudioSys.play('powerup');
     }
     return true;
@@ -1346,7 +1345,7 @@ class Game {
       }
       if (queued > 0) {
         this._sfx('warp');
-        this.hud.message('GRID SUSPICION RISING — FRESH PATROLS INBOUND', '#ffd24a', 2.2);
+        this.hud.message('GRID SUSPICION RISING — FRESH PATROLS INBOUND', '#ffd24a', 2.2, 'alert');
       }
     }
   }
@@ -1371,7 +1370,7 @@ class Game {
     this.pressureT = Math.min(this.pressureT, 2);
     for (const e of this.enemies) { e.alerted = true; e.sense = 1; e.seenT = 0; }
     this._sfx('alarm');
-    this.hud.message('UPLINK COMPLETE — REACH THE EXTRACTION GATE', '#4fd6bb', 3.2);
+    this.hud.message('UPLINK COMPLETE — REACH THE EXTRACTION GATE', '#4fd6bb', 3.2, 'alert');
   }
 
   /* Sector clear condition: every living tank inside the gate ring. */
@@ -1431,7 +1430,7 @@ class Game {
     const mult = c >= 8 ? 5 : c >= 5 ? 4 : c >= 3 ? 3 : c >= 2 ? 2 : 1;
     if (mult > this.mult) {
       this._sfx('combo');
-      this.hud.message('COMBO ×' + mult, '#ffd24a', 1.4);
+      this.hud.message('COMBO ×' + mult, '#ffd24a', 1.4, 'chatter');
     }
     if (mult >= 4) this._bountyTick('mult');
     if (mult >= 5 && ownerId === this.localId) this._medal('chain5');
@@ -1454,7 +1453,7 @@ class Game {
   _breakCombo() {
     if (this.mult > 1) {
       this._sfx('comboBreak');
-      this.hud.message('COMBO BROKEN', '#ff4a3c', 1.5);
+      this.hud.message('COMBO BROKEN', '#ff4a3c', 1.5, 'chatter');
     }
     this.combo = 0;
     this.comboT = 0;
@@ -1531,7 +1530,7 @@ class Game {
       if (p.fx[fx] === 0) {
         this._sfx('powerdown');
         if (p.id === this.localId) {
-          this.hud.message(POWERUP_TYPES[fx].label + ' EXPIRED', '#4fd6bb', 1.4);
+          this.hud.message(POWERUP_TYPES[fx].label + ' EXPIRED', '#4fd6bb', 1.4, 'chatter');
         }
       }
     }
@@ -1713,7 +1712,7 @@ class Game {
             p.heat = p.maxHeat;
             p.overheatT = OVERHEAT_LOCK;
             this._sfx('lowShield');
-            if (isLocal) this.hud.message('OVERHEAT — COOLING', '#ff4a3c', 1.6);
+            if (isLocal) this.hud.message('OVERHEAT — COOLING', '#ff4a3c', 1.6, 'alert');
           }
         }
         const shotAngle = this._aimAssist(p);
@@ -1767,7 +1766,7 @@ class Game {
       } else {
         p.nadeCd = 0.4;
         this._sfx('select');
-        if (isLocal) this.hud.message('NO GRENADES', '#ff4a3c', 1.2);
+        if (isLocal) this.hud.message('NO GRENADES', '#ff4a3c', 1.2, 'chatter');
       }
     }
 
@@ -1786,14 +1785,14 @@ class Game {
       } else {
         p.mineCd = 0.4;
         this._sfx('select');
-        if (isLocal) this.hud.message('NO MINES', '#ff4a3c', 1.2);
+        if (isLocal) this.hud.message('NO MINES', '#ff4a3c', 1.2, 'chatter');
       }
     }
 
     if (isLocal) {
       if (p.shields <= p.maxShields * 0.25 && !p.lowWarned) {
         p.lowWarned = true;
-        this.hud.message('SHIELDS CRITICAL', '#ff4a3c', 2.5);
+        this.hud.message('SHIELDS CRITICAL', '#ff4a3c', 2.5, 'alert');
         this._sfx('lowShield');
       }
       if (p.shields > p.maxShields * 0.35) p.lowWarned = false;
@@ -2859,7 +2858,7 @@ class Game {
     this._sfx('powerup', p.x, p.z);
     if (p.id === this.localId) {
       this.hud.pickup();
-      this.hud.message(spec.label, '#ffd24a', 1.4);
+      this.hud.message(spec.label, '#ffd24a', 1.4, 'chatter');
     }
   }
 
@@ -3071,7 +3070,7 @@ class Game {
         b.speed *= 1.35;   // enraged
         b.shockCd = 2.5;
         this._sfx('coreExposed');
-        this.hud.message('CORE EXPOSED — ATTACK', '#ffd24a', 3);
+        this.hud.message('CORE EXPOSED — ATTACK', '#ffd24a', 3, 'alert');
       }
     } else {
       this._sfx('hitEnemy');
@@ -3108,7 +3107,7 @@ class Game {
     this._addDecal(b.x, b.z, 16, 60, 'scorch', 0, 0.45);
     this.shake = 2;
     this.hitStop = 0.42;
-    this.hud.message('WARLORD DESTROYED', '#3cff78', 3);
+    this.hud.message('WARLORD DESTROYED', '#3cff78', 3, 'alert');
     this._medal('giantkiller');
   }
 

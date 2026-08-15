@@ -243,7 +243,7 @@
     if (recordBeaten || recordRef <= 0 || game.versus) return;
     if (game.score > recordRef) {
       recordBeaten = true;
-      hud.message(game.dailySeed ? '★ DAILY BEST BEATEN ★' : '★ RECORD BROKEN ★', '#ffd24a', 2.4);
+      hud.message(game.dailySeed ? '★ DAILY BEST BEATEN ★' : '★ RECORD BROKEN ★', '#ffd24a', 2.4, 'alert');
       AudioSys.play('unlock');
     }
   }
@@ -332,7 +332,7 @@
     showScreen(null);
     AudioSys.play('deploy');
     hud.message('SECTOR ' + game.level + (game.bossLevel ? ' — DESTROY THE WARLORD' : ' — SECURE THE UPLINKS, THEN EXTRACT'),
-      game.bossLevel ? '#ff4a3c' : '#4fd6bb', 3);
+      game.bossLevel ? '#ff4a3c' : '#4fd6bb', 3, game.bossLevel ? 'alert' : 'info');
   }
 
   // Daily ops: one seeded arena per UTC day, standard-issue VANGUARD for a
@@ -915,7 +915,7 @@
   function draftAutoPick() {
     if (!draftOpen || !draftIds.length) return;
     const id = draftIds[(Math.random() * draftIds.length) | 0];
-    hud.message('AUTO-INSTALLED', '#e8c75a', 1.2);
+    hud.message('AUTO-INSTALLED', '#e8c75a', 1.2, 'chatter');
     draftPick(id);
   }
 
@@ -1079,7 +1079,7 @@
     if (game.versus) {
       hud.message('VERSUS — FIRST TO ' + game.killTarget + ' KILLS', '#ffd24a', 3);
     } else if (game.bossLevel) {
-      hud.message('SECTOR ' + game.level + ' — WARLORD DETECTED', '#ff4a3c', 3.5);
+      hud.message('SECTOR ' + game.level + ' — WARLORD DETECTED', '#ff4a3c', 3.5, 'alert');
       AudioSys.play('alarm');
     } else {
       hud.message('SECTOR ' + game.level, '#4fd6bb', 2.5);
@@ -1087,9 +1087,9 @@
       // mirror the host's sector-start banners
       if (game.mutator) {
         const m = MUTATORS.find((x) => x.id === game.mutator);
-        if (m) hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3);
+        if (m) hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3, 'chatter');
       }
-      if (game.bounty) hud.message('BOUNTY: ' + game.bounty.name, '#e8c75a', 2.4);
+      // (no bounty toast — the HUD carries it live under the radar)
     }
   };
   Net.cb.onState = (msg) => { if (Net.role === 'client') Net.applyState(game, msg); };
@@ -1802,7 +1802,7 @@
   function handleScreens() {
     if (Input.consume('KeyM')) {
       const muted = AudioSys.toggleMuted();
-      hud.message(muted ? 'SOUND OFF' : 'SOUND ON', '#4fd6bb', 1);
+      hud.message(muted ? 'SOUND OFF' : 'SOUND ON', '#4fd6bb', 1, 'chatter');
     }
 
     switch (uiMode) {
@@ -1874,7 +1874,7 @@
           // used to yank solo players onto the pause screen
           if (game.mode !== 'playing') break;
           if (Net.role === 'solo') pauseGame();
-          else hud.message('PAUSE UNAVAILABLE IN CO-OP', '#ffd24a', 1.6);
+          else hud.message('PAUSE UNAVAILABLE IN CO-OP', '#ffd24a', 1.6, 'chatter');
         }
         break;
 
@@ -1929,8 +1929,8 @@
   bind('bt-resume', resumeGame);
 
   // surface controller hotplug so players know the pad took
-  window.addEventListener('gamepadconnected', () => hud.message('GAMEPAD CONNECTED', '#4fd6bb', 2));
-  window.addEventListener('gamepaddisconnected', () => hud.message('GAMEPAD DISCONNECTED', '#ffd24a', 2));
+  window.addEventListener('gamepadconnected', () => hud.message('GAMEPAD CONNECTED', '#4fd6bb', 2, 'chatter'));
+  window.addEventListener('gamepaddisconnected', () => hud.message('GAMEPAD DISCONNECTED', '#ffd24a', 2, 'chatter'));
 
   menus.title.reset();   // title is visible on boot without a showScreen() call
 
