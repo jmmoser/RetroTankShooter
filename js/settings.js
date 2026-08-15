@@ -122,13 +122,32 @@ const Progress = (() => {
   /* The MARAUDER chassis is earned, not given: down a WARLORD to unlock. */
   function marauderUnlocked() { return p.warlords > 0; }
 
-  /* Checkpoint starts: sector 1, plus the sector after each WARLORD you have
-   * fought past (6, 11, ...) so veterans can skip straight to the deep end. */
+  /* Checkpoint starts. The first rung used to be sector 6 — the sector after
+   * a WARLORD — so it needed five cleared sectors to reach, which is exactly
+   * the stretch a pilot who is still learning cannot clear. That made the
+   * whole career ladder cosmetic for as long as it mattered most: run 20 was
+   * mechanically identical to run 1.
+   *
+   * Rungs every third sector, and always strictly below your deepest, so a
+   * checkpoint is somewhere you have proven you can get to and still leaves a
+   * sector between you and your record. Deep starts carry no upgrades and no
+   * banked score, so they cost as much as they save. */
   function checkpoints() {
     const list = [1];
-    for (let sec = 6; sec <= p.bestSector; sec += 5) list.push(sec);
+    for (let sec = 4; sec < p.bestSector; sec += 3) list.push(sec);
     return list;
   }
+
+  /* FIELD PROMOTION: rank finally spends. Every run pays XP — the game says
+   * so on every game-over screen — and until now that bought a word. From
+   * ENSIGN on, a campaign sortie deploys with tech already banked, which
+   * cashes out as a draft in the opening seconds: the build starts sooner and
+   * a returning pilot's run is shaped differently from their first.
+   *
+   * Campaign only. Daily Ops is a shared leaderboard and stays a level field,
+   * exactly like the difficulty preset. */
+  const PROMOTION_TECH = [0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6];
+  function startingTech() { return PROMOTION_TECH[rank().index] || 0; }
 
   // ---- daily challenge ------------------------------------------------
   // One shared arena per UTC day: the date string seeds the generator, so
@@ -214,7 +233,7 @@ const Progress = (() => {
 
   return {
     get: () => p, recordRun, rank, marauderUnlocked, checkpoints,
-    coachDone, setCoachDone,
+    coachDone, setCoachDone, startingTech,
     todayKey, dailyBest, recordDaily, recordDailyPlayed, dailyStreak,
   };
 })();

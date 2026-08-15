@@ -703,3 +703,13 @@ body.touch-ui .mbtn { padding: 10px 20px; }
   font-size: 10px; line-height: 1.6; letter-spacing: 1px;
   color: #e8c75a;
 }
+
+/* ---------- field promotion ---------- */
+/* What your rank is worth on this sortie, said on the screen where you commit
+   to one — a career ladder that never spends is a word, not a reward. */
+.promotion {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #e8c75a;
+  text-shadow: 0 0 8px rgba(232, 199, 90, 0.4);
+}

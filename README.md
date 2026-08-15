@@ -325,6 +325,13 @@ Every run — campaign, daily, even a doomed one — pays **XP** into a
 shows the XP bar filling and exactly how much is left to the next
 promotion.
 
+**Rank spends.** From your second promotion on, a campaign sortie deploys with
+**TECH already banked** — a **FIELD PROMOTION**, called out on the loadout
+screen, which cashes out as a draft in the opening seconds and grows with the
+ladder. Your build starts sooner and your twentieth run is not your first run
+again. Daily Ops deliberately ignores it: that leaderboard stays a level
+field, exactly like the difficulty preset.
+
 Fourteen **medals** mark one-time feats: a ghost extraction, five silent
 kills in one mission, a ×5 combo, a sector cleared without taking a hit,
 a 3-day daily streak, and more. They pop mid-run with a toast and a
@@ -336,9 +343,11 @@ browser. Two things are earned:
 
 - **MARAUDER chassis** — a fourth loadout (fast, armored, a small cooling
   plant, heavy on mines) unlocked by destroying your first WARLORD.
-- **Checkpoint starts** — once you fight past a WARLORD, the loadout screen
-  lets you start at the sector after it (6, 11, …) instead of replaying the
-  early game.
+- **Checkpoint starts** — the loadout screen lets you start deeper: a rung
+  every third sector, always strictly below your deepest, so it is somewhere
+  you have proven you can reach and there is still a sector between you and
+  your record. A deep start carries no upgrades and no banked score, so it
+  costs about as much as it saves.
 
 ### Settings
 

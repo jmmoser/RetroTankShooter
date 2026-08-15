@@ -284,6 +284,18 @@
     el.addEventListener('dblclick', () => startRun());
   });
 
+  // ---- field promotion --------------------------------------------------------
+  /* Rank is worth something now, so the loadout screen says what. */
+  const promotionRow = document.getElementById('promotion-row');
+  function refreshPromotionRow() {
+    const tech = Progress.startingTech();
+    promotionRow.classList.toggle('hidden', tech <= 0);
+    if (tech > 0) {
+      promotionRow.textContent = '★ FIELD PROMOTION — ' + Progress.rank().name +
+        ' DEPLOYS WITH ' + tech + ' TECH LEVEL' + (tech > 1 ? 'S' : '') + ' BANKED';
+    }
+  }
+
   // ---- checkpoint starts ------------------------------------------------------
   const btCheckpoint = document.getElementById('bt-checkpoint');
   function refreshCheckpointRow() {
@@ -305,6 +317,7 @@
     document.getElementById('loadout-marauder').classList.toggle('locked', loadoutLocked(3));
     if (loadoutLocked(3) && loadoutIndex === 3) selectLoadout(1);
     refreshCheckpointRow();
+    refreshPromotionRow();
     showScreen('setup');
   }
 

@@ -538,6 +538,15 @@ class Game {
     for (const p of this.players) this.killCounts[p.id] = 0;
     this.localId = localId != null ? localId : this.players[0].id;
     this.player = this.players.find((p) => p.id === this.localId) || this.players[0];
+    // FIELD PROMOTION: rank banks tech before the first shot, so a veteran's
+    // sortie opens with a draft instead of the same blank slate as run one.
+    // Solo campaign only — Daily Ops is a shared leaderboard, and in co-op the
+    // host's rank must not silently arm everybody else's tank.
+    this.startTech = 0;
+    if (!this.versus && !this.dailySeed && defs.length === 1 &&
+        typeof Progress !== 'undefined' && Progress.startingTech) {
+      this.startTech = Progress.startingTech();
+    }
     this.startLevel();
   }
 
@@ -672,6 +681,15 @@ class Game {
     }
     RNG = Math.random;   // seeded window ends with generation
     this.mode = 'playing';
+    // ...paid out on the opening sector, once, through the normal tech path so
+    // the draft, its timer and its auto-install all behave exactly as usual
+    if (this.startTech > 0 && !this.startTechPaid) {
+      this.startTechPaid = true;
+      const p = this.player;
+      let owed = 0;
+      for (let i = 0; i < this.startTech; i++) owed += p.techNext + i * 34;
+      this._awardTech(p, owed);
+    }
     if (this.coach) this.coach.resetLevel();
     // first sector of a fresh campaign: spell out the two rules that changed
     // everything — you are invisible until seen, and zones spike on contact.
