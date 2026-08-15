@@ -101,6 +101,7 @@ class HUD {
     if (!game || game.mode !== 'playing') { this._renderMessages(ctx, W, H, s, dt); return; }
 
     this._crosshair(ctx, W, H, s);
+    this._exposure(ctx, W, H, s, game);
     this._radar(ctx, W, H, s, game);
     this._bars(ctx, W, H, s, game);
     this._objective(ctx, W, H, s, game);
@@ -305,6 +306,70 @@ class HUD {
     }
   }
 
+  /* EXPOSURE: something has live eyes on you. Drawn as an arc around the
+   * crosshair sitting on the BEARING of the hull doing the looking, so one
+   * mark answers all three questions a stealth game must never make you
+   * guess — am I being seen, how far along is it, and from where.
+   *
+   * The ring is hull-relative (bearing minus your facing), which is the same
+   * frame the chase camera and the first-person view share, so the arc points
+   * at the watcher in either. It grows and reddens with the meter, and past
+   * SUSPICIOUS it strobes: that is the window to break the cone. */
+  _exposure(ctx, W, H, s, game) {
+    const ex = game.exposure;
+    if (!ex || !game.player) return;
+    const lvl = Math.max(0, Math.min(1, ex.level));
+    const p = game.player;
+    const bearing = Math.atan2(-(ex.x - p.x), -(ex.z - p.z)) - p.angle;
+    // Into canvas angles. World bearing runs counter-clockwise (+ is to the
+    // hull's left); canvas angles run clockwise from +X. So the bearing
+    // negates, and hull-forward lands on -PI/2 (straight up) — the same frame
+    // the radar blips ride, which is what keeps the arc and the dish agreeing.
+    const a = -bearing - Math.PI / 2;
+    const cx = W / 2, cy = H / 2;
+    const r = 52 * s;
+    const half = 0.34 + 0.20 * lvl;   // a wider wedge as it closes on you
+    const t = performance.now() / 1000;
+    const sus = lvl >= 0.4;
+    const strobe = sus ? 0.72 + 0.28 * Math.sin(t * 12) : 1;
+
+    // the empty track shows where the arc is growing from
+    ctx.save();
+    ctx.lineCap = 'butt';
+    ctx.lineWidth = 5 * s;
+    ctx.strokeStyle = 'rgba(79,214,187,0.18)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, a - half, a + half);
+    ctx.stroke();
+
+    const col = sus ? [255, 90, 60] : [255, 210, 74];
+    ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${0.9 * strobe})`;
+    ctx.shadowColor = `rgb(${col[0]},${col[1]},${col[2]})`;
+    ctx.shadowBlur = 10 * s * strobe;
+    ctx.beginPath();
+    // fill from the arc's center outward both ways: the mark stays aimed at
+    // the watcher instead of sliding off the bearing as it fills
+    ctx.arc(cx, cy, r, a - half * lvl, a + half * lvl);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // a tick on the exact bearing so a nearly-empty meter still points
+    ctx.lineWidth = Math.max(1, 1.5 * s);
+    ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${0.75 * strobe})`;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * (r + 5 * s), cy + Math.sin(a) * (r + 5 * s));
+    ctx.lineTo(cx + Math.cos(a) * (r + 11 * s), cy + Math.sin(a) * (r + 11 * s));
+    ctx.stroke();
+
+    if (sus) {
+      ctx.textAlign = 'center';
+      ctx.font = `bold ${Math.round(11 * s)}px "Courier New", monospace`;
+      ctx.fillStyle = `rgba(255,90,60,${strobe})`;
+      ctx.fillText('EYES ON', cx, cy - r - 20 * s);
+    }
+    ctx.restore();
+  }
+
   /* FIELD COACH card: the current lesson, low and centered so it reads like
    * a mission prompt rather than a modal. It never covers the crosshair, the
    * radar or the bars, and it is gone the moment the walk is done. The step
@@ -486,12 +551,17 @@ class HUD {
         const ca = Math.cos(p.angle), sa = Math.sin(p.angle);
         const ang = Math.atan2(fx * sa + fz * ca, fx * ca - fz * sa);
         const sus = (e.sense || 0) >= 0.4;
-        ctx.fillStyle = sus ? 'rgba(255,200,74,0.16)' : 'rgba(110,190,170,0.09)';
+        ctx.fillStyle = sus ? 'rgba(255,200,74,0.30)' : 'rgba(110,205,180,0.20)';
         ctx.beginPath();
         ctx.moveTo(bx, by);
         ctx.arc(bx, by, reach, ang - SIGHT_CONE, ang + SIGHT_CONE);
         ctx.closePath();
         ctx.fill();
+        // the reach arc, drawn as a line: the dish is a route planner, and a
+        // route is planned against the edge of a cone, not its average tint
+        ctx.strokeStyle = sus ? 'rgba(255,200,74,0.75)' : 'rgba(130,225,200,0.5)';
+        ctx.lineWidth = Math.max(1, s);
+        ctx.stroke();
       }
     }
 

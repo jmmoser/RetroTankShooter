@@ -63,6 +63,7 @@
     bossCore: renderer.createMesh(Geometry.bossCore()),
     ring: renderer.createMesh(Geometry.ring(), renderer.gl.LINES),
     gaze: renderer.createMesh(Geometry.gazeCone()),
+    gazeEdge: renderer.createMesh(Geometry.gazeEdge()),
     // ominous backdrop, camera-anchored so it sits at infinity
     sky: renderer.createMesh(Geometry.skyDome(660)),
     mountains: renderer.createMesh(Geometry.mountains(600)),
@@ -1535,14 +1536,28 @@
       // know), so a beam always means "this one can still be threaded".
       if (aware < 2 && e.cloak < 0.6 && !game.versus) {
         const reach = senseRange(e.type, game.player ? game.player.sig : 1);
+        // The fill says "watched ground"; the edge says WHERE THAT STOPS, and
+        // the edge is the one the player steers against. Both ride the same
+        // senseRange, so throttling down visibly walks the line inward.
+        // The fill is a wash — it says "watched ground" without blowing out
+        // an additive floor under bloom. The EDGE carries the legibility: a
+        // bright line you can see from across the arena and steer along.
         const gp = aware === 1
-          ? 0.11 + 0.035 * Math.sin(now / 160)
-          : 0.085 + 0.02 * Math.sin(now / 420);   // slow breath: a live scan, not floor tint
+          ? 0.09 + 0.02 * Math.sin(now / 160)
+          : 0.062 + 0.014 * Math.sin(now / 420);   // slow breath: a live scan, not floor tint
         const gt = aware === 1
-          ? [1.0 * gp, 0.72 * gp, 0.2 * gp]
-          : [0.4 * gp, 0.85 * gp, 0.75 * gp];
+          ? [1.0 * gp, 0.66 * gp, 0.16 * gp]
+          : [0.34 * gp, 0.88 * gp, 0.76 * gp];
         renderer.draw(M.gaze, m4.trs(e.x, 0.22, e.z, e.angle, reach, 1, reach, MTX),
           { tint: gt, unlit: true, additive: true });
+        const ep = aware === 1
+          ? 0.72 + 0.16 * Math.sin(now / 160)
+          : 0.46 + 0.08 * Math.sin(now / 420);
+        const et = aware === 1
+          ? [1.0 * ep, 0.6 * ep, 0.14 * ep]
+          : [0.3 * ep, 0.95 * ep, 0.8 * ep];
+        renderer.draw(M.gazeEdge, m4.trs(e.x, 0.26, e.z, e.angle, reach, 1, reach, MTX),
+          { tint: et, unlit: true, additive: true });
       }
       // awareness telltale on the ground: amber = investigating, strobing
       // red = it knows — readable at a glance across the whole arena

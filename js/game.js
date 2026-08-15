@@ -332,6 +332,8 @@ class Game {
     this.noises = [];      // one-frame noise events: { x, z, r, mag }
     this.alarmT = 0;       // >0: the grid is hunting (seconds of hunt left)
     this.suspicion = false; // any patrol currently investigating (HUD tell)
+    this.exposure = null;  // { level, x, z, rate }: a hull with live eyes on
+                           // the LOCAL tank and how full its meter is
     this.everAlarmed = false; // the alarm went off at least once this sector
     this.ghostRun = false; // extraction reached with the alarm never raised
     this.exit = null;      // extraction gate { x, z } once the uplinks fall
@@ -1945,7 +1947,7 @@ class Game {
         e.invX = n.x; e.invZ = n.z; e.invT = rand(5, 9);
       }
     }
-    let fill = 0, sx = 0, sz = 0;
+    let fill = 0, sx = 0, sz = 0, onLocal = false;
     for (const pl of this.players) {
       if (!pl.alive) continue;
       const d = Math.hypot(pl.x - e.x, pl.z - e.z);
@@ -1957,7 +1959,14 @@ class Game {
       if (!this._losClear(e.x, e.z, pl.x, pl.z)) continue;
       const f = (0.7 + 2.4 * (1 - d / sightR)) * dr.detect *
         (1 - 0.2 * ((pl.up && pl.up.ghost) || 0));
-      if (f > fill) { fill = f; sx = pl.x; sz = pl.z; }
+      if (f > fill) { fill = f; sx = pl.x; sz = pl.z; onLocal = pl.id === this.localId; }
+    }
+    // EXPOSURE: the one thing a stealth game must never make you guess —
+    // something has eyes on YOU right now, this is how full its meter is,
+    // and this is where it is standing. The HUD draws it as an arc on the
+    // bearing of the hull doing the looking.
+    if (fill > 0 && onLocal && (!this.exposure || e.sense > this.exposure.level)) {
+      this.exposure = { level: Math.min(1, e.sense), x: e.x, z: e.z, rate: fill };
     }
     if (fill > 0) {
       // two-stage meter: the glimpse fills fast, the CONFIRM needs sustained
@@ -1981,6 +1990,7 @@ class Game {
     // sector alert makes survivors faster and more trigger-happy
     const alertMul = 1 + this.alert * 0.4;
     this.suspicion = false;
+    this.exposure = null;   // rebuilt each frame by _senseUpdate
     for (const e of this.enemies) {
       const ex0 = e.x, ez0 = e.z;
       const spec = ENEMY_TYPES[e.type];
