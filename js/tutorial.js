@@ -38,8 +38,8 @@ const COACH_STEPS = [
   {
     id: 'cold',
     title: 'RUN COLD',
-    hint: 'SIGNATURE IS HOW FAR THEY SEE — EASE OFF AND WATCH THE CONES PULL BACK',
-    touch: 'SIGNATURE IS HOW FAR THEY SEE — EASE OFF THE STICK',
+    hint: 'EASE OFF — THE WEDGE IS WHAT THEY WATCH, THE RING AT THEIR FEET IS WHAT THEY HEAR',
+    touch: 'EASE OFF — THE WEDGE IS WATCHED, THE RING IS HEARD',
     done: (g, p, s) => s.coldT > 1.5,
   },
   {

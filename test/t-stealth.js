@@ -1,10 +1,10 @@
 /* Stealth sensor model: the shared senseRange truth the HUD cones draw, the
- * two-stage detect meter (glimpse telegraph before the alert), and the
- * first-suspicion ping. */
+ * senseNear hearing bubble the HUD rings draw, the two-stage detect meter
+ * (glimpse telegraph before the alert), and the first-suspicion ping. */
 const { loadScripts, fakeHud, check, assert } = require('./helpers');
 
 loadScripts(['game.js'],
-  'global.Game = Game; global.senseRange = senseRange; ' +
+  'global.Game = Game; global.senseRange = senseRange; global.senseNear = senseNear; ' +
   'global.ENEMY_TYPES = ENEMY_TYPES; global.SENSE_SUS = SENSE_SUS; ' +
   'global.SENSE_RAMP = SENSE_RAMP; global.AMBUSH_MUL = AMBUSH_MUL;');
 const hud = fakeHud();
@@ -136,4 +136,44 @@ check('AMBUSH survivor still alerts and raises the alarm — commit to kills', (
     'ambush shell not multiplied, hp = ' + e.hp);
   assert(e.alerted, 'surviving an ambush must alert the hull');
   assert(g.alarmT > 0, 'a failed ambush must raise the sector alarm');
+});
+
+/* ---- the hearing bubble -----------------------------------------------------
+ * A patrol detects on cone OR proximity. The proximity half used to be drawn
+ * by nothing, so a player routing perfectly around every cone on the floor
+ * still got made — caught by a rule with no display. Both halves are one
+ * exported function now, and both are drawn from it. */
+
+check('senseNear shrinks with signature, like everything else a sensor does', () => {
+  assert(senseNear(1) > senseNear(0.15) * 1.7,
+    'cold ' + senseNear(0.15).toFixed(1) + ' vs redlined ' + senseNear(1).toFixed(1));
+  assert(senseNear(0.15) > 4, 'a cold tank is inaudible at touching distance');
+});
+
+check('a hull looking the other way still hears you inside the bubble', () => {
+  const near = (dist) => {
+    const g = freshGame();
+    const p = g.player;
+    p.x = 0; p.z = 0; p.sig = 1;
+    g.obstacles.length = 0;
+    g.enemies.length = 1;
+    const e = g.enemies[0];
+    e.type = 'drone'; e.x = 0; e.z = dist; e.cloak = 0;
+    e.alerted = false; e.sense = 0; e.invT = 0;
+    e.angle = Math.PI;                 // facing +Z: directly AWAY from the player at the origin
+    for (let i = 0; i < 30; i++) g._senseUpdate(e, 1 / 60);
+    return e.sense;
+  };
+  const inside = senseNear(1) - 3, outside = senseNear(1) + 6;
+  assert(near(inside) > 0, 'a hull did not hear a redlined tank at ' + inside.toFixed(0) + ' units behind it');
+  assert(near(outside) === 0, 'a hull heard a tank at ' + outside.toFixed(0) + ' units behind it');
+});
+
+check('the bubble is the sim\'s own number, not a second constant', () => {
+  // the renderer and the radar both call senseNear; the detection test has to
+  // be the same function or the drawing is decoration
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../js/game.js'), 'utf8');
+  const uses = (src.match(/senseNear\(/g) || []).length;
+  assert(uses >= 2, 'senseNear is declared but the sim does not detect with it');
+  assert(!/d > 9 \+ sig \* 16/.test(src), 'the hearing radius is inlined again, so the HUD can drift from it');
 });

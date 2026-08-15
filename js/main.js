@@ -1569,6 +1569,14 @@
         const ct = [et[0] * 0.55, et[1] * 0.55, et[2] * 0.55];
         renderer.draw(M.gazeCurtain, m4.trs(e.x, 0.1, e.z, e.angle, reach, reach, reach, MTX),
           { tint: ct, unlit: true, additive: true });
+        // the hearing bubble: inside this the cone stops mattering, because
+        // the hull notices you whichever way it happens to be facing. Drawn
+        // because the sim detects on it — an undrawn rule you get caught by
+        // is the difference between a stealth game and a guessing game.
+        const near = senseNear(game.player ? game.player.sig : 1);
+        const np = ep * 0.62;
+        renderer.draw(M.ring, m4.trs(e.x, 0.2, e.z, 0, near, 1, near, MTX),
+          { tint: [et[0] / ep * np, et[1] / ep * np, et[2] / ep * np], unlit: true, additive: true });
       }
       // awareness telltale on the ground: amber = investigating, strobing
       // red = it knows — readable at a glance across the whole arena

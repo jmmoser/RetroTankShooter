@@ -588,6 +588,16 @@ class HUD {
         ctx.strokeStyle = sus ? 'rgba(255,200,74,0.75)' : 'rgba(130,225,200,0.5)';
         ctx.lineWidth = Math.max(1, s);
         ctx.stroke();
+        // the hearing bubble, which the sim detects on regardless of facing —
+        // the dish would be lying about the safe route without it
+        if (typeof senseNear === 'function') {
+          const nr = (senseNear(p.sig) / range) * R;
+          ctx.beginPath();
+          ctx.arc(bx, by, nr, 0, Math.PI * 2);
+          ctx.fillStyle = sus ? 'rgba(255,200,74,0.22)' : 'rgba(110,205,180,0.16)';
+          ctx.fill();
+          ctx.stroke();
+        }
       }
     }
 

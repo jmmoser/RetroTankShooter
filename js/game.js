@@ -245,6 +245,21 @@ function senseRange(type, sig) {
   return spec.sight * (0.35 + 0.65 * (sig != null ? sig : 1));
 }
 
+/* The other half of a patrol's senses, and the half that used to be a trap:
+ * inside this radius the vision cone stops mattering — a hull notices a tank
+ * that close no matter which way it is facing, because it can hear the
+ * thing. The cone is what it is LOOKING at; this is what it is standing in.
+ *
+ * It was invisible. Every display the game had — the floor cone, its
+ * boundary, the radar wedge — drew the cone and nothing else, while the sim
+ * detected on cone OR this. Routing perfectly around every cone drawn on the
+ * floor and still getting made ten times a run is not a difficulty problem,
+ * it is a lying-HUD problem, so this is drawn now too and scales with
+ * signature the same way everything else does. */
+function senseNear(sig) {
+  return 9 + (sig != null ? sig : 1) * 16;
+}
+
 function fwdX(a) { return -Math.sin(a); }
 function fwdZ(a) { return -Math.cos(a); }
 function angleTo(dx, dz) { return Math.atan2(-dx, -dz); }
@@ -2017,7 +2032,7 @@ class Game {
       const sightR = senseRange(e.type, sig);
       if (d > sightR) continue;
       const bearing = Math.abs(wrapAngle(angleTo(pl.x - e.x, pl.z - e.z) - e.angle));
-      if (bearing > SIGHT_CONE && d > 9 + sig * 16) continue;   // behind it, and too far to hear
+      if (bearing > SIGHT_CONE && d > senseNear(sig)) continue;   // behind it, and too far to hear
       if (!this._losClear(e.x, e.z, pl.x, pl.z)) continue;
       const f = (0.7 + 2.4 * (1 - d / sightR)) * dr.detect *
         (1 - 0.2 * ((pl.up && pl.up.ghost) || 0));

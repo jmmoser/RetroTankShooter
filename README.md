@@ -88,6 +88,11 @@ redlining stretches it across the map — the signature bar is something you
 steer through on the ground, not just a number. Alerted hulls carry no cone;
 they aren't scanning, they **know**.
 
+Two shapes, not one. The wedge is what a patrol is *looking* at; the ring at
+its feet is what it can *hear*, and inside that ring facing stops mattering —
+it notices you whichever way it happens to be pointed. Both are drawn, both
+are the sim's own numbers, and both shrink when you throttle down.
+
 And you always know when you are being looked at. The moment any sensor has
 live eyes on you, an **exposure arc** lights up around the crosshair, sitting
 on the *bearing of the hull doing the looking* — one mark for am I seen, how
