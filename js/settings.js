@@ -15,7 +15,8 @@ const Settings = (() => {
   // quality: 0 = LOW (no MSAA on the glow scene pass), 1 = HIGH
   // difficulty: 0 = RECRUIT (default), 1 = STANDARD, 2 = VETERAN (campaign
   // pacing; Daily Ops and versus always run STANDARD)
-  const DEFAULTS = { volume: 7, music: 6, shake: 10, glow: true, shadows: true, quality: 1, crt: true, aimAssist: true, colorblind: false, fps: false, difficulty: 0 };
+  // coach: the first-run field coach that walks the loop in a live sector
+  const DEFAULTS = { volume: 7, music: 6, shake: 10, glow: true, shadows: true, quality: 1, crt: true, aimAssist: true, colorblind: false, fps: false, difficulty: 0, coach: true };
   const s = Object.assign({}, DEFAULTS);
   try {
     const raw = JSON.parse(localStorage.getItem('pa_settings') || '{}');
@@ -67,7 +68,8 @@ const MEDALS = [
 ];
 
 const Progress = (() => {
-  const ZERO = { games: 0, kills: 0, flags: 0, warlords: 0, bestSector: 1, bestCombo: 1, xp: 0 };
+  // coachDone: the field coach has walked this pilot through the loop once
+  const ZERO = { games: 0, kills: 0, flags: 0, warlords: 0, bestSector: 1, bestCombo: 1, xp: 0, coachDone: 0 };
   const p = Object.assign({}, ZERO);
   try {
     const raw = JSON.parse(localStorage.getItem('pa_stats') || '{}');
@@ -107,6 +109,11 @@ const Progress = (() => {
       nextName: next ? next[0] : null, nextAt: next ? next[1] : null,
     };
   }
+
+  /* The field coach is a one-time walk. The BRIEFING screen can re-arm it,
+   * which is the only way it comes back. */
+  function coachDone() { return !!p.coachDone; }
+  function setCoachDone(v) { p.coachDone = v ? 1 : 0; save(); }
 
   /* The MARAUDER chassis is earned, not given: down a WARLORD to unlock. */
   function marauderUnlocked() { return p.warlords > 0; }
@@ -203,6 +210,7 @@ const Progress = (() => {
 
   return {
     get: () => p, recordRun, rank, marauderUnlocked, checkpoints,
+    coachDone, setCoachDone,
     todayKey, dailyBest, recordDaily, recordDailyPlayed, dailyStreak,
   };
 })();

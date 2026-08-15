@@ -128,6 +128,7 @@
     over: document.getElementById('screen-over'),
     pause: document.getElementById('screen-pause'),
     settings: document.getElementById('screen-settings'),
+    brief: document.getElementById('screen-brief'),
     records: document.getElementById('screen-records'),
     vsover: document.getElementById('screen-vsover'),
   };
@@ -184,6 +185,7 @@
     over: makeMenu(screens.over, 'bt-retry'),
     pause: makeMenu(screens.pause, 'bt-resume'),
     settings: makeMenu(screens.settings, 'st-volume'),
+    brief: makeMenu(screens.brief, 'bt-brief-back'),
     records: makeMenu(screens.records, 'bt-records-back'),
     vsover: makeMenu(screens.vsover, 'bt-vs-again'),
     // the TECH draft overlay lives outside the screens map: it can float
@@ -1164,7 +1166,7 @@
 
   function inMenu() {
     return uiMode === 'title' || uiMode === 'setup' || uiMode === 'lobby' || uiMode === 'join' ||
-      uiMode === 'settings' || uiMode === 'records';   // reachable only from the
+      uiMode === 'settings' || uiMode === 'records' || uiMode === 'brief';   // reachable only from the
       // title screen — keep the demo battlefield (not a stale, shake-jittering
       // camera on the last run's corpse) behind those panels too
   }
@@ -1686,6 +1688,7 @@
     { key: 'quality', max: 1, labels: ['LOW', 'HIGH'] },
     { key: 'crt', bool: true },
     { key: 'aimAssist', bool: true },
+    { key: 'coach', bool: true },
     { key: 'colorblind', bool: true },
     { key: 'fps', bool: true },
   ];
@@ -1723,6 +1726,23 @@
     const id = menus.settings.focusedId();
     if (!id || id.indexOf('st-') !== 0) return;
     adjustSetting(id.slice(3), dir, false);
+  }
+
+  // ---- briefing screen -------------------------------------------------------
+  /* The re-readable half of onboarding: the field coach teaches the loop once
+   * in a live sector, this explains the systems behind it whenever asked. */
+  function renderBriefCoach() {
+    const armed = Settings.get('coach') && !Progress.coachDone();
+    // one row, two jobs: it reports whether the next sortie gets the walk,
+    // and when it doesn't, tapping it arms one
+    document.getElementById('stv-brief-coach').textContent =
+      armed ? 'FIELD COACH ARMED FOR NEXT SORTIE' : 'REPLAY FIELD COACH';
+  }
+  function openBriefing() {
+    uiMode = 'brief';
+    renderBriefCoach();
+    screens.brief.querySelector('.brief-body').scrollTop = 0;
+    showScreen('brief');
   }
 
   // ---- service record screen -------------------------------------------------
@@ -1775,6 +1795,7 @@
         if (Input.consume('KeyH')) { enterLobbyAsHost(); break; }
         if (Input.consume('KeyJ')) { enterJoin(); break; }
         if (Input.consume('KeyD')) { startDaily(); break; }
+        if (Input.consume('KeyB')) { openBriefing(); break; }
         menuKeys('title');
         break;
 
@@ -1804,6 +1825,11 @@
         if (Input.consume('ArrowLeft') || Input.consume('KeyA')) adjustFocusedSetting(-1);
         if (Input.consume('ArrowRight') || Input.consume('KeyD')) adjustFocusedSetting(1);
         menuKeys('settings');
+        if (Input.consume('Escape')) { uiMode = 'title'; showScreen('title'); }
+        break;
+
+      case 'brief':
+        menuKeys('brief');
         if (Input.consume('Escape')) { uiMode = 'title'; showScreen('title'); }
         break;
 
@@ -1861,6 +1887,15 @@
   bind('bt-join', enterJoin);
   bind('bt-settings', () => { uiMode = 'settings'; renderSettingVals(); showScreen('settings'); });
   bind('bt-records', () => { uiMode = 'records'; fillRecords(); showScreen('records'); });
+  bind('bt-brief', () => openBriefing());
+  bind('bt-brief-back', () => { uiMode = 'title'; showScreen('title'); });
+  bind('bt-brief-coach', () => {
+    // arming the coach is the only way it comes back once it has retired —
+    // and it needs the setting on too, or the next run would silently ignore it
+    Progress.setCoachDone(false);
+    Settings.set('coach', true);
+    renderBriefCoach();
+  });
   bind('bt-settings-back', () => { uiMode = 'title'; showScreen('title'); });
   bind('bt-records-back', () => { uiMode = 'title'; showScreen('title'); });
   bind('bt-setup-back', () => { uiMode = 'title'; showScreen('title'); });

@@ -105,6 +105,7 @@ class HUD {
     this._bars(ctx, W, H, s, game);
     this._objective(ctx, W, H, s, game);
     this._combo(ctx, W, H, s, game);
+    this._coach(ctx, W, H, s, game);
     this._scorePops(ctx, W, H, s, dt);
     this._touchControls(ctx, game);
     this._renderMessages(ctx, W, H, s, dt);
@@ -302,6 +303,52 @@ class HUD {
         b.paid ? '✓ BOUNTY PAID' : 'BOUNTY: ' + b.name + '  ' + b.prog + '/' + b.n,
         W / 2, topY + 30 * s);
     }
+  }
+
+  /* FIELD COACH card: the current lesson, low and centered so it reads like
+   * a mission prompt rather than a modal. It never covers the crosshair, the
+   * radar or the bars, and it is gone the moment the walk is done. The step
+   * title flashes green on completion — the tick IS the teaching, because it
+   * confirms which of the things you just did was the one being asked for. */
+  _coach(ctx, W, H, s, game) {
+    const c = game.coach && game.coach.card;
+    if (!c) return;
+    const touch = typeof Input !== 'undefined' && Input.touchUI && Input.touchUI().mode;
+    const hint = (touch && c.touch) || c.hint;
+    const flash = c.flash || 0;
+    const y = H - 116 * s;
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    // measure the wider of the two lines so the rule under the title matches
+    ctx.font = `${Math.round(11 * s)}px "Courier New", monospace`;
+    const hintW = ctx.measureText(hint).width;
+    const bw = Math.min(W * 0.86, hintW + 40 * s);
+
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = 'rgba(4, 16, 13, 0.82)';
+    ctx.fillRect(W / 2 - bw / 2, y - 22 * s, bw, 42 * s);
+    ctx.globalAlpha = 1;
+
+    const col = flash > 0 ? '#3cff78' : '#4fd6bb';
+    ctx.strokeStyle = flash > 0 ? 'rgba(60,255,120,0.9)' : 'rgba(79,214,187,0.45)';
+    ctx.lineWidth = Math.max(1, s);
+    ctx.beginPath();
+    ctx.moveTo(W / 2 - bw / 2, y - 22 * s); ctx.lineTo(W / 2 - bw / 2, y + 20 * s);
+    ctx.moveTo(W / 2 + bw / 2, y - 22 * s); ctx.lineTo(W / 2 + bw / 2, y + 20 * s);
+    ctx.stroke();
+
+    ctx.font = `bold ${Math.round(13 * s)}px "Courier New", monospace`;
+    ctx.fillStyle = col;
+    ctx.shadowColor = col;
+    ctx.shadowBlur = 10 * (flash > 0 ? 1.6 : 1);
+    ctx.fillText(c.title, W / 2, y - 8 * s);
+    ctx.shadowBlur = 0;
+
+    ctx.font = `${Math.round(11 * s)}px "Courier New", monospace`;
+    ctx.fillStyle = 'rgba(180, 240, 225, 0.85)';
+    ctx.fillText(hint, W / 2, y + 10 * s);
+    ctx.restore();
   }
 
   /* Kill-chain multiplier under the crosshair, with its decay timer. */

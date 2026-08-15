@@ -476,11 +476,27 @@ class Game {
     this._hintSpike = false;
     this._hintSpotted = false;
     this._hintAmbush = false;
+    // FIELD COACH: solo campaign only, and only until the pilot has walked
+    // the loop once. Co-op joiners run somebody else's sim and daily runs are
+    // a scoreboard, not a lesson — neither wants a card on screen.
+    this.coach = null;
+    if (typeof Coach !== 'undefined' && !this.versus && !this.dailySeed &&
+        defs.length === 1 && !opts.noCoach && this._coachWanted()) {
+      this.coach = new Coach();
+    }
     this.players = defs.map((d, i) => this._makePlayer(d, i));
     for (const p of this.players) this.killCounts[p.id] = 0;
     this.localId = localId != null ? localId : this.players[0].id;
     this.player = this.players.find((p) => p.id === this.localId) || this.players[0];
     this.startLevel();
+  }
+
+  /* Should the coach run? Off if the pilot switched it off, or if they have
+   * already been walked through the loop once. Absent Settings/Progress (the
+   * headless suites) it stays off so tests drive a bare sim. */
+  _coachWanted() {
+    if (typeof Settings === 'undefined' || typeof Progress === 'undefined') return false;
+    return !!Settings.get('coach') && !Progress.coachDone();
   }
 
   _anyAlive() {
@@ -604,9 +620,11 @@ class Game {
     }
     RNG = Math.random;   // seeded window ends with generation
     this.mode = 'playing';
+    if (this.coach) this.coach.resetLevel();
     // first sector of a fresh campaign: spell out the two rules that changed
-    // everything — you are invisible until seen, and zones spike on contact
-    if (!this.versus && !this.bossLevel && L === 1) {
+    // everything — you are invisible until seen, and zones spike on contact.
+    // With the coach up these are its first two lessons, so don't say it twice.
+    if (!this.versus && !this.bossLevel && L === 1 && !this.coach) {
       this.hud.message('YOU ARE THE PHANTOM — STAY SLOW AND COLD, STRIKE FIRST', '#4fd6bb', 4);
       this.hud.message('CLIP A ZONE RING TO SPIKE IT — THE HACK FINISHES ITSELF', '#8ecbff', 3.4);
     }
@@ -946,6 +964,10 @@ class Game {
     this._updateTreads(dt);
 
     for (const f of this.flags) f.spin += dt * 2.2;
+
+    // the coach reads the finished frame, so its "you did it" lands the same
+    // tick as the thing it was asking for
+    if (this.coach) this.coach.update(this, dt);
 
     if (this.versus) {
       this._updateVersus(dt);
@@ -3191,6 +3213,9 @@ class Game {
     this.score += this.levelBonus;
     this.pot = 0;
     if (this.levelUntouched) this._medal('untouchable');
+    // a cleared sector IS the walk: whatever the pilot skipped, they got
+    // through it, so the coach retires rather than nagging into sector 2
+    if (this.coach) this.coach.finish(this);
     this._rollGates();
     this.mode = 'levelclear';
     this._sfx('levelClear');

@@ -307,6 +307,41 @@ body.touch-ui .mbtn { padding: 10px 20px; }
   text-shadow: 0 0 8px rgba(232, 199, 90, 0.5);
 }
 
+/* ---------- briefing ---------- */
+/* The manual, in the game. Long enough to need scrolling on a phone, so the
+ * body scrolls inside the panel and the buttons stay pinned under it. */
+.brief-body {
+  width: 100%;
+  max-height: 58vh;
+  overflow-y: auto;
+  touch-action: pan-y;
+  scrollbar-width: thin;
+  display: flex; flex-direction: column; gap: 15px;
+  text-align: left;
+  padding-right: 6px;
+}
+.brief-sec { display: flex; flex-direction: column; gap: 5px; }
+.brief-h {
+  font-size: 12px; font-weight: bold; letter-spacing: 3px;
+  color: var(--teal-bright);
+  text-shadow: 0 0 8px rgba(79, 214, 187, 0.45);
+}
+.brief-body p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.65;
+  letter-spacing: 0.6px;
+  color: rgba(168, 226, 212, 0.86);
+}
+.brief-body b { color: #e8c75a; font-weight: bold; }
+.brief-body i { color: var(--teal-bright); font-style: normal; }
+.brief-keys {
+  display: flex; flex-wrap: wrap; gap: 5px 16px;
+  font-size: 11px; letter-spacing: 1px;
+  color: rgba(168, 226, 212, 0.8);
+}
+.brief-keys b { color: var(--teal-bright); }
+
 /* ---------- service record ---------- */
 .records-list {
   display: flex; flex-direction: column; gap: 7px;
