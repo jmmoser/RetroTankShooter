@@ -140,3 +140,39 @@ check('1500-frame combat soak with alarm and reinforcements', () => {
     else break;
   }
 });
+
+check('a ram-kill chain cannot walk the boom loop off the end of the array', () => {
+  // Ram-killing a rusher runs its chain-pop, which splices `enemies` while the
+  // boom resolution is still walking it. A knot of rushers all in ram range
+  // shrinks the array from N to 0 inside one iteration, and an index loop then
+  // reads `undefined._boom` on the next step — a hard throw out of the game
+  // loop. Collect-by-reference is what makes this survivable.
+  const g = new Game(fakeHud());
+  g.newRun([{ id: 'solo', loadoutIndex: 1 }], 'solo', {});
+  g.obstacles.length = 0;
+  const p = g.player;
+  p.x = 0; p.z = 0;
+  // boosting above the ram threshold, so contact resolves as 'ram' not 'det'.
+  // _updateEnemies is driven directly: update() would run _updatePlayer first
+  // and recompute p.boosting from the (empty) input before the booms resolve.
+  p.boosting = true;
+  p.vx = p.maxSpeed * 1.4; p.vz = 0;
+  g.enemies.length = 0;
+  // a tight knot: every one is inside ram range of the player AND inside the
+  // 6-unit chain radius of every other, so one ram deletes all of them
+  for (let i = 0; i < 6; i++) {
+    g._spawnEnemy('rusher', 0.6 + i * 0.5, 0.6, true);
+    g.enemies[i].hp = 5;              // well inside the 40-damage chain
+  }
+  g._updateEnemies(1 / 60);
+  assert(g.enemies.every((e) => e.type !== 'rusher'), 'the knot survived the ram');
+});
+
+check('killing an index that a chain already removed is a no-op, not a throw', () => {
+  const g = new Game(fakeHud());
+  g.newRun([{ id: 'solo', loadoutIndex: 1 }], 'solo', {});
+  g.enemies.length = 0;
+  g._killEnemy(0, 'solo', 'cannon');
+  g._killEnemy(99, 'solo', 'cannon');
+  assert(g.enemies.length === 0, 'phantom kills mutated the roster');
+});

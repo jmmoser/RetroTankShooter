@@ -82,6 +82,26 @@ const AMBUSH_MUL = 3;      // cannon damage vs a hull that never saw you — the
 const ALERT_RADIUS = 45;   // an alerted hull radios packmates this close
 const EXIT_RADIUS = 13;    // extraction gate: cross the ring to warp out
 
+/* Losing a hunt. Getting seen has to be a setback you can PLAY OUT OF, not a
+ * one-way door into a shooting gallery — otherwise "break line of sight and
+ * run cold" is a sentence in a manual rather than a move.
+ *
+ * An alerted hull is actively looking, so it re-acquires further than a bored
+ * patrol scanning its route: REACQUIRE_MUL times its live senseRange against
+ * your CURRENT signature, floored so nobody is invisible at point-blank. The
+ * key part is that it scales with signature at all — a hunter that holds
+ * contact at the same range whether you are redlining or coasting cold makes
+ * the throttle meaningless the moment the alarm goes up.
+ *
+ * A hull that has had nothing for LOSE_CONTACT seconds gives up its lock and
+ * drops back to searching the last place it had you. That is what drains a
+ * pack one hull at a time instead of leaving the whole sector permanently
+ * awake, and it is what lets the sector alarm ever time out. */
+const LOSE_CONTACT = 6;    // seconds of nothing before a hunter breaks lock
+const PRESSURE_GRACE = 3;  // seconds of no contact before converge waves stop
+const REACQUIRE_MUL = 1.35;
+const REACQUIRE_MIN = 0.45; // ...times raw sight: the floor nobody sneaks past
+
 /* Campaign difficulty presets (SETTINGS → DIFFICULTY). dmg scales what
  * enemies do to the squad, pressure stretches/shrinks the spawn-pressure
  * timer, potSpill is the pot fraction KEPT after a hit, waves trims the
@@ -151,9 +171,9 @@ const LOADOUTS = [
 // boosting tank turns every engagement into a kite, which is slow. These
 // close the gap enough that disengaging is a decision, not a formality.
 const ENEMY_TYPES = {
-  drone:     { hp: 60,  speed: 17, turn: 1.8, fireRange: 95,  fireCd: 2.0, score: 150, shotSpeed: 56, dmg: 14, lead: 0,   sight: 55 },
+  drone:     { hp: 60,  speed: 17, turn: 1.8, fireRange: 95,  fireCd: 2.0, score: 150, shotSpeed: 56, dmg: 14, lead: 0.3, sight: 55 },
   rusher:    { hp: 22,  speed: 31, turn: 3.6, fireRange: 0,   fireCd: 9,   score: 100, shotSpeed: 0,  dmg: 30, lead: 0,   sight: 45 },
-  hunter:    { hp: 85,  speed: 26, turn: 2.6, fireRange: 70,  fireCd: 1.4, score: 300, shotSpeed: 64, dmg: 18, lead: 0.8, sight: 70 },
+  hunter:    { hp: 85,  speed: 26, turn: 2.6, fireRange: 70,  fireCd: 1.4, score: 300, shotSpeed: 64, dmg: 18, lead: 0.7, sight: 70 },
   sniper:    { hp: 75,  speed: 9,  turn: 1.3, fireRange: 160, fireCd: 3.0, score: 400, shotSpeed: 92, dmg: 26, lead: 0.9, sight: 150 },
   phantom:   { hp: 110, speed: 23, turn: 2.4, fireRange: 100, fireCd: 2.1, score: 600, shotSpeed: 72, dmg: 22, lead: 0.8, sight: 85, cloaks: true },
   // counterplay hulls: reading the fight matters more than holding fire
@@ -225,6 +245,21 @@ function senseRange(type, sig) {
   return spec.sight * (0.35 + 0.65 * (sig != null ? sig : 1));
 }
 
+/* The other half of a patrol's senses, and the half that used to be a trap:
+ * inside this radius the vision cone stops mattering — a hull notices a tank
+ * that close no matter which way it is facing, because it can hear the
+ * thing. The cone is what it is LOOKING at; this is what it is standing in.
+ *
+ * It was invisible. Every display the game had — the floor cone, its
+ * boundary, the radar wedge — drew the cone and nothing else, while the sim
+ * detected on cone OR this. Routing perfectly around every cone drawn on the
+ * floor and still getting made ten times a run is not a difficulty problem,
+ * it is a lying-HUD problem, so this is drawn now too and scales with
+ * signature the same way everything else does. */
+function senseNear(sig) {
+  return 9 + (sig != null ? sig : 1) * 16;
+}
+
 function fwdX(a) { return -Math.sin(a); }
 function fwdZ(a) { return -Math.cos(a); }
 function angleTo(dx, dz) { return Math.atan2(-dx, -dz); }
@@ -279,6 +314,15 @@ function freshRunStats() {
   return {
     kills: 0, flags: 0, warlords: 0, bestMult: 1,
     localKills: 0, nadeKills: 0, mineKills: 0, silentKills: 0,
+    // the debrief: a stealth run is not summarised by a score. These are the
+    // numbers the game actually plays for, and the ones a player has to see to
+    // get better at it.
+    playT: 0,          // seconds of live sector time
+    undetectedT: 0,    // ...of which nobody had even a suspicion
+    huntedT: 0,        // ...of which the sector alarm was up
+    ghosts: 0,         // ghost extractions (cleared, never detected)
+    deathBy: null,     // what finally did it
+    deathHunted: false,// ...and whether the grid had you at the time
   };
 }
 
@@ -332,6 +376,12 @@ class Game {
     this.noises = [];      // one-frame noise events: { x, z, r, mag }
     this.alarmT = 0;       // >0: the grid is hunting (seconds of hunt left)
     this.suspicion = false; // any patrol currently investigating (HUD tell)
+    this.exposure = null;  // { level, x, z, rate }: a hull with live eyes on
+                           // the LOCAL tank and how full its meter is
+    this.hunted = false;   // an ALERTED hull has contact this frame — the
+                           // difference between "they're hunting" and
+                           // "they've lost you and the clock is running"
+    this.contactT = 999;   // seconds since the grid last had eyes on the squad
     this.everAlarmed = false; // the alarm went off at least once this sector
     this.ghostRun = false; // extraction reached with the alarm never raised
     this.exit = null;      // extraction gate { x, z } once the uplinks fall
@@ -476,11 +526,36 @@ class Game {
     this._hintSpike = false;
     this._hintSpotted = false;
     this._hintAmbush = false;
+    // FIELD COACH: solo campaign only, and only until the pilot has walked
+    // the loop once. Co-op joiners run somebody else's sim and daily runs are
+    // a scoreboard, not a lesson — neither wants a card on screen.
+    this.coach = null;
+    if (typeof Coach !== 'undefined' && !this.versus && !this.dailySeed &&
+        defs.length === 1 && !opts.noCoach && this._coachWanted()) {
+      this.coach = new Coach();
+    }
     this.players = defs.map((d, i) => this._makePlayer(d, i));
     for (const p of this.players) this.killCounts[p.id] = 0;
     this.localId = localId != null ? localId : this.players[0].id;
     this.player = this.players.find((p) => p.id === this.localId) || this.players[0];
+    // FIELD PROMOTION: rank banks tech before the first shot, so a veteran's
+    // sortie opens with a draft instead of the same blank slate as run one.
+    // Solo campaign only — Daily Ops is a shared leaderboard, and in co-op the
+    // host's rank must not silently arm everybody else's tank.
+    this.startTech = 0;
+    if (!this.versus && !this.dailySeed && defs.length === 1 &&
+        typeof Progress !== 'undefined' && Progress.startingTech) {
+      this.startTech = Progress.startingTech();
+    }
     this.startLevel();
+  }
+
+  /* Should the coach run? Off if the pilot switched it off, or if they have
+   * already been walked through the loop once. Absent Settings/Progress (the
+   * headless suites) it stays off so tests drive a bare sim. */
+  _coachWanted() {
+    if (typeof Settings === 'undefined' || typeof Progress === 'undefined') return false;
+    return !!Settings.get('coach') && !Progress.coachDone();
   }
 
   _anyAlive() {
@@ -526,6 +601,8 @@ class Game {
     this.levelTime = 0;
     this.noises.length = 0;
     this.suspicion = false;
+    this.hunted = false;
+    this.contactT = 999;
     this.exit = null;
     this.ghostRun = false;
     // boss sectors are set-piece fights: the WARLORD's grid is already
@@ -586,7 +663,7 @@ class Game {
         if (pos) this._spawnEnemy(i % 2 === 0 ? 'hunter' : 'drone', pos[0], pos[1]);
       }
       this._sfx('alarm');
-      this.hud.message('WARLORD DETECTED — DESTROY IT', '#ff4a3c', 3.5);
+      this.hud.message('WARLORD DETECTED — DESTROY IT', '#ff4a3c', 3.5, 'alert');
     } else {
       // objectives are a route, not a checklist: the count tops out at five
       // so a late sector is a fast loop through the grid, not a ten-stop
@@ -604,19 +681,29 @@ class Game {
     }
     RNG = Math.random;   // seeded window ends with generation
     this.mode = 'playing';
+    // ...paid out on the opening sector, once, through the normal tech path so
+    // the draft, its timer and its auto-install all behave exactly as usual
+    if (this.startTech > 0 && !this.startTechPaid) {
+      this.startTechPaid = true;
+      const p = this.player;
+      let owed = 0;
+      for (let i = 0; i < this.startTech; i++) owed += p.techNext + i * 34;
+      this._awardTech(p, owed);
+    }
+    if (this.coach) this.coach.resetLevel();
     // first sector of a fresh campaign: spell out the two rules that changed
-    // everything — you are invisible until seen, and zones spike on contact
-    if (!this.versus && !this.bossLevel && L === 1) {
+    // everything — you are invisible until seen, and zones spike on contact.
+    // With the coach up these are its first two lessons, so don't say it twice.
+    if (!this.versus && !this.bossLevel && L === 1 && !this.coach) {
       this.hud.message('YOU ARE THE PHANTOM — STAY SLOW AND COLD, STRIKE FIRST', '#4fd6bb', 4);
       this.hud.message('CLIP A ZONE RING TO SPIKE IT — THE HACK FINISHES ITSELF', '#8ecbff', 3.4);
     }
     if (this.mutator) {
       const m = MUTATORS.find((x) => x.id === this.mutator);
-      if (m) this.hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3);
+      if (m) this.hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3, 'chatter');
     }
-    if (this.bounty) {
-      this.hud.message('BOUNTY: ' + this.bounty.name, '#e8c75a', 2.4);
-    }
+    // no bounty toast: _objective already prints it under the radar, live,
+    // with its progress, for the whole sector. Saying it twice is noise.
   }
 
   /* Where tanks deploy: the home corridor in the campaign, spread corners in
@@ -872,7 +959,11 @@ class Game {
       // stealth: patrols start blind; sense fills as they see/hear you
       sense: alerted || this.bossLevel ? 1 : 0,
       alerted: !!alerted || this.bossLevel,
-      seenT: 999,                 // seconds since this hull last had contact
+      // seconds since this hull last had contact. A wave warps in already
+      // hunting, so it starts with a full LOSE_CONTACT window to search with
+      // rather than the never-had-contact sentinel, which would expire on
+      // arrival and hand the player a free stand-down.
+      seenT: alerted ? 0 : 999,
       invX: x, invZ: z, invT: 0,  // investigation point + time left searching
       // per-type maneuver state: hunters weave between flanking arcs and
       // lunges, snipers relocate after every shot, drones regroup when hurt
@@ -883,6 +974,48 @@ class Game {
     });
   }
 
+  /* What a sector is MADE of. This used to be a stack of modulo rules
+   * (`if (L >= 2 && i % 3 === 1) type = 'hunter'`) evaluated in order, so a
+   * slot's type depended on which later rule happened to overwrite it — and
+   * retiring one rule silently promoted its slots to whatever matched next.
+   * Composition is a difficulty curve, so it is written down as one.
+   *
+   * `from` is the sector a type first appears; `n` is how many that sector
+   * gets. Everything not claimed by a special is a drone, and drones never
+   * fall below a third of the sector — they are the readable baseline the
+   * other types are read against. */
+  _roster(L, total) {
+    // One new hull type per sector, all the way up. Sectors 5 and 10 are
+    // WARLORD sectors and field no roster, so the debuts step around them.
+    const SPECIALS = [
+      { type: 'hunter',    from: 2, n: (l) => 1 + Math.floor((l - 2) / 3) },
+      { type: 'rusher',    from: 3, n: (l) => 1 + Math.floor((l - 3) / 3) },
+      { type: 'shellback', from: 4, n: (l) => 1 + Math.floor((l - 4) / 4) },
+      { type: 'sniper',    from: 6, n: (l) => 1 + Math.floor((l - 6) / 4) },
+      { type: 'warden',    from: 7, n: (l) => 1 + Math.floor((l - 7) / 5) },
+      { type: 'phantom',   from: 8, n: (l) => 1 + Math.floor((l - 8) / 4) },
+    ];
+    const out = [];
+    // the drone floor thins out as the campaign goes deep: early sectors want
+    // a readable baseline to measure the specials against, sector 10 wants the
+    // specials to BE the sector
+    const floorFrac = L >= 9 ? 0.12 : L >= 7 ? 0.22 : 1 / 3;
+    const budget = Math.max(0, total - Math.max(1, Math.ceil(total * floorFrac)));
+    // one of each first, then depth — a sector reads as "these types, some of
+    // them doubled" rather than "four of whatever came first in the list"
+    for (let pass = 0; ; pass++) {
+      let added = false;
+      for (const sp of SPECIALS) {
+        if (L < sp.from || pass >= sp.n(L)) continue;
+        added = true;
+        if (out.length < budget) out.push(sp.type);
+      }
+      if (!added || out.length >= budget) break;
+    }
+    while (out.length < total) out.push('drone');
+    return out;
+  }
+
   _genEnemies() {
     // enough hulls that the sector always has something to run into: with
     // fewer zones to visit, patrol density is what keeps a sector eventful
@@ -890,14 +1023,7 @@ class Game {
     let total = Math.min(5 + Math.floor(L * 1.1), 12);
     if (this.mutator === 'swarm') total += 3;        // thin hulls, more of them
     if (this.mutator === 'gauntlet') total -= 2;     // all elites — fewer, harder
-    for (let i = 0; i < total; i++) {
-      let type = 'drone';
-      if (L >= 2 && i % 3 === 1) type = 'hunter';
-      if (L >= 4 && i % 4 === 2) type = 'sniper';
-      if (L >= 5 && i % 5 === 3) type = 'phantom';
-      if (L >= 2 && i % 5 === 4) type = 'rusher';
-      if (L >= 3 && i % 6 === 5) type = 'shellback';
-      if (L >= 4 && i % 7 === 3) type = 'warden';
+    for (const type of this._roster(L, total)) {
       const pos = this._findSpot(4, 65);
       if (!pos) continue;
       this._spawnEnemy(type, pos[0], pos[1]);
@@ -929,6 +1055,9 @@ class Game {
     for (const p of this.players) this._updatePlayer(p, dt);
     if (!this.versus) {
       this.levelTime += dt;
+      // last frame's contact result ages here, before _updateEnemies rebuilds
+      // it — so pressure and the HUD read the same number the sim just proved
+      this.contactT = this.hunted ? 0 : this.contactT + dt;
       this._updatePressure(dt);
       this._updateZones(dt);
       this._updateEnemies(dt);
@@ -946,6 +1075,20 @@ class Game {
     this._updateTreads(dt);
 
     for (const f of this.flags) f.spin += dt * 2.2;
+
+    // the run's stealth timeline, for the debrief. Recorded here rather than
+    // derived later because "how much of that run were you a ghost" is not
+    // recoverable from a final score.
+    if (!this.versus) {
+      const rs = this.runStats;
+      rs.playT += dt;
+      if (this.alarmT > 0) rs.huntedT += dt;
+      else if (!this.suspicion) rs.undetectedT += dt;
+    }
+
+    // the coach reads the finished frame, so its "you did it" lands the same
+    // tick as the thing it was asking for
+    if (this.coach) this.coach.update(this, dt);
 
     if (this.versus) {
       this._updateVersus(dt);
@@ -1015,7 +1158,16 @@ class Game {
       }
       return;
     }
-    if (this.alarmT <= 0) { this.pressureT = Math.min(this.pressureT, 4); return; }
+    // Converge waves need something to converge ON. While the grid has live
+    // contact they keep warping in on your last known position; once every
+    // hunter has lost you they stop, because otherwise the alarm feeds itself:
+    // waves arrive hunting, re-establish contact, re-arm the clock, forever.
+    // That loop is what made "break line of sight and run cold" unplayable —
+    // the hunt could not time out because the sector kept refilling.
+    if (this.alarmT <= 0 || this.contactT > PRESSURE_GRACE) {
+      this.pressureT = Math.min(this.pressureT, 4);
+      return;
+    }
     this.pressureT -= dt;
     if (this.pressureT > 0) return;
     this.pressureT = Math.max(2.8, 7 - this.level * 0.4) *
@@ -1032,8 +1184,10 @@ class Game {
   }
 
   _pressureType() {
-    // rusher-heavy: pressure waves should force movement, not add snipers
-    if (this.level >= 2 && RNG() < 0.4) return 'rusher';
+    // rusher-heavy: pressure waves should force movement, not add snipers.
+    // Not before sector 3 — a converge wave is no place to meet a hull type
+    // for the first time.
+    if (this.level >= 3 && RNG() < 0.4) return 'rusher';
     return this._reinforcementType();
   }
 
@@ -1141,15 +1295,28 @@ class Game {
     this.everAlarmed = true;
     this.pressureT = Math.min(this.pressureT, 2.5);
     this._sfx('alarm');
-    this.hud.message('SPOTTED — THE GRID IS HUNTING', '#ff4a3c', 2.4);
+    this.hud.message('SPOTTED — THE GRID IS HUNTING', '#ff4a3c', 2.4, 'alert');
     if (!this._hintSpotted) {
       this._hintSpotted = true;
-      this.hud.message('BREAK LINE OF SIGHT AND RUN COLD TO SHAKE THEM', '#ffd24a', 3.2);
+      this.hud.message('BREAK LINE OF SIGHT AND RUN COLD TO SHAKE THEM', '#ffd24a', 3.2, 'alert');
     }
   }
 
   /* The alarm ran out: hunters fall back to searching the last known
    * position, and the sector goes quiet again. */
+  /* One hull gives up its lock: back to searching the last place it had you,
+   * jumpy rather than blind. This is _standDown's per-hull half — the pack
+   * drains through here, and the sector alarm times out once the last one has
+   * been through it. */
+  _loseContact(e) {
+    e.alerted = false;
+    e.seenT = 999;
+    e.sense = SENSE_SUS + 0.2;
+    e.invX = this.lastKnownX + rand(-14, 14);
+    e.invZ = this.lastKnownZ + rand(-14, 14);
+    e.invT = rand(6, 10);
+  }
+
   _standDown() {
     this.alarmT = 0;
     let any = false;
@@ -1164,7 +1331,7 @@ class Game {
     }
     if (any) {
       this._sfx('cloak');
-      this.hud.message('CONTACT LOST — YOU ARE A GHOST AGAIN', '#4fd6bb', 2.4);
+      this.hud.message('CONTACT LOST — YOU ARE A GHOST AGAIN', '#4fd6bb', 2.4, 'alert');
     }
   }
 
@@ -1187,7 +1354,7 @@ class Game {
       if (p.pendingOffers) p.pendingLevels++;
       else this._rollOffers(p);
       if (p.id === this.localId && p.pendingOffers) {
-        this.hud.message('TECH LEVEL ' + p.techLvl + ' — CHOOSE UPGRADE', '#ffd24a', 2.2);
+        this.hud.message('TECH LEVEL ' + p.techLvl + ' — CHOOSE UPGRADE', '#ffd24a', 2.2, 'alert');
         AudioSys.play('unlock');
       }
     }
@@ -1229,7 +1396,7 @@ class Game {
     }
     const def = UPGRADES.find((u) => u.id === upgradeId);
     if (p.id === this.localId && def) {
-      this.hud.message(def.name + ' ONLINE', '#ffd24a', 1.8);
+      this.hud.message(def.name + ' ONLINE', '#ffd24a', 1.8, 'chatter');
       AudioSys.play('powerup');
     }
     return true;
@@ -1267,7 +1434,7 @@ class Game {
       }
       if (queued > 0) {
         this._sfx('warp');
-        this.hud.message('GRID SUSPICION RISING — FRESH PATROLS INBOUND', '#ffd24a', 2.2);
+        this.hud.message('GRID SUSPICION RISING — FRESH PATROLS INBOUND', '#ffd24a', 2.2, 'alert');
       }
     }
   }
@@ -1292,7 +1459,7 @@ class Game {
     this.pressureT = Math.min(this.pressureT, 2);
     for (const e of this.enemies) { e.alerted = true; e.sense = 1; e.seenT = 0; }
     this._sfx('alarm');
-    this.hud.message('UPLINK COMPLETE — REACH THE EXTRACTION GATE', '#4fd6bb', 3.2);
+    this.hud.message('UPLINK COMPLETE — REACH THE EXTRACTION GATE', '#4fd6bb', 3.2, 'alert');
   }
 
   /* Sector clear condition: every living tank inside the gate ring. */
@@ -1309,12 +1476,14 @@ class Game {
   _reinforcementType() {
     const L = this.level, r = RNG();
     if (this.mutator === 'swarm') return r < 0.6 ? 'rusher' : 'drone';
-    if (L >= 5 && r < 0.15) return 'phantom';
-    if (L >= 4 && r < 0.28) return 'sniper';
-    if (L >= 4 && r < 0.38) return 'warden';
-    if (L >= 3 && r < 0.52) return 'shellback';
+    // waves mirror the roster's debut sectors — a converge wave is no place
+    // to meet a hull type for the first time
+    if (L >= 8 && r < 0.15) return 'phantom';
+    if (L >= 6 && r < 0.28) return 'sniper';
+    if (L >= 7 && r < 0.38) return 'warden';
+    if (L >= 4 && r < 0.52) return 'shellback';
     if (L >= 2 && r < 0.72) return 'hunter';
-    if (L >= 2 && r < 0.86) return 'rusher';
+    if (L >= 3 && r < 0.86) return 'rusher';
     return 'drone';
   }
 
@@ -1352,7 +1521,7 @@ class Game {
     const mult = c >= 8 ? 5 : c >= 5 ? 4 : c >= 3 ? 3 : c >= 2 ? 2 : 1;
     if (mult > this.mult) {
       this._sfx('combo');
-      this.hud.message('COMBO ×' + mult, '#ffd24a', 1.4);
+      this.hud.message('COMBO ×' + mult, '#ffd24a', 1.4, 'chatter');
     }
     if (mult >= 4) this._bountyTick('mult');
     if (mult >= 5 && ownerId === this.localId) this._medal('chain5');
@@ -1375,7 +1544,7 @@ class Game {
   _breakCombo() {
     if (this.mult > 1) {
       this._sfx('comboBreak');
-      this.hud.message('COMBO BROKEN', '#ff4a3c', 1.5);
+      this.hud.message('COMBO BROKEN', '#ff4a3c', 1.5, 'chatter');
     }
     this.combo = 0;
     this.comboT = 0;
@@ -1452,7 +1621,7 @@ class Game {
       if (p.fx[fx] === 0) {
         this._sfx('powerdown');
         if (p.id === this.localId) {
-          this.hud.message(POWERUP_TYPES[fx].label + ' EXPIRED', '#4fd6bb', 1.4);
+          this.hud.message(POWERUP_TYPES[fx].label + ' EXPIRED', '#4fd6bb', 1.4, 'chatter');
         }
       }
     }
@@ -1564,6 +1733,41 @@ class Game {
         // by how hard you're pointed into it — a light graze is nearly free
         const into = Math.max(0, -(fwdX(p.angle) * nx + fwdZ(p.angle) * nz));
         p.speed *= Math.max(0, 1 - 2.5 * into * dt);
+
+        // WALL SLIDE. Dead-on into a flat face there is no tangential
+        // component to keep, so removing the normal one leaves nothing: the
+        // hull welds itself to the slab at zero velocity and full throttle,
+        // indefinitely, with no feedback. Measured at 9.6s and still going —
+        // in a game whose stated pillar is that momentum is everything, and
+        // in a stealth game where sitting still is how you die.
+        //
+        // The blocked throttle gets somewhere to go: a shove along the face,
+        // toward whichever side the hull is already easing (its own tangential
+        // drift first, then its facing, then a committed side so a perfectly
+        // square hit picks one instead of dithering). The hull still points
+        // where you steer — only the velocity slides, which is the model this
+        // file uses everywhere else.
+        // The trigger is the OUTCOME, not the angle: whenever the throttle is
+        // pushing into a surface and almost none of it is coming out along
+        // that surface, top the tangential component up. A shallow graze
+        // already carries most of its speed along the face, so `want` is
+        // already satisfied and nothing is added — this only ever fires where
+        // the hull would otherwise stall. Scaling by `into` keeps the assist
+        // proportional to how blocked the hull actually is, so it covers a
+        // corner (two normals, ~45 degrees) as well as a flat face.
+        const tx = -nz, tz = nx;
+        const tang = p.vx * tx + p.vz * tz;
+        const want = Math.abs(p.speed) * 0.5 * into;
+        if (into > 0.35 && Math.abs(tang) < want) {
+          let dir = Math.abs(tang) > 0.05 ? Math.sign(tang)
+            : Math.sign(fwdX(p.angle) * tx + fwdZ(p.angle) * tz);
+          if (!dir) dir = (p.wallSide || (p.wallSide = RNG() < 0.5 ? -1 : 1));
+          const add = want - Math.abs(tang);
+          p.vx += tx * dir * add;
+          p.vz += tz * dir * add;
+        } else {
+          p.wallSide = 0;   // moving along the face again: forget the side
+        }
       }
     }
 
@@ -1634,7 +1838,7 @@ class Game {
             p.heat = p.maxHeat;
             p.overheatT = OVERHEAT_LOCK;
             this._sfx('lowShield');
-            if (isLocal) this.hud.message('OVERHEAT — COOLING', '#ff4a3c', 1.6);
+            if (isLocal) this.hud.message('OVERHEAT — COOLING', '#ff4a3c', 1.6, 'alert');
           }
         }
         const shotAngle = this._aimAssist(p);
@@ -1688,7 +1892,7 @@ class Game {
       } else {
         p.nadeCd = 0.4;
         this._sfx('select');
-        if (isLocal) this.hud.message('NO GRENADES', '#ff4a3c', 1.2);
+        if (isLocal) this.hud.message('NO GRENADES', '#ff4a3c', 1.2, 'chatter');
       }
     }
 
@@ -1707,14 +1911,14 @@ class Game {
       } else {
         p.mineCd = 0.4;
         this._sfx('select');
-        if (isLocal) this.hud.message('NO MINES', '#ff4a3c', 1.2);
+        if (isLocal) this.hud.message('NO MINES', '#ff4a3c', 1.2, 'chatter');
       }
     }
 
     if (isLocal) {
       if (p.shields <= p.maxShields * 0.25 && !p.lowWarned) {
         p.lowWarned = true;
-        this.hud.message('SHIELDS CRITICAL', '#ff4a3c', 2.5);
+        this.hud.message('SHIELDS CRITICAL', '#ff4a3c', 2.5, 'alert');
         this._sfx('lowShield');
       }
       if (p.shields > p.maxShields * 0.35) p.lowWarned = false;
@@ -1901,7 +2105,11 @@ class Game {
       let seen = false;
       for (const pl of this.players) {
         if (!pl.alive) continue;
-        const r = spec.sight * 1.3;
+        // a hunter's reach still answers to how loud you are: coast cold and
+        // it has to come and look, redline and it holds you across the arena
+        const sig = pl.sig != null ? pl.sig : 1;
+        const r = Math.max(senseRange(e.type, sig) * REACQUIRE_MUL,
+                           spec.sight * REACQUIRE_MIN);
         if (dist2(e.x, e.z, pl.x, pl.z) < r * r && this._losClear(e.x, e.z, pl.x, pl.z)) {
           seen = true;
           this.lastKnownX = pl.x; this.lastKnownZ = pl.z;
@@ -1910,9 +2118,13 @@ class Game {
       }
       if (seen) {
         e.seenT = 0;
+        this.hunted = true;                              // somebody has you NOW
         this.alarmT = Math.max(this.alarmT, dr.alarm);   // fresh contact
       } else {
         e.seenT += dt;
+        // nothing for long enough: drop the lock and go back to searching the
+        // last place it had you. One hull at a time, the pack lets go.
+        if (e.seenT >= LOSE_CONTACT) this._loseContact(e);
       }
       return;
     }
@@ -1923,7 +2135,7 @@ class Game {
         e.invX = n.x; e.invZ = n.z; e.invT = rand(5, 9);
       }
     }
-    let fill = 0, sx = 0, sz = 0;
+    let fill = 0, sx = 0, sz = 0, onLocal = false;
     for (const pl of this.players) {
       if (!pl.alive) continue;
       const d = Math.hypot(pl.x - e.x, pl.z - e.z);
@@ -1931,11 +2143,18 @@ class Game {
       const sightR = senseRange(e.type, sig);
       if (d > sightR) continue;
       const bearing = Math.abs(wrapAngle(angleTo(pl.x - e.x, pl.z - e.z) - e.angle));
-      if (bearing > SIGHT_CONE && d > 9 + sig * 16) continue;   // behind it, and too far to hear
+      if (bearing > SIGHT_CONE && d > senseNear(sig)) continue;   // behind it, and too far to hear
       if (!this._losClear(e.x, e.z, pl.x, pl.z)) continue;
       const f = (0.7 + 2.4 * (1 - d / sightR)) * dr.detect *
         (1 - 0.2 * ((pl.up && pl.up.ghost) || 0));
-      if (f > fill) { fill = f; sx = pl.x; sz = pl.z; }
+      if (f > fill) { fill = f; sx = pl.x; sz = pl.z; onLocal = pl.id === this.localId; }
+    }
+    // EXPOSURE: the one thing a stealth game must never make you guess —
+    // something has eyes on YOU right now, this is how full its meter is,
+    // and this is where it is standing. The HUD draws it as an arc on the
+    // bearing of the hull doing the looking.
+    if (fill > 0 && onLocal && (!this.exposure || e.sense > this.exposure.level)) {
+      this.exposure = { level: Math.min(1, e.sense), x: e.x, z: e.z, rate: fill };
     }
     if (fill > 0) {
       // two-stage meter: the glimpse fills fast, the CONFIRM needs sustained
@@ -1959,6 +2178,8 @@ class Game {
     // sector alert makes survivors faster and more trigger-happy
     const alertMul = 1 + this.alert * 0.4;
     this.suspicion = false;
+    this.hunted = false;    // some alerted hull has eyes on the squad RIGHT NOW
+    this.exposure = null;   // rebuilt each frame by _senseUpdate
     for (const e of this.enemies) {
       const ex0 = e.x, ez0 = e.z;
       const spec = ENEMY_TYPES[e.type];
@@ -1989,6 +2210,20 @@ class Game {
         continue;
       }
 
+      // THE HUNT POINT. An alerted hull that can actually see you chases YOU;
+      // one that has lost you chases the grid's last known contact. Every
+      // hunting branch below steers at this rather than at the player's live
+      // position, which is what makes breaking line of sight mean anything —
+      // omniscient pathing made "run cold and they lose you" unplayable,
+      // because they never needed to see you to find you.
+      const hasEyes = e.alerted && e.seenT < 0.001;
+      const hx = hasEyes || !p ? (p ? p.x : e.x) : this.lastKnownX;
+      const hz = hasEyes || !p ? (p ? p.z : e.z) : this.lastKnownZ;
+      const distH = p ? Math.hypot(hx - e.x, hz - e.z) : Infinity;
+      // arrived at a stale contact and found nothing: sweep on station like an
+      // investigator instead of parking on the spot the player used to be
+      const searching = e.alerted && !hasEyes && distH < 9;
+
       // pick a destination; forceMove keeps a maneuvering tank rolling even
       // when its hull isn't pointed at the player; hold parks the hull
       let tx, tz, forceMove = false, hold = false;
@@ -2011,9 +2246,13 @@ class Game {
           tx = e.x + fwdX(e.angle + 1.3) * 12;
           tz = e.z + fwdZ(e.angle + 1.3) * 12;
         }
+      } else if (searching) {
+        // nothing here — turn on the spot and look
+        tx = e.x + fwdX(e.angle + 1.3) * 12;
+        tz = e.z + fwdZ(e.angle + 1.3) * 12;
       } else if (hunting && e.type === 'rusher') {
         // suicidal commitment: straight at the target, no maneuvering
-        tx = p.x; tz = p.z;
+        tx = hx; tz = hz;
         forceMove = true;
       } else if (e.type === 'warden') {
         // wardens shepherd the pack: hug the nearest packmate and keep the
@@ -2034,7 +2273,7 @@ class Game {
           tx = e.x + fwdX(e.angle) * 12;
           tz = e.z + fwdZ(e.angle) * 12;
         } else if (hunting) {
-          tx = p.x; tz = p.z;
+          tx = hx; tz = hz;
         } else {
           tx = e.wanderX; tz = e.wanderZ;
         }
@@ -2047,13 +2286,13 @@ class Game {
           e.phaseT = e.phase === 'lunge' ? rand(1.1, 2.0) : rand(1.5, 2.6);
           if (e.phase === 'flank' && RNG() < 0.4) e.orbitDir *= -1;
         }
-        if (e.phase === 'flank' && distP < 60 && distP > 12) {
-          const a = angleTo(p.x - e.x, p.z - e.z) + e.orbitDir;
+        if (e.phase === 'flank' && distH < 60 && distH > 12) {
+          const a = angleTo(hx - e.x, hz - e.z) + e.orbitDir;
           tx = e.x + fwdX(a) * 24;
           tz = e.z + fwdZ(a) * 24;
           forceMove = true;
         } else {
-          tx = p.x; tz = p.z;
+          tx = hx; tz = hz;
         }
       } else if (hunting && e.type === 'drone' && e.hp < e.maxHp * 0.45) {
         // shot-up drones break off and fall back on the nearest packmate;
@@ -2068,7 +2307,7 @@ class Game {
           tx = ally.x; tz = ally.z;
           forceMove = true;
         } else {
-          tx = p.x; tz = p.z;
+          tx = hx; tz = hz;
         }
       } else if (hunting && e.type === 'sniper' && e.relocT > 0) {
         // displaced after firing — slide to the new perch before settling
@@ -2077,7 +2316,7 @@ class Game {
         forceMove = true;
         if (dist2(e.x, e.z, tx, tz) < 25) e.relocT = 0;
       } else if (hunting) {
-        tx = p.x; tz = p.z;
+        tx = hx; tz = hz;
       } else {
         e.wanderT -= dt;
         if (e.wanderT <= 0 || Math.hypot(e.wanderX - e.x, e.wanderZ - e.z) < 6) {
@@ -2106,7 +2345,7 @@ class Game {
       // a holding hull (warden umbrella) turns but never rolls
       const wantStop = e.type === 'sniper' && hunting && !forceMove &&
         e.relocT <= 0 && distP < e.fireRange * 0.8;
-      if (!hold && !wantStop && (forceMove || (Math.abs(diff) < 1.2 && !(hunting && distP < 9)))) {
+      if (!hold && !wantStop && (forceMove || (Math.abs(diff) < 1.2 && !(hunting && distH < 9)))) {
         e.x += fwdX(e.angle) * e.speed * alertMul * moveMul * dt;
         e.z += fwdZ(e.angle) * e.speed * alertMul * moveMul * dt;
       }
@@ -2131,9 +2370,16 @@ class Game {
         e.vz = (e.z - ez0) / dt;
       }
 
-      // fire at player — smarter types lead a moving target
+      // fire at player — smarter types lead a moving target.
+      // A hunter only shoots on its LUNGE. That is the whole counterplay the
+      // type is built around: the wide flanking arc is the beat where it
+      // cannot hurt you, the straight run-in is the beat where it can, and a
+      // readable rhythm is what separates a hard enemy from an unfair one.
+      // (It used to fire in both phases, so the tell described in the manual
+      // did not exist and the hunter was just a drone that hits.)
+      const canShoot = e.type !== 'hunter' || e.phase === 'lunge';
       e.fireCd -= dt;
-      if (hunting && distP < e.fireRange && e.fireCd <= 0) {
+      if (hunting && canShoot && distP < e.fireRange && e.fireCd <= 0) {
         let aimX = p.x, aimZ = p.z;
         // lead the target's TRUE velocity — a drifting hull's facing lies
         if (e.lead > 0 && Math.hypot(p.vx || 0, p.vz || 0) > 1) {
@@ -2155,6 +2401,7 @@ class Game {
             z: e.z + fwdZ(e.angle) * 3.2,
             y: 1.6, angle: e.angle,
             speed: e.shotSpeed, from: 'enemy', dmg: e.dmg, life: 4,
+            src: 'A ' + e.type.toUpperCase(),   // for the debrief
           });
           this._sfx('enemyFire', e.x, e.z);
           if (e.type === 'sniper') {
@@ -2173,12 +2420,19 @@ class Game {
 
     this.noises.length = 0;   // every patrol has had its chance to hear
 
-    // resolve rusher contacts queued during the loop — AFTER the noise flush,
+    // Resolve rusher contacts queued during the loop — AFTER the noise flush,
     // so the blast/ram noises these emit survive to next frame's sense pass
-    // (they used to be wiped in the same tick, deaf to every patrol)
-    for (let i = this.enemies.length - 1; i >= 0; i--) {
-      const e = this.enemies[i];
-      if (!e._boom) continue;
+    // (they used to be wiped in the same tick, deaf to every patrol).
+    //
+    // Collect-then-resolve, by reference: ram-killing a rusher runs its
+    // chain-pop, which splices the array underneath an index-walking loop.
+    // Two rushers landing in one frame could shrink `enemies` past the walking
+    // index, and the next read was `undefined._boom` — a hard throw out of the
+    // game loop. Same pattern the chain-pop itself already uses.
+    const booms = this.enemies.filter((e) => e._boom);
+    for (const e of booms) {
+      const i = this.enemies.indexOf(e);
+      if (i < 0) continue;   // a chain already took this one
       if (e._boom === 'ram') {
         this._killEnemy(i, e._boomBy, 'ram');
       } else {
@@ -2208,7 +2462,8 @@ class Game {
     for (const pl of this.players) {
       if (!pl.alive) continue;
       const d = Math.hypot(e.x - pl.x, e.z - pl.z);
-      if (d < R) this._damagePlayer(pl, e.dmg * (d < 2.5 ? 1 : 1 - ((d - 2.5) / (R - 2.5)) * 0.6));
+      if (d < R) this._damagePlayer(pl, e.dmg * (d < 2.5 ? 1 : 1 - ((d - 2.5) / (R - 2.5)) * 0.6),
+        null, 'A RUSHER');
     }
   }
 
@@ -2349,7 +2604,7 @@ class Game {
           if (!pl.alive) continue;
           if (segDist2(sx, sz, pr.x, pr.z, pl.x, pl.z) < 2.4 * 2.4) {
             dead = true;
-            this._damagePlayer(pl, pr.dmg);
+            this._damagePlayer(pl, pr.dmg, null, pr.src || 'ENEMY FIRE');
             break;
           }
         }
@@ -2407,7 +2662,7 @@ class Game {
         const d = Math.hypot(pr.x - pl.x, pr.z - pl.z);
         if (d < R) {
           const dmg = pr.dmg * (d < 3 ? 1 : 1 - (d - 3) / (R - 3) * 0.75);
-          this._damagePlayer(pl, dmg, pr.owner);
+          this._damagePlayer(pl, dmg, pr.owner, 'A GRENADE');
         }
       }
     }
@@ -2476,7 +2731,7 @@ class Game {
       for (const pl of this.players) {
         if (!pl.alive || pl.id === m.owner) continue;
         const d = Math.hypot(m.x - pl.x, m.z - pl.z);
-        if (d < R) this._damagePlayer(pl, falloff(d), m.owner);
+        if (d < R) this._damagePlayer(pl, falloff(d), m.owner, 'A MINE');
       }
     }
     const hits = [];
@@ -2557,6 +2812,7 @@ class Game {
 
   _killEnemy(index, ownerId, via) {
     const e = this.enemies[index];
+    if (!e) return;   // a chain reaction already removed it
     this.enemies.splice(index, 1);
     this.killsThisLevel++;
     // SILENT KILL: it never saw you coming — half again the score, and a
@@ -2616,7 +2872,7 @@ class Game {
       this._burst(e.x, 1.2, e.z, 18, [1, 0.6, 0.2], 10);
       for (const pl of this.players) {
         if (!pl.alive) continue;
-        if (dist2(e.x, e.z, pl.x, pl.z) < 36) this._damagePlayer(pl, 16);
+        if (dist2(e.x, e.z, pl.x, pl.z) < 36) this._damagePlayer(pl, 16, null, 'A VOLATILE HULL');
       }
       const hits = this.enemies.filter((o) => dist2(e.x, e.z, o.x, o.z) < 36);
       for (const o of hits) this._hurtEnemyRef(o, 30, ownerId, via);
@@ -2628,7 +2884,10 @@ class Game {
     }
   }
 
-  _damagePlayer(p, dmg, attackerId) {
+  /* `src` names what landed the hit, for the debrief. It is a label, not a
+   * reference: a hull that dies in the same frame still has to be nameable
+   * on the game-over screen. */
+  _damagePlayer(p, dmg, attackerId, src) {
     const isLocal = p.id === this.localId;
     dmg *= this._diff().dmg;   // versus stays 1:1 — _diff() is STANDARD there
     // SPEED IS ARMOR: above 70% of rated speed the hull sheds a third of the
@@ -2651,6 +2910,12 @@ class Game {
       p.shields = 0;
       p.alive = false;
       p.respawnT = this.versus ? 3 : 4;
+      if (isLocal && !this.versus) {
+        // last write wins: a squad that dies and respawns should be described
+        // by whatever finally ended the run
+        this.runStats.deathBy = src || 'ENEMY FIRE';
+        this.runStats.deathHunted = this.alarmT > 0;
+      }
       this._burst(p.x, 1.5, p.z, 60, [1, 0.5, 0.1], 18);
       this._burst(p.x, 2.5, p.z, 30, [1, 0.9, 0.6], 12);
       this._spawnShards(p.x, p.z, DEBRIS_COLORS.player);
@@ -2745,7 +3010,7 @@ class Game {
     this._sfx('powerup', p.x, p.z);
     if (p.id === this.localId) {
       this.hud.pickup();
-      this.hud.message(spec.label, '#ffd24a', 1.4);
+      this.hud.message(spec.label, '#ffd24a', 1.4, 'chatter');
     }
   }
 
@@ -2857,7 +3122,7 @@ class Game {
         if (!pl.alive || b.chargeHits[pl.id]) continue;
         if (dist2(pl.x, pl.z, b.x, b.z) < (b.radius + 2.5) * (b.radius + 2.5)) {
           b.chargeHits[pl.id] = true;
-          this._damagePlayer(pl, 30);
+          this._damagePlayer(pl, 30, null, 'THE WARLORD');
           const dx = pl.x - b.x, dz = pl.z - b.z;
           const d = Math.hypot(dx, dz) || 1;
           pl.x += (dx / d) * 6;
@@ -2929,7 +3194,7 @@ class Game {
         this.projectiles.push({
           x: wx + fwdX(tu.aim) * 2.8, z: wz + fwdZ(tu.aim) * 2.8,
           y: 1.6, angle: tu.aim,
-          speed: 55, from: 'enemy', dmg: b.dmg, life: 4,
+          speed: 55, from: 'enemy', dmg: b.dmg, life: 4, src: 'A WARLORD TURRET',
         });
         this._sfx('enemyFire', wx, wz);
       }
@@ -2957,7 +3222,7 @@ class Game {
         b.speed *= 1.35;   // enraged
         b.shockCd = 2.5;
         this._sfx('coreExposed');
-        this.hud.message('CORE EXPOSED — ATTACK', '#ffd24a', 3);
+        this.hud.message('CORE EXPOSED — ATTACK', '#ffd24a', 3, 'alert');
       }
     } else {
       this._sfx('hitEnemy');
@@ -2994,7 +3259,7 @@ class Game {
     this._addDecal(b.x, b.z, 16, 60, 'scorch', 0, 0.45);
     this.shake = 2;
     this.hitStop = 0.42;
-    this.hud.message('WARLORD DESTROYED', '#3cff78', 3);
+    this.hud.message('WARLORD DESTROYED', '#3cff78', 3, 'alert');
     this._medal('giantkiller');
   }
 
@@ -3039,7 +3304,7 @@ class Game {
           const d = Math.hypot(p.x - r.x, p.z - r.z);
           if (Math.abs(d - r.r) < 2.4) {
             r.hit[p.id] = true;   // the wave passed — cover decides if it hurt
-            if (this._losClear(r.x, r.z, p.x, p.z)) this._damagePlayer(p, r.dmg);
+            if (this._losClear(r.x, r.z, p.x, p.z)) this._damagePlayer(p, r.dmg, null, 'A SHOCKWAVE');
           }
         }
       }
@@ -3186,11 +3451,15 @@ class Game {
     // the purest way to play the sector, paid accordingly
     if (this.ghostRun && !this.bossLevel) {
       this.levelBonus += 500 * this.level;
+      this.runStats.ghosts++;
       this._medal('ghost');
     }
     this.score += this.levelBonus;
     this.pot = 0;
     if (this.levelUntouched) this._medal('untouchable');
+    // a cleared sector IS the walk: whatever the pilot skipped, they got
+    // through it, so the coach retires rather than nagging into sector 2
+    if (this.coach) this.coach.finish(this);
     this._rollGates();
     this.mode = 'levelclear';
     this._sfx('levelClear');

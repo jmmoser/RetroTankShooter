@@ -43,6 +43,15 @@ game is **installable as a PWA and fully playable offline** (co-op excepted).
 
 ## How to play
 
+**Nothing here is taught by a manual.** Your first sortie runs a **FIELD
+COACH**: it walks you through the loop inside a live sector — roll out, run
+cold, take a hull that never saw you, spike an uplink, extract — one prompt
+at a time, gated on you actually doing it, and it never pauses the fight or
+blocks a thing. Do something out of order and it skips that lesson instead of
+teaching it late. It retires after your first cleared sector. **BRIEFING** on
+the title screen (`B`) is the manual proper, re-readable whenever, and it can
+re-arm the coach.
+
 **You are invisible until the grid finds you.** Every patrol runs a
 sensor: inside its vision cone, with line of sight, it *fills a detection
 meter* — faster the closer and louder you are. At the first threshold it
@@ -51,6 +60,15 @@ its packmates, and the sector **ALARM** goes up: converge waves warp in
 on your last known position until you break line of sight, run cold, and
 the hunt stands down. The HUD tells you where you stand at all times —
 **UNDETECTED / PATROLS SUSPICIOUS / ALARM**.
+
+**Getting spotted is a setback, not a sentence.** A hunter chases the grid's
+*last known contact*, not you — break its line of sight and it drives to
+where you were. Its reach still answers to your signature, so coasting cold
+shortens what it can hold you at. A hull that has had nothing for a few
+seconds gives up its lock and goes back to searching, the converge waves stop
+the moment the grid has nobody to converge on, and once the last hunter has
+let go the alarm times out. The HUD counts that window down for you:
+**BREAKING CONTACT — 6**. Stay dark and you are a rumor again.
 
 Your **SIGNATURE** bar is how loud you read on those sensors: speed is
 noise, the hot cannon is a beacon, boost is a flare. Slow and cold, a
@@ -61,17 +79,28 @@ even slamming a slab at speed all pull patrols toward the source — but
 noise only makes them *look*. Only eyes-on makes them shoot.
 
 **You can see what they can see.** Every patrol paints its **sensor
-cone** — a translucent wedge on the radar, and a faint scanning beam laid
-on the arena floor (amber once the hull turns suspicious). The cones are
-drawn at the sim's own live reach against *your current signature*:
-throttle down and every cone in the sector visibly pulls back, redline
-and they stretch across the map — the signature bar is something you can
-*see on the ground* and steer through, not just a number. Alerted hulls
-carry no cone; they aren't scanning, they **know**. And a first glimpse
-is a telegraph, not a verdict: the instant any sensor crosses into
-SUSPICIOUS it chirps a **sonar ping** from the hull that noticed, and the
-meter needs sustained eyes-on to confirm — that beat is your window to
-break the cone, delete the witness, or go cold.
+cone** — a wedge on the radar, and a lit boundary drawn on the arena floor
+(amber once the hull turns suspicious). The cone's *edge* is the part that
+matters and the part you can see: a line on the ground saying "past here it
+cannot find you". Both are drawn at the sim's own live reach against *your
+current signature*, so throttling down visibly walks that line inward and
+redlining stretches it across the map — the signature bar is something you
+steer through on the ground, not just a number. Alerted hulls carry no cone;
+they aren't scanning, they **know**.
+
+Two shapes, not one. The wedge is what a patrol is *looking* at; the ring at
+its feet is what it can *hear*, and inside that ring facing stops mattering —
+it notices you whichever way it happens to be pointed. Both are drawn, both
+are the sim's own numbers, and both shrink when you throttle down.
+
+And you always know when you are being looked at. The moment any sensor has
+live eyes on you, an **exposure arc** lights up around the crosshair, sitting
+on the *bearing of the hull doing the looking* — one mark for am I seen, how
+far along is it, and from where. A first glimpse is a telegraph, not a
+verdict: crossing into SUSPICIOUS chirps a **sonar ping** from the hull that
+noticed, the arc strobes **EYES ON**, and the meter still needs sustained
+contact to confirm. That beat is your window to break the cone, delete the
+witness, or go cold.
 
 **Kill them before they know.** A hull that never alerted pays **half
 again the score** as a **SILENT KILL** — and a boost-ram execution is
@@ -226,6 +255,16 @@ they arm after a beat and detonate on anything hostile that rolls over them —
 the perfect parting gift when you boost out of a furball, and they work on
 the WARLORD too.
 
+### The debrief — every run tells you something
+
+A score does not summarise a stealth run, so the sector-clear and game-over
+screens carry a **debrief**: kills, silent kills, zones, best chain, and the
+share of the run you spent genuinely **UNDETECTED**. Death names itself —
+*DESTROYED BY A HUNTER WITH THE GRID HUNTING* — and one line underneath names
+the single thing most worth changing next time, picked from whichever gap is
+widest: the run you spent hunted, the kills you took loudly, the zones you
+drove past. It says nothing when you are playing well.
+
 While you fight, the HUD races your own past self: pass your record and the
 score turns gold with a **RECORD PACE** tag (dailies chase today's best,
 campaign runs chase the all-time high). Fall just short and the game-over
@@ -239,6 +278,14 @@ facets as tanks turn; a cold fresnel rim reads their silhouettes against the
 void. The floor keeps score of the fight — every detonation burns a **scorch
 crater** into it and every hull that drives lays **tread prints** that fade
 out over the next half-minute.
+
+The **chase camera is the default**, and your choice sticks. The sector talks
+to you on the ground — cone boundaries, the amber and red awareness rings under
+each hull, scorch craters, tread prints, beacon pillars — and the cockpit eye
+sits two units above that floor looking *along* it, which is the one angle that
+can't read any of it. Press `C` for the 1990 shot whenever you want it: every
+cone's boundary also stands up as a low curtain of light, so the read survives
+the switch.
 
 The camera is a rig, not a mount. Impacts shove it and a spring pulls it
 back, so the cannon's recoil kicks the view down the barrel and a boost-ram
@@ -278,6 +325,13 @@ Every run — campaign, daily, even a doomed one — pays **XP** into a
 shows the XP bar filling and exactly how much is left to the next
 promotion.
 
+**Rank spends.** From your second promotion on, a campaign sortie deploys with
+**TECH already banked** — a **FIELD PROMOTION**, called out on the loadout
+screen, which cashes out as a draft in the opening seconds and grows with the
+ladder. Your build starts sooner and your twentieth run is not your first run
+again. Daily Ops deliberately ignores it: that leaderboard stays a level
+field, exactly like the difficulty preset.
+
 Fourteen **medals** mark one-time feats: a ghost extraction, five silent
 kills in one mission, a ×5 combo, a sector cleared without taking a hit,
 a 3-day daily streak, and more. They pop mid-run with a toast and a
@@ -289,15 +343,18 @@ browser. Two things are earned:
 
 - **MARAUDER chassis** — a fourth loadout (fast, armored, a small cooling
   plant, heavy on mines) unlocked by destroying your first WARLORD.
-- **Checkpoint starts** — once you fight past a WARLORD, the loadout screen
-  lets you start at the sector after it (6, 11, …) instead of replaying the
-  early game.
+- **Checkpoint starts** — the loadout screen lets you start deeper: a rung
+  every third sector, always strictly below your deepest, so it is somewhere
+  you have proven you can reach and there is still a sector between you and
+  your record. A deep start carries no upgrades and no banked score, so it
+  costs about as much as it saves.
 
 ### Settings
 
 The **SETTINGS** screen has the campaign **DIFFICULTY** preset (RECRUIT /
-STANDARD / VETERAN), SFX and music volume, screen-shake intensity,
-the **GLOW FX** post-processing pipeline (bloom, dynamic explosion lighting,
+STANDARD / VETERAN), the **FIELD COACH** toggle, SFX and music volume,
+screen-shake intensity,
+the **CHASE CAMERA** toggle, the **GLOW FX** post-processing pipeline (bloom, dynamic explosion lighting,
 ACES tonemapping, aberration, grain and FXAA — turn it off on weak GPUs),
 **DYNAMIC SHADOWS** (the sun's depth pass; off is a straight fill-rate
 refund), **RENDER QUALITY** (HIGH multisamples the scene and runs a 1024²
@@ -319,9 +376,10 @@ and **gamepad** alike — pick whatever is closest to hand.
 | `V` / middle-click | Drop a proximity mine behind you |
 | `Shift` | Turbo boost (drains the gauge; low grip — the tank drifts) |
 | `S` + steer at speed | Handbrake slide (keep momentum, swing the gun) |
-| `C` | Toggle first-person / chase camera |
+| `C` | Toggle chase / first-person camera |
 | `P` / `Esc` | Pause (single-player) |
 | `M` | Toggle sound |
+| `B` | Mission briefing (the manual) |
 | `D` | Start today's Daily Ops |
 | `H` | Host an online co-op / versus game |
 | `J` | Join a game by room code |
@@ -348,8 +406,7 @@ On phones and tablets the game switches to a full touch scheme:
   almost lined up (it applies to all players equally, so co-op stays fair).
 - **On-screen buttons** — NADE (grenade, shows your count), BOOST (shows the
   gauge around its rim), CAM and pause in the top corner.
-- Launching a run goes fullscreen in landscape where the browser allows it,
-  and the chase camera becomes the default (toggle back with CAM).
+- Launching a run goes fullscreen in landscape where the browser allows it.
 
 ## Online co-op & versus
 
@@ -406,28 +463,34 @@ Every hostile starts out **blind**: patrols amble their routes at half
 speed until something fills their sensor — then they investigate, then
 they hunt. Alerted, each type fights its own way, and all of them steer
 around cover and scatter from a grenade in the air instead of sitting
-under it:
+under it.
+
+**One new hull type per sector, all the way up.** Sector 1 is drones and
+nothing else; every sector after it introduces exactly one thing you have not
+had to answer yet, and the WARLORD sectors step around the sequence. Drones
+stay the readable baseline the rest are measured against until the deep end,
+where they thin out and the specials become the sector:
 
 - **Drone** (red) — patroller, guards the zones; shot-up drones break off
   and fall back on the nearest packmate, so wounded stragglers regroup into
   clusters instead of trickling in
-- **Rusher** (hot pink, sector 2+) — kamikaze hull that strobes like a lit
+- **Rusher** (hot pink, sector 3+) — kamikaze hull that strobes like a lit
   fuse and beelines straight at you; it detonates on contact, dies to a
   single shell, chain-pops into anything beside it — and a boost-ram
   defuses it entirely
-- **Shellback** (gunmetal, sector 3+) — slow siege hull whose frontal
+- **Shellback** (gunmetal, sector 4+) — slow siege hull whose frontal
   plate deflects shells; flank the arc, lob over it, or ram straight
   through it
-- **Warden** (gold, sector 4+) — projects a cannon-proof umbrella over
+- **Warden** (gold, sector 7+) — projects a cannon-proof umbrella over
   every packmate near it and shepherds the pack; grenades, mines, rams and
   shockwaves ignore the dome — or kill the warden and shoot what's left
 - **Hunter** (amber, sector 2+) — weaves between wide flanking arcs and
   straight lunges; it can only line up a shot during the lunge, so the
   rhythm is readable — and punishable
-- **Sniper** (violet, sector 4+) — holds range, hits hard from far away,
+- **Sniper** (violet, sector 6+) — holds range, hits hard from far away,
   and **relocates after every shot**: return fire arrives where the sniper
   was, not where it is
-- **Phantom** (ice, sector 5+) — cloaked stalker; shimmers into view a moment
+- **Phantom** (ice, sector 8+) — cloaked stalker; shimmers into view a moment
   before it fires, and vanishes from radar while cloaked
 - **Warlord** (crimson, every 5th sector) — boss hovercruiser; four turrets
   shield its core, it crushes cover, rams, and emits shockwave rings
@@ -443,7 +506,11 @@ the pot you carried over the line. High score,
 daily bests, settings and your service record are all kept in your browser.
 
 Watch your speed near the arena's slabs: slam into one fast enough and your
-tank rebounds off it.
+tank rebounds off it — and if you just lean on one, the hull **slides along
+the face** rather than parking against it. Nothing you can hold on the
+controls brings the tank to a dead stop against geometry; in a sector where
+patrols are converging on your last known position, standing still is not a
+state the game will put you in without asking.
 
 ## Code layout
 
@@ -465,7 +532,9 @@ js/renderer.js  WebGL renderer + mat4 helpers: flat-shaded forward pass with
                 (decal) draws, and the bloom / ACES / FXAA / aberration /
                 grain / vignette post chain
 js/hud.js       radar (with live enemy sensor cones), shield/heat/vent bars,
-                pot & bounty, scoreboard (Canvas 2D)
+                the exposure arc, pot & bounty, scoreboard (Canvas 2D)
+js/tutorial.js  the field coach: an ordered walk through the loop driven by
+                what the player actually does, plus situational callouts
 js/game.js      arena generation (four terrain layouts), players, per-type
                 enemy AI with stealth detection states, noise + signature
                 model, sector alarm, projectiles, pickups, seeded daily

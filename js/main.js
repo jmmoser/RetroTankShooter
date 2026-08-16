@@ -63,6 +63,8 @@
     bossCore: renderer.createMesh(Geometry.bossCore()),
     ring: renderer.createMesh(Geometry.ring(), renderer.gl.LINES),
     gaze: renderer.createMesh(Geometry.gazeCone()),
+    gazeEdge: renderer.createMesh(Geometry.gazeEdge()),
+    gazeCurtain: renderer.createMesh(Geometry.gazeCurtain()),
     // ominous backdrop, camera-anchored so it sits at infinity
     sky: renderer.createMesh(Geometry.skyDome(660)),
     mountains: renderer.createMesh(Geometry.mountains(600)),
@@ -94,6 +96,12 @@
   }
 
   // ---- live settings ---------------------------------------------------------
+  // Third person by default, and remembered: the game's information — cone
+  // boundaries, awareness rings, tread prints, beacons — lives on the floor,
+  // and the cockpit eye sits 2.3 units above it looking along it. `C` still
+  // flips to first person for anyone who wants the 1990 shot.
+  let chaseCam = Settings.get('chase');
+
   function applySettings() {
     AudioSys.setVolume(Settings.get('volume') / 10);
     AudioSys.setMusicVolume(Settings.get('music') / 10);
@@ -102,6 +110,7 @@
     renderer.setGlow(Settings.get('glow'));
     renderer.setShadows(Settings.get('shadows'));
     renderer.setMsaa(Settings.get('quality') >= 1);
+    chaseCam = Settings.get('chase');   // the SETTINGS row and `C` share one value
   }
   Settings.onChange = () => { applySettings(); renderSettingVals(); };
   applySettings();
@@ -113,8 +122,6 @@
   let loadoutIndex = 1;   // solo loadout
   let lobbyLoadout = 1;   // co-op loadout
   let startSector = 1;    // checkpoint start (setup screen)
-  let chaseCam = false;
-  let chaseCamUserSet = false;   // stop the touch default from fighting the C toggle
   let runRecorded = true; // guards Progress.recordRun against double counting
   let highScore = 0;
   try { highScore = parseInt(localStorage.getItem('pa_high') || '0', 10) || 0; } catch (e) {}
@@ -128,6 +135,7 @@
     over: document.getElementById('screen-over'),
     pause: document.getElementById('screen-pause'),
     settings: document.getElementById('screen-settings'),
+    brief: document.getElementById('screen-brief'),
     records: document.getElementById('screen-records'),
     vsover: document.getElementById('screen-vsover'),
   };
@@ -184,6 +192,7 @@
     over: makeMenu(screens.over, 'bt-retry'),
     pause: makeMenu(screens.pause, 'bt-resume'),
     settings: makeMenu(screens.settings, 'st-volume'),
+    brief: makeMenu(screens.brief, 'bt-brief-back'),
     records: makeMenu(screens.records, 'bt-records-back'),
     vsover: makeMenu(screens.vsover, 'bt-vs-again'),
     // the TECH draft overlay lives outside the screens map: it can float
@@ -240,7 +249,7 @@
     if (recordBeaten || recordRef <= 0 || game.versus) return;
     if (game.score > recordRef) {
       recordBeaten = true;
-      hud.message(game.dailySeed ? '★ DAILY BEST BEATEN ★' : '★ RECORD BROKEN ★', '#ffd24a', 2.4);
+      hud.message(game.dailySeed ? '★ DAILY BEST BEATEN ★' : '★ RECORD BROKEN ★', '#ffd24a', 2.4, 'alert');
       AudioSys.play('unlock');
     }
   }
@@ -275,6 +284,18 @@
     el.addEventListener('dblclick', () => startRun());
   });
 
+  // ---- field promotion --------------------------------------------------------
+  /* Rank is worth something now, so the loadout screen says what. */
+  const promotionRow = document.getElementById('promotion-row');
+  function refreshPromotionRow() {
+    const tech = Progress.startingTech();
+    promotionRow.classList.toggle('hidden', tech <= 0);
+    if (tech > 0) {
+      promotionRow.textContent = '★ FIELD PROMOTION — ' + Progress.rank().name +
+        ' DEPLOYS WITH ' + tech + ' TECH LEVEL' + (tech > 1 ? 'S' : '') + ' BANKED';
+    }
+  }
+
   // ---- checkpoint starts ------------------------------------------------------
   const btCheckpoint = document.getElementById('bt-checkpoint');
   function refreshCheckpointRow() {
@@ -296,15 +317,17 @@
     document.getElementById('loadout-marauder').classList.toggle('locked', loadoutLocked(3));
     if (loadoutLocked(3) && loadoutIndex === 3) selectLoadout(1);
     refreshCheckpointRow();
+    refreshPromotionRow();
     showScreen('setup');
   }
 
   // On touch devices, launching a run is the user gesture we spend on going
-  // fullscreen + landscape, and third person is the friendlier default camera.
+  // fullscreen + landscape. (The camera default is no longer decided here —
+  // chase is the default everywhere now, and it persists, so a touch player
+  // who chose the cockpit view keeps it.)
   // Everything here is best-effort: browsers that refuse just play windowed.
   function mobileImmersive() {
     if (!Input.touchUI().mode) return;
-    if (!chaseCamUserSet) chaseCam = true;
     try {
       const el = document.documentElement;
       if (!document.fullscreenElement && el.requestFullscreen) {
@@ -329,7 +352,7 @@
     showScreen(null);
     AudioSys.play('deploy');
     hud.message('SECTOR ' + game.level + (game.bossLevel ? ' — DESTROY THE WARLORD' : ' — SECURE THE UPLINKS, THEN EXTRACT'),
-      game.bossLevel ? '#ff4a3c' : '#4fd6bb', 3);
+      game.bossLevel ? '#ff4a3c' : '#4fd6bb', 3, game.bossLevel ? 'alert' : 'info');
   }
 
   // Daily ops: one seeded arena per UTC day, standard-issue VANGUARD for a
@@ -428,6 +451,63 @@
     return { html, earned };
   }
 
+  /* ---- run debrief ------------------------------------------------------
+   * A stealth run is not summarised by a score. The sim tracks silent kills,
+   * ghost extractions, zones, the best chain, and how much of the run the grid
+   * had you — and none of it used to be reported back, so a player dying on
+   * sector 1 for the fifth time learned nothing from the fifth death either.
+   *
+   * Two parts. The tally is what happened. The verdict is the single thing
+   * most worth changing next run, picked by whichever gap is widest — because
+   * a wall of numbers is not advice. */
+  function debriefTally(rs) {
+    const pct = rs.playT > 0 ? Math.round((rs.undetectedT / rs.playT) * 100) : 0;
+    const cells = [
+      ['KILLS', rs.kills],
+      ['SILENT', rs.silentKills],
+      ['ZONES', rs.flags],
+      ['BEST CHAIN', '×' + (rs.bestMult || 1)],
+      ['UNDETECTED', pct + '%'],
+    ];
+    if (rs.ghosts) cells.push(['GHOST EXITS', rs.ghosts]);
+    return '<div class="debrief">' + cells
+      .map(([k, v]) => `<div class="db-cell"><span class="db-k">${k}</span><span class="db-v">${v}</span></div>`)
+      .join('') + '</div>';
+  }
+
+  /* Ordered by how much it would change the next run; first match wins. */
+  function debriefVerdict(rs, level) {
+    const pct = rs.playT > 0 ? rs.undetectedT / rs.playT : 1;
+    const hunted = rs.playT > 0 ? rs.huntedT / rs.playT : 0;
+    if (rs.playT < 20) return null;                 // too short to diagnose
+    if (hunted > 0.5) {
+      return 'THE GRID HAD YOU FOR ' + Math.round(hunted * 100) +
+        '% OF THAT RUN — BREAK LINE OF SIGHT AND RUN COLD, AND THE HUNT LETS GO';
+    }
+    if (rs.kills > 0 && rs.silentKills === 0) {
+      return 'NO SILENT KILLS — A SHELL ON A HULL THAT NEVER SAW YOU HITS FOR TRIPLE';
+    }
+    if (rs.kills === 0 && rs.flags <= 1) {
+      return 'THE SECTOR OPENS WHEN THE LAST UPLINK FALLS — CLIP EACH RING ONCE AND KEEP MOVING';
+    }
+    if (pct > 0.7 && rs.flags === 0) {
+      return 'QUIET, BUT NOTHING SECURED — A DRIVE-BY THROUGH A ZONE RING IS ENOUGH TO SPIKE IT';
+    }
+    if ((rs.bestMult || 1) < 3 && rs.kills >= 4) {
+      return 'THE CHAIN RUNS ON VARIETY — MIX CANNON, RAM, GRENADE AND MINE KILLS TO CLIMB TO ×5';
+    }
+    if (level >= 3 && pct > 0.5) return null;       // playing it well; say nothing
+    return null;
+  }
+
+  function buildDebrief(rs, level, deathLine) {
+    let html = debriefTally(rs);
+    if (deathLine) html += `<div class="db-death">${deathLine}</div>`;
+    const v = debriefVerdict(rs, level);
+    if (v) html += `<div class="db-verdict">${v}</div>`;
+    return html;
+  }
+
   function gameOver() {
     closeDraft();
     uiMode = 'gameover';
@@ -464,6 +544,14 @@
       updateTitleHigh();
     }
     if (res.marauder) html += '<br><span class="gold">MARAUDER CHASSIS UNLOCKED</span>';
+    {
+      const rs = game.runStats;
+      const death = rs.deathBy
+        ? 'DESTROYED BY ' + rs.deathBy +
+          (rs.deathHunted ? ' WITH THE GRID HUNTING' : ' BEFORE THE ALARM EVER WENT UP')
+        : null;
+      html += buildDebrief(rs, game.level, death);
+    }
     const extras = buildOverExtras(res);
     earned = earned || extras.earned;
     html += extras.html;
@@ -794,7 +882,8 @@
       (game.ghostRun && !game.bossLevel ? '<span class="gold">&#9733; GHOST EXTRACTION — NEVER DETECTED &#9733;</span><br>' : '') +
       `BONUS <span class="gold">+${game.levelBonus}</span><br>` +
       `SCORE ${game.score}` +
-      (bossNext ? `<br><span class="red">WARLORD SIGNATURE IN SECTOR ${next}</span>` : '');
+      (bossNext ? `<br><span class="red">WARLORD SIGNATURE IN SECTOR ${next}</span>` : '') +
+      debriefTally(game.runStats);
     // warp gates: the strategic beat — pick the next sector's ruleset.
     // Risky routes flash their tech signing bonus. Clients watch the host.
     const gatesEl = document.getElementById('gate-choices');
@@ -912,7 +1001,7 @@
   function draftAutoPick() {
     if (!draftOpen || !draftIds.length) return;
     const id = draftIds[(Math.random() * draftIds.length) | 0];
-    hud.message('AUTO-INSTALLED', '#e8c75a', 1.2);
+    hud.message('AUTO-INSTALLED', '#e8c75a', 1.2, 'chatter');
     draftPick(id);
   }
 
@@ -1076,7 +1165,7 @@
     if (game.versus) {
       hud.message('VERSUS — FIRST TO ' + game.killTarget + ' KILLS', '#ffd24a', 3);
     } else if (game.bossLevel) {
-      hud.message('SECTOR ' + game.level + ' — WARLORD DETECTED', '#ff4a3c', 3.5);
+      hud.message('SECTOR ' + game.level + ' — WARLORD DETECTED', '#ff4a3c', 3.5, 'alert');
       AudioSys.play('alarm');
     } else {
       hud.message('SECTOR ' + game.level, '#4fd6bb', 2.5);
@@ -1084,9 +1173,9 @@
       // mirror the host's sector-start banners
       if (game.mutator) {
         const m = MUTATORS.find((x) => x.id === game.mutator);
-        if (m) hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3);
+        if (m) hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3, 'chatter');
       }
-      if (game.bounty) hud.message('BOUNTY: ' + game.bounty.name, '#e8c75a', 2.4);
+      // (no bounty toast — the HUD carries it live under the radar)
     }
   };
   Net.cb.onState = (msg) => { if (Net.role === 'client') Net.applyState(game, msg); };
@@ -1164,7 +1253,7 @@
 
   function inMenu() {
     return uiMode === 'title' || uiMode === 'setup' || uiMode === 'lobby' || uiMode === 'join' ||
-      uiMode === 'settings' || uiMode === 'records';   // reachable only from the
+      uiMode === 'settings' || uiMode === 'records' || uiMode === 'brief';   // reachable only from the
       // title screen — keep the demo battlefield (not a stale, shake-jittering
       // camera on the last run's corpse) behind those panels too
   }
@@ -1533,14 +1622,40 @@
       // know), so a beam always means "this one can still be threaded".
       if (aware < 2 && e.cloak < 0.6 && !game.versus) {
         const reach = senseRange(e.type, game.player ? game.player.sig : 1);
+        // The fill says "watched ground"; the edge says WHERE THAT STOPS, and
+        // the edge is the one the player steers against. Both ride the same
+        // senseRange, so throttling down visibly walks the line inward.
+        // The fill is a wash — it says "watched ground" without blowing out
+        // an additive floor under bloom. The EDGE carries the legibility: a
+        // bright line you can see from across the arena and steer along.
         const gp = aware === 1
-          ? 0.11 + 0.035 * Math.sin(now / 160)
-          : 0.085 + 0.02 * Math.sin(now / 420);   // slow breath: a live scan, not floor tint
+          ? 0.09 + 0.02 * Math.sin(now / 160)
+          : 0.062 + 0.014 * Math.sin(now / 420);   // slow breath: a live scan, not floor tint
         const gt = aware === 1
-          ? [1.0 * gp, 0.72 * gp, 0.2 * gp]
-          : [0.4 * gp, 0.85 * gp, 0.75 * gp];
+          ? [1.0 * gp, 0.66 * gp, 0.16 * gp]
+          : [0.34 * gp, 0.88 * gp, 0.76 * gp];
         renderer.draw(M.gaze, m4.trs(e.x, 0.22, e.z, e.angle, reach, 1, reach, MTX),
           { tint: gt, unlit: true, additive: true });
+        const ep = aware === 1
+          ? 0.72 + 0.16 * Math.sin(now / 160)
+          : 0.46 + 0.08 * Math.sin(now / 420);
+        const et = aware === 1
+          ? [1.0 * ep, 0.6 * ep, 0.14 * ep]
+          : [0.3 * ep, 0.95 * ep, 0.8 * ep];
+        renderer.draw(M.gazeEdge, m4.trs(e.x, 0.26, e.z, e.angle, reach, 1, reach, MTX),
+          { tint: et, unlit: true, additive: true });
+        // ...and the same boundary standing up, so the cockpit view can see it
+        const ct = [et[0] * 0.55, et[1] * 0.55, et[2] * 0.55];
+        renderer.draw(M.gazeCurtain, m4.trs(e.x, 0.1, e.z, e.angle, reach, reach, reach, MTX),
+          { tint: ct, unlit: true, additive: true });
+        // the hearing bubble: inside this the cone stops mattering, because
+        // the hull notices you whichever way it happens to be facing. Drawn
+        // because the sim detects on it — an undrawn rule you get caught by
+        // is the difference between a stealth game and a guessing game.
+        const near = senseNear(game.player ? game.player.sig : 1);
+        const np = ep * 0.62;
+        renderer.draw(M.ring, m4.trs(e.x, 0.2, e.z, 0, near, 1, near, MTX),
+          { tint: [et[0] / ep * np, et[1] / ep * np, et[2] / ep * np], unlit: true, additive: true });
       }
       // awareness telltale on the ground: amber = investigating, strobing
       // red = it knows — readable at a glance across the whole arena
@@ -1686,6 +1801,8 @@
     { key: 'quality', max: 1, labels: ['LOW', 'HIGH'] },
     { key: 'crt', bool: true },
     { key: 'aimAssist', bool: true },
+    { key: 'coach', bool: true },
+    { key: 'chase', bool: true },
     { key: 'colorblind', bool: true },
     { key: 'fps', bool: true },
   ];
@@ -1723,6 +1840,23 @@
     const id = menus.settings.focusedId();
     if (!id || id.indexOf('st-') !== 0) return;
     adjustSetting(id.slice(3), dir, false);
+  }
+
+  // ---- briefing screen -------------------------------------------------------
+  /* The re-readable half of onboarding: the field coach teaches the loop once
+   * in a live sector, this explains the systems behind it whenever asked. */
+  function renderBriefCoach() {
+    const armed = Settings.get('coach') && !Progress.coachDone();
+    // one row, two jobs: it reports whether the next sortie gets the walk,
+    // and when it doesn't, tapping it arms one
+    document.getElementById('stv-brief-coach').textContent =
+      armed ? 'FIELD COACH ARMED FOR NEXT SORTIE' : 'REPLAY FIELD COACH';
+  }
+  function openBriefing() {
+    uiMode = 'brief';
+    renderBriefCoach();
+    screens.brief.querySelector('.brief-body').scrollTop = 0;
+    showScreen('brief');
   }
 
   // ---- service record screen -------------------------------------------------
@@ -1767,7 +1901,7 @@
   function handleScreens() {
     if (Input.consume('KeyM')) {
       const muted = AudioSys.toggleMuted();
-      hud.message(muted ? 'SOUND OFF' : 'SOUND ON', '#4fd6bb', 1);
+      hud.message(muted ? 'SOUND OFF' : 'SOUND ON', '#4fd6bb', 1, 'chatter');
     }
 
     switch (uiMode) {
@@ -1775,6 +1909,7 @@
         if (Input.consume('KeyH')) { enterLobbyAsHost(); break; }
         if (Input.consume('KeyJ')) { enterJoin(); break; }
         if (Input.consume('KeyD')) { startDaily(); break; }
+        if (Input.consume('KeyB')) { openBriefing(); break; }
         menuKeys('title');
         break;
 
@@ -1807,6 +1942,11 @@
         if (Input.consume('Escape')) { uiMode = 'title'; showScreen('title'); }
         break;
 
+      case 'brief':
+        menuKeys('brief');
+        if (Input.consume('Escape')) { uiMode = 'title'; showScreen('title'); }
+        break;
+
       case 'records':
         menuKeys('records');
         if (Input.consume('Escape')) { uiMode = 'title'; showScreen('title'); }
@@ -1826,14 +1966,16 @@
 
       case 'playing':
         if (draftOpen) draftKeys();   // always under fire — the sim never stops
-        if (Input.consume('cam')) { chaseCam = !chaseCam; chaseCamUserSet = true; }
+        // Settings.set fires onChange -> applySettings, which is what actually
+        // moves chaseCam, so the key and the SETTINGS row can never disagree
+        if (Input.consume('cam')) Settings.set('chase', !chaseCam);
         if (Input.consume('pause') || Input.consume('Escape')) {
           // no pausing mid-death-cam: the gamepad synthesizes Escape from B
           // once the playfield deactivates, so mashing grenade while dying
           // used to yank solo players onto the pause screen
           if (game.mode !== 'playing') break;
           if (Net.role === 'solo') pauseGame();
-          else hud.message('PAUSE UNAVAILABLE IN CO-OP', '#ffd24a', 1.6);
+          else hud.message('PAUSE UNAVAILABLE IN CO-OP', '#ffd24a', 1.6, 'chatter');
         }
         break;
 
@@ -1861,6 +2003,15 @@
   bind('bt-join', enterJoin);
   bind('bt-settings', () => { uiMode = 'settings'; renderSettingVals(); showScreen('settings'); });
   bind('bt-records', () => { uiMode = 'records'; fillRecords(); showScreen('records'); });
+  bind('bt-brief', () => openBriefing());
+  bind('bt-brief-back', () => { uiMode = 'title'; showScreen('title'); });
+  bind('bt-brief-coach', () => {
+    // arming the coach is the only way it comes back once it has retired —
+    // and it needs the setting on too, or the next run would silently ignore it
+    Progress.setCoachDone(false);
+    Settings.set('coach', true);
+    renderBriefCoach();
+  });
   bind('bt-settings-back', () => { uiMode = 'title'; showScreen('title'); });
   bind('bt-records-back', () => { uiMode = 'title'; showScreen('title'); });
   bind('bt-setup-back', () => { uiMode = 'title'; showScreen('title'); });
@@ -1879,8 +2030,8 @@
   bind('bt-resume', resumeGame);
 
   // surface controller hotplug so players know the pad took
-  window.addEventListener('gamepadconnected', () => hud.message('GAMEPAD CONNECTED', '#4fd6bb', 2));
-  window.addEventListener('gamepaddisconnected', () => hud.message('GAMEPAD DISCONNECTED', '#ffd24a', 2));
+  window.addEventListener('gamepadconnected', () => hud.message('GAMEPAD CONNECTED', '#4fd6bb', 2, 'chatter'));
+  window.addEventListener('gamepaddisconnected', () => hud.message('GAMEPAD DISCONNECTED', '#ffd24a', 2, 'chatter'));
 
   menus.title.reset();   // title is visible on boot without a showScreen() call
 

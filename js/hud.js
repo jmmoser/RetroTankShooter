@@ -23,7 +23,8 @@ class HUD {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.messages = []; // {text, t, dur, color}
+    this.messages = []; // {text, t, dur, color, alert}
+    this.chatter = [];  // low-priority notices, drawn over the bars
     this.pops = [];     // floating score popups {text, t}
     this.flash = 0;     // red damage flash 0..1
     this.pickupFlash = 0;
@@ -42,8 +43,25 @@ class HUD {
     this.dpr = dpr;
   }
 
-  message(text, color = '#4fd6bb', dur = 2.2) {
-    this.messages.push({ text, t: 0, dur, color });
+  /* Toast a line. `tier` is what stops the HUD from shouting everything at
+   * once: fifty call sites feed this, and a run where SPOTTED and NO GRENADES
+   * arrive at the same size in the same place is a run where the player reads
+   * neither. Three weights, and they land in different parts of the frame:
+   *
+   *   'alert'   — the fight or the run just changed. Big, lit, up top.
+   *   'info'    — the default. You did the thing; here is the result.
+   *   'chatter' — routine, or already shown somewhere permanent (the combo
+   *               multiplier, the bounty line, the grenade pips). Small, and
+   *               tucked over the bars it refers to instead of over the
+   *               battlefield.
+   */
+  message(text, color = '#4fd6bb', dur = 2.2, tier = 'info') {
+    if (tier === 'chatter') {
+      this.chatter.push({ text, t: 0, dur, color });
+      if (this.chatter.length > 2) this.chatter.shift();
+      return;
+    }
+    this.messages.push({ text, t: 0, dur, color, alert: tier === 'alert' });
     if (this.messages.length > 3) this.messages.shift();
   }
 
@@ -101,12 +119,15 @@ class HUD {
     if (!game || game.mode !== 'playing') { this._renderMessages(ctx, W, H, s, dt); return; }
 
     this._crosshair(ctx, W, H, s);
+    this._exposure(ctx, W, H, s, game);
     this._radar(ctx, W, H, s, game);
     this._bars(ctx, W, H, s, game);
     this._objective(ctx, W, H, s, game);
     this._combo(ctx, W, H, s, game);
+    this._coach(ctx, W, H, s, game);
     this._scorePops(ctx, W, H, s, dt);
     this._touchControls(ctx, game);
+    this._renderChatter(ctx, W, H, s, dt);
     this._renderMessages(ctx, W, H, s, dt);
   }
 
@@ -278,7 +299,14 @@ class HUD {
     {
       const t2 = performance.now() / 1000;
       let label, col;
-      if ((game.alarmT || 0) > 0) {
+      if ((game.alarmT || 0) > 0 && (game.alarmT || 0) < 1e8 && !game.hunted && !game.exit) {
+        // NOBODY has eyes on you and the alarm clock is running out. This is
+        // the whole counterplay — stay dark for these seconds and the hunt
+        // gives up — so it gets its own state and its own countdown instead
+        // of hiding inside a flat "ALARM".
+        label = 'BREAKING CONTACT — ' + Math.ceil(game.alarmT);
+        col = '#ffd24a';
+      } else if ((game.alarmT || 0) > 0) {
         label = game.exit ? 'GET TO THE GATE' : 'ALARM — GRID HUNTING';
         col = Math.sin(t2 * 9) > -0.2 ? '#ff4a3c' : '#8a2a20';
       } else if (game.suspicion) {
@@ -302,6 +330,116 @@ class HUD {
         b.paid ? '✓ BOUNTY PAID' : 'BOUNTY: ' + b.name + '  ' + b.prog + '/' + b.n,
         W / 2, topY + 30 * s);
     }
+  }
+
+  /* EXPOSURE: something has live eyes on you. Drawn as an arc around the
+   * crosshair sitting on the BEARING of the hull doing the looking, so one
+   * mark answers all three questions a stealth game must never make you
+   * guess — am I being seen, how far along is it, and from where.
+   *
+   * The ring is hull-relative (bearing minus your facing), which is the same
+   * frame the chase camera and the first-person view share, so the arc points
+   * at the watcher in either. It grows and reddens with the meter, and past
+   * SUSPICIOUS it strobes: that is the window to break the cone. */
+  _exposure(ctx, W, H, s, game) {
+    const ex = game.exposure;
+    if (!ex || !game.player) return;
+    const lvl = Math.max(0, Math.min(1, ex.level));
+    const p = game.player;
+    const bearing = Math.atan2(-(ex.x - p.x), -(ex.z - p.z)) - p.angle;
+    // Into canvas angles. World bearing runs counter-clockwise (+ is to the
+    // hull's left); canvas angles run clockwise from +X. So the bearing
+    // negates, and hull-forward lands on -PI/2 (straight up) — the same frame
+    // the radar blips ride, which is what keeps the arc and the dish agreeing.
+    const a = -bearing - Math.PI / 2;
+    const cx = W / 2, cy = H / 2;
+    const r = 52 * s;
+    const half = 0.34 + 0.20 * lvl;   // a wider wedge as it closes on you
+    const t = performance.now() / 1000;
+    const sus = lvl >= 0.4;
+    const strobe = sus ? 0.72 + 0.28 * Math.sin(t * 12) : 1;
+
+    // the empty track shows where the arc is growing from
+    ctx.save();
+    ctx.lineCap = 'butt';
+    ctx.lineWidth = 5 * s;
+    ctx.strokeStyle = 'rgba(79,214,187,0.18)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, a - half, a + half);
+    ctx.stroke();
+
+    const col = sus ? [255, 90, 60] : [255, 210, 74];
+    ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${0.9 * strobe})`;
+    ctx.shadowColor = `rgb(${col[0]},${col[1]},${col[2]})`;
+    ctx.shadowBlur = 10 * s * strobe;
+    ctx.beginPath();
+    // fill from the arc's center outward both ways: the mark stays aimed at
+    // the watcher instead of sliding off the bearing as it fills
+    ctx.arc(cx, cy, r, a - half * lvl, a + half * lvl);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // a tick on the exact bearing so a nearly-empty meter still points
+    ctx.lineWidth = Math.max(1, 1.5 * s);
+    ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${0.75 * strobe})`;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * (r + 5 * s), cy + Math.sin(a) * (r + 5 * s));
+    ctx.lineTo(cx + Math.cos(a) * (r + 11 * s), cy + Math.sin(a) * (r + 11 * s));
+    ctx.stroke();
+
+    if (sus) {
+      ctx.textAlign = 'center';
+      ctx.font = `bold ${Math.round(11 * s)}px "Courier New", monospace`;
+      ctx.fillStyle = `rgba(255,90,60,${strobe})`;
+      ctx.fillText('EYES ON', cx, cy - r - 20 * s);
+    }
+    ctx.restore();
+  }
+
+  /* FIELD COACH card: the current lesson, low and centered so it reads like
+   * a mission prompt rather than a modal. It never covers the crosshair, the
+   * radar or the bars, and it is gone the moment the walk is done. The step
+   * title flashes green on completion — the tick IS the teaching, because it
+   * confirms which of the things you just did was the one being asked for. */
+  _coach(ctx, W, H, s, game) {
+    const c = game.coach && game.coach.card;
+    if (!c) return;
+    const touch = typeof Input !== 'undefined' && Input.touchUI && Input.touchUI().mode;
+    const hint = (touch && c.touch) || c.hint;
+    const flash = c.flash || 0;
+    const y = H - 116 * s;
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    // measure the wider of the two lines so the rule under the title matches
+    ctx.font = `${Math.round(11 * s)}px "Courier New", monospace`;
+    const hintW = ctx.measureText(hint).width;
+    const bw = Math.min(W * 0.86, hintW + 40 * s);
+
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = 'rgba(4, 16, 13, 0.82)';
+    ctx.fillRect(W / 2 - bw / 2, y - 22 * s, bw, 42 * s);
+    ctx.globalAlpha = 1;
+
+    const col = flash > 0 ? '#3cff78' : '#4fd6bb';
+    ctx.strokeStyle = flash > 0 ? 'rgba(60,255,120,0.9)' : 'rgba(79,214,187,0.45)';
+    ctx.lineWidth = Math.max(1, s);
+    ctx.beginPath();
+    ctx.moveTo(W / 2 - bw / 2, y - 22 * s); ctx.lineTo(W / 2 - bw / 2, y + 20 * s);
+    ctx.moveTo(W / 2 + bw / 2, y - 22 * s); ctx.lineTo(W / 2 + bw / 2, y + 20 * s);
+    ctx.stroke();
+
+    ctx.font = `bold ${Math.round(13 * s)}px "Courier New", monospace`;
+    ctx.fillStyle = col;
+    ctx.shadowColor = col;
+    ctx.shadowBlur = 10 * (flash > 0 ? 1.6 : 1);
+    ctx.fillText(c.title, W / 2, y - 8 * s);
+    ctx.shadowBlur = 0;
+
+    ctx.font = `${Math.round(11 * s)}px "Courier New", monospace`;
+    ctx.fillStyle = 'rgba(180, 240, 225, 0.85)';
+    ctx.fillText(hint, W / 2, y + 10 * s);
+    ctx.restore();
   }
 
   /* Kill-chain multiplier under the crosshair, with its decay timer. */
@@ -439,12 +577,27 @@ class HUD {
         const ca = Math.cos(p.angle), sa = Math.sin(p.angle);
         const ang = Math.atan2(fx * sa + fz * ca, fx * ca - fz * sa);
         const sus = (e.sense || 0) >= 0.4;
-        ctx.fillStyle = sus ? 'rgba(255,200,74,0.16)' : 'rgba(110,190,170,0.09)';
+        ctx.fillStyle = sus ? 'rgba(255,200,74,0.30)' : 'rgba(110,205,180,0.20)';
         ctx.beginPath();
         ctx.moveTo(bx, by);
         ctx.arc(bx, by, reach, ang - SIGHT_CONE, ang + SIGHT_CONE);
         ctx.closePath();
         ctx.fill();
+        // the reach arc, drawn as a line: the dish is a route planner, and a
+        // route is planned against the edge of a cone, not its average tint
+        ctx.strokeStyle = sus ? 'rgba(255,200,74,0.75)' : 'rgba(130,225,200,0.5)';
+        ctx.lineWidth = Math.max(1, s);
+        ctx.stroke();
+        // the hearing bubble, which the sim detects on regardless of facing —
+        // the dish would be lying about the safe route without it
+        if (typeof senseNear === 'function') {
+          const nr = (senseNear(p.sig) / range) * R;
+          ctx.beginPath();
+          ctx.arc(bx, by, nr, 0, Math.PI * 2);
+          ctx.fillStyle = sus ? 'rgba(255,200,74,0.22)' : 'rgba(110,205,180,0.16)';
+          ctx.fill();
+          ctx.stroke();
+        }
       }
     }
 
@@ -823,22 +976,48 @@ class HUD {
     }
   }
 
+  /* The centre column: alerts and results. Rows stack DOWNWARD from a fixed
+   * top — stacking up used to walk the second and third message straight into
+   * the radar dish and its labels. Row height follows the tier, so a stack of
+   * chatter can no longer push an alert off its mark. */
   _renderMessages(ctx, W, H, s, dt) {
-    const font = (px) => `bold ${Math.round(px * s)}px "Courier New", monospace`;
     ctx.textAlign = 'center';
-    for (let i = this.messages.length - 1; i >= 0; i--) {
+    let y = H * 0.30;
+    for (let i = 0; i < this.messages.length; i++) {
       const m = this.messages[i];
       m.t += dt;
-      if (m.t > m.dur) { this.messages.splice(i, 1); continue; }
+      if (m.t > m.dur) { this.messages.splice(i--, 1); continue; }
       const a = Math.min(1, (m.dur - m.t) / 0.5) * Math.min(1, m.t / 0.1);
-      ctx.font = font(26);
+      const px = m.alert ? 24 : 16;
+      ctx.font = `bold ${Math.round(px * s)}px "Courier New", monospace`;
       ctx.globalAlpha = a;
       ctx.fillStyle = m.color;
       ctx.shadowColor = m.color;
-      ctx.shadowBlur = 14;
-      ctx.fillText(m.text, W / 2, H * 0.32 - i * 40 * s);
+      ctx.shadowBlur = m.alert ? 14 : 6;
+      ctx.fillText(m.text, W / 2, y);
       ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;
+      y += (px + 12) * s;
     }
+  }
+
+  /* Routine notices, parked just above the bars they are about to explain —
+   * NO GRENADES belongs next to the grenade pips, not across the arena. */
+  _renderChatter(ctx, W, H, s, dt) {
+    if (!this.chatter.length) return;
+    ctx.textAlign = 'left';
+    ctx.font = `${Math.round(12 * s)}px "Courier New", monospace`;
+    let y = H - 190 * s;
+    for (let i = 0; i < this.chatter.length; i++) {
+      const m = this.chatter[i];
+      m.t += dt;
+      if (m.t > m.dur) { this.chatter.splice(i--, 1); continue; }
+      ctx.globalAlpha = Math.min(1, (m.dur - m.t) / 0.4) * Math.min(1, m.t / 0.08);
+      ctx.fillStyle = m.color;
+      ctx.fillText(m.text, 18 * s, y);
+      ctx.globalAlpha = 1;
+      y += 16 * s;
+    }
+    ctx.textAlign = 'center';
   }
 }

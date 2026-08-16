@@ -38,6 +38,7 @@
       <div class="mbtn" id="bt-daily">DAILY OPS<span class="mkey">D</span></div>
       <div class="mbtn" id="bt-host">HOST CO-OP / VERSUS<span class="mkey">H</span></div>
       <div class="mbtn" id="bt-join">JOIN GAME<span class="mkey">J</span></div>
+      <div class="mbtn ghost" id="bt-brief">BRIEFING<span class="mkey">B</span></div>
       <div class="mbtn ghost" id="bt-records">SERVICE RECORD</div>
       <div class="mbtn ghost" id="bt-settings">SETTINGS</div>
     </div>
@@ -137,6 +138,7 @@
         </div>
       </div>
       <div class="menu-hint"><span class="help-kb">&larr; &rarr; &nbsp;OR&nbsp; 1 2 3 4 &nbsp;SELECT CHASSIS</span><span class="help-touch">TAP TO SELECT CHASSIS</span></div>
+      <div id="promotion-row" class="promotion hidden"></div>
       <div class="mbtn ghost hidden" id="bt-checkpoint">START SECTOR 1</div>
       <div class="btn-row">
         <div class="mbtn ghost" id="bt-setup-back">BACK<span class="mkey">ESC</span></div>
@@ -200,11 +202,93 @@
         <div class="mbtn setting" id="st-quality">RENDER QUALITY<span class="st-val" id="stv-quality"></span></div>
         <div class="mbtn setting" id="st-crt">CRT EFFECT<span class="st-val" id="stv-crt"></span></div>
         <div class="mbtn setting" id="st-aimAssist">AIM ASSIST<span class="st-val" id="stv-aimAssist"></span></div>
+        <div class="mbtn setting" id="st-coach">FIELD COACH<span class="st-val" id="stv-coach"></span></div>
+        <div class="mbtn setting" id="st-chase">CHASE CAMERA<span class="st-val" id="stv-chase"></span></div>
         <div class="mbtn setting" id="st-colorblind">COLORBLIND HULLS<span class="st-val" id="stv-colorblind"></span></div>
         <div class="mbtn setting" id="st-fps">FPS COUNTER<span class="st-val" id="stv-fps"></span></div>
         <div class="mbtn ghost" id="bt-settings-back">BACK<span class="mkey">ESC</span></div>
       </div>
       <div class="menu-hint"><span class="help-kb">&larr; &rarr; &nbsp;ADJUST &nbsp;&middot;&nbsp; ENTER &nbsp;CYCLE</span><span class="help-touch">TAP TO CYCLE</span></div>
+    </div>
+  </div>
+
+  <!-- BRIEFING — the manual, in the game, where a manual belongs -->
+  <div id="screen-brief" class="screen hidden">
+    <div class="panel">
+      <div class="panel-head">MISSION BRIEFING</div>
+      <div class="brief-body">
+        <div class="brief-sec">
+          <div class="brief-h">YOU ARE INVISIBLE UNTIL THEY FIND YOU</div>
+          <p>Every patrol runs a sensor. Inside its cone, with line of sight, a
+             detection meter fills — the closer and louder you are, the faster.
+             Halfway it breaks off to <b>INVESTIGATE</b>; full and it <b>ALERTS</b>,
+             radios its pack and raises the sector <b>ALARM</b>. Break line of
+             sight, run cold, and the hunt stands down.</p>
+        </div>
+        <div class="brief-sec">
+          <div class="brief-h">SIGNATURE IS THE WHOLE GAME</div>
+          <p>Speed is noise, a hot cannon is a beacon, boost is a flare — all of
+             it feeds the <b>SIGNATURE</b> bar, and signature is literally how far
+             every sensor on the map reaches. The cones drawn on the floor are
+             live: throttle down and watch them shrink. Speed is armor in a
+             fight and noise on the prowl. Choose which tank to be.</p>
+          <p>Two shapes are drawn under every patrol and you have to respect
+             both. The <b>wedge</b> is what it is looking at. The <b>ring</b> at
+             its feet is what it can <i>hear</i> — inside that, facing stops
+             mattering and it notices you whichever way it is pointed. Both
+             shrink when you do.</p>
+        </div>
+        <div class="brief-sec">
+          <div class="brief-h">KILL THEM BEFORE THEY KNOW</div>
+          <p>A shell that lands on a hull which never saw you is an
+             <b>AMBUSH</b> — triple damage, so one cold shot deletes a patrol from
+             across the map. A hull that dies without ever alerting pays a
+             <b>SILENT KILL</b> bonus, and a boost-ram is the quietest kill in the
+             game. A survivor sounds the alarm, so commit.</p>
+        </div>
+        <div class="brief-sec">
+          <div class="brief-h">THE HEAT CANNON</div>
+          <p>There is no ammo — there is <b>HEAT</b>. Past the redline ticks the gun
+             fires faster and harder; past the top it locks up. Tap <b>R</b> to vent:
+             a marker sweeps the bar and a second tap inside the band is a
+             <b>PERFECT VENT</b> — instant clear plus supercharged shells. Heat is
+             signature, so venting is also how you go dark.</p>
+        </div>
+        <div class="brief-sec">
+          <div class="brief-h">UPLINKS, THEN THE GATE</div>
+          <p>Clip a zone ring <i>once</i> — a drive-by is enough — and the hack runs
+             itself while you are already gone. It pulses, and the noise pulls
+             patrols in. When the last uplink falls the whole sector wakes up
+             and an <b>EXTRACTION GATE</b> opens: the getaway is the finale. Reach it
+             having never tripped the alarm for a <b>GHOST EXTRACTION</b>.</p>
+        </div>
+        <div class="brief-sec">
+          <div class="brief-h">STYLE PAYS, GREED DECIDES</div>
+          <p>The combo runs on <b>variety</b> — repeat one kill method and the chain
+             cools; mix cannon, ram, grenade, mine and shockwave and it climbs to
+             ×5, which also multiplies your <b>TECH</b> income. Kill score does not
+             bank: it rides an at-risk <b>POT</b> that spills 30% every time you take
+             a hit and cashes out when you secure a zone.</p>
+        </div>
+        <div class="brief-sec">
+          <div class="brief-h">CONTROLS</div>
+          <div class="brief-keys help-kb">
+            <span><b>W S</b> DRIVE</span><span><b>A D</b> STEER</span>
+            <span><b>SPACE</b> FIRE</span><span><b>R</b> VENT</span>
+            <span><b>X</b> GRENADE</span><span><b>V</b> MINE</span>
+            <span><b>SHIFT</b> BOOST</span><span><b>S</b>+STEER DRIFT</span>
+            <span><b>C</b> CAMERA</span><span><b>P</b> PAUSE</span>
+          </div>
+          <div class="brief-keys help-touch">
+            <span>LEFT THUMB DRIVE</span><span>RIGHT THUMB FIRE</span>
+            <span>NADE · MINE · VENT · BOOST · CAM</span>
+          </div>
+        </div>
+      </div>
+      <div class="menu">
+        <div class="mbtn ghost" id="bt-brief-coach"><span id="stv-brief-coach">REPLAY FIELD COACH</span></div>
+        <div class="mbtn ghost" id="bt-brief-back">BACK<span class="mkey">ESC</span></div>
+      </div>
     </div>
   </div>
 
@@ -250,6 +334,7 @@
 <script src="js/geometry.js"></script>
 <script src="js/renderer.js"></script>
 <script src="js/hud.js"></script>
+<script src="js/tutorial.js"></script>
 <script src="js/game.js"></script>
 <script src="js/net.js"></script>
 <script src="js/main.js"></script>

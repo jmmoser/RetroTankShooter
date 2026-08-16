@@ -331,22 +331,90 @@ const Geometry = (() => {
 
   /* Flat ground wedge showing a patrol's sensor cone: apex at the origin,
    * unit reach toward -Z (the hull's facing), spanning the sim's vision
-   * half-angle (SIGHT_CONE in game.js — keep them in step). Vertex colour
-   * fades to black toward the rim, so the additive draw reads as a beam
-   * losing power with distance instead of a hard-edged slab. Scaled per
-   * draw to the hull's live senseRange against the player's signature. */
+   * half-angle (SIGHT_CONE in game.js — keep them in step). Scaled per draw
+   * to the hull's live senseRange against the player's signature.
+   *
+   * The fill stays lit all the way out rather than fading to black at the
+   * rim. A cone that dims exactly where it ends hides the one number the
+   * player is steering against — the boundary — so the falloff only takes it
+   * to a floor, and `gazeEdge` re-draws that boundary as a line. */
+  const GAZE_HALF = 1.05;   // matches SIGHT_CONE in game.js
   function gazeCone() {
     const verts = [];
-    const HALF = 1.05;   // matches SIGHT_CONE in game.js
-    const seg = 14;
+    const seg = 16;
     const push = (x, z, c) => verts.push(x, 0, z, 0, 1, 0, c, c, c);
     for (let i = 0; i < seg; i++) {
-      const a0 = -HALF + (i / seg) * HALF * 2;
-      const a1 = -HALF + ((i + 1) / seg) * HALF * 2;
+      const a0 = -GAZE_HALF + (i / seg) * GAZE_HALF * 2;
+      const a1 = -GAZE_HALF + ((i + 1) / seg) * GAZE_HALF * 2;
       // wound to face +Y (see decalDisc): apex, then increasing angle
       push(0, 0, 1);
-      push(-Math.sin(a0), -Math.cos(a0), 0);
-      push(-Math.sin(a1), -Math.cos(a1), 0);
+      push(-Math.sin(a0), -Math.cos(a0), 0.22);
+      push(-Math.sin(a1), -Math.cos(a1), 0.22);
+    }
+    return new Float32Array(verts);
+  }
+
+  /* The cone's outline — the arc at its reach plus the two side edges — as a
+   * thin band of triangles. This is the part the player actually steers
+   * against: a line on the floor saying "past here it cannot see you". Same
+   * unit scale as gazeCone, so one senseRange drives both. */
+  function gazeEdge() {
+    const verts = [];
+    const seg = 16;
+    const W = 0.024;   // band half-width, in reach units
+    const push = (x, z) => verts.push(x, 0, z, 0, 1, 0, 1, 1, 1);
+    const quad = (ax, az, bx, bz, nx, nz) => {
+      // wound to face +Y, matching gazeCone
+      push(ax - nx, az - nz); push(ax + nx, az + nz); push(bx + nx, bz + nz);
+      push(ax - nx, az - nz); push(bx + nx, bz + nz); push(bx - nx, bz - nz);
+    };
+    // the arc at full reach
+    for (let i = 0; i < seg; i++) {
+      const a0 = -GAZE_HALF + (i / seg) * GAZE_HALF * 2;
+      const a1 = -GAZE_HALF + ((i + 1) / seg) * GAZE_HALF * 2;
+      const x0 = -Math.sin(a0), z0 = -Math.cos(a0);
+      const x1 = -Math.sin(a1), z1 = -Math.cos(a1);
+      // the band thickens radially: the normal is the radius direction
+      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+      const ml = Math.hypot(mx, mz) || 1;
+      quad(x0, z0, x1, z1, (mx / ml) * W, (mz / ml) * W);
+    }
+    // the two straight sides, apex out to the arc
+    for (const side of [-1, 1]) {
+      const a = side * GAZE_HALF;
+      const ex = -Math.sin(a), ez = -Math.cos(a);
+      quad(0, 0, ex, ez, -ez * W, ex * W);
+    }
+    return new Float32Array(verts);
+  }
+
+  /* The cone's boundary standing up: a low curtain of light along the reach
+   * arc. A line painted on the floor is perfectly legible from the chase rig
+   * and nearly invisible from the cockpit eye, which sits 2.3 units up and
+   * looks ALONG the floor rather than down at it — from there the same line is
+   * a smear on the horizon. The curtain is the same boundary with height, so
+   * "past here it cannot find you" reads from either camera.
+   *
+   * Unit reach like gazeCone; the vertex colour fades to black at the top so
+   * the additive draw is a haze rather than a wall you cannot see past. */
+  function gazeCurtain() {
+    const verts = [];
+    const seg = 16;
+    const H = 0.11;   // in reach units — a curtain, not a fence
+    const push = (x, y, z, c) => verts.push(x, y, z, 0, 0, 1, c, c, c);
+    for (let i = 0; i < seg; i++) {
+      const a0 = -GAZE_HALF + (i / seg) * GAZE_HALF * 2;
+      const a1 = -GAZE_HALF + ((i + 1) / seg) * GAZE_HALF * 2;
+      const x0 = -Math.sin(a0), z0 = -Math.cos(a0);
+      const x1 = -Math.sin(a1), z1 = -Math.cos(a1);
+      // two triangles per segment, drawn from both sides — the player can be
+      // inside the cone or outside it and the curtain has to read either way
+      for (const [p, q] of [[0, 1], [1, 0]]) {
+        const ax = p ? x1 : x0, az = p ? z1 : z0;
+        const bx = q ? x1 : x0, bz = q ? z1 : z0;
+        push(ax, 0, az, 1); push(bx, 0, bz, 1); push(bx, H, bz, 0);
+        push(ax, 0, az, 1); push(bx, H, bz, 0); push(ax, H, az, 0);
+      }
     }
     return new Float32Array(verts);
   }
@@ -574,5 +642,5 @@ const Geometry = (() => {
     return b.build();
   }
 
-  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, arenaWall, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring, gazeCone, decalDisc, decalQuad };
+  return { MeshBuilder, C, tank, tankWire, tankSolid, shard, depot, flag, block, pyramidMesh, shot, powerup, mine, wallSegment, arenaWall, ground, gridLines, skyDome, mountains, stars, eclipse, beacon, bossBody, bossTurret, bossCore, ring, gazeCone, gazeEdge, gazeCurtain, decalDisc, decalQuad };
 })();

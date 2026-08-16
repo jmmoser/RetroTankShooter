@@ -307,6 +307,41 @@ body.touch-ui .mbtn { padding: 10px 20px; }
   text-shadow: 0 0 8px rgba(232, 199, 90, 0.5);
 }
 
+/* ---------- briefing ---------- */
+/* The manual, in the game. Long enough to need scrolling on a phone, so the
+ * body scrolls inside the panel and the buttons stay pinned under it. */
+.brief-body {
+  width: 100%;
+  max-height: 58vh;
+  overflow-y: auto;
+  touch-action: pan-y;
+  scrollbar-width: thin;
+  display: flex; flex-direction: column; gap: 15px;
+  text-align: left;
+  padding-right: 6px;
+}
+.brief-sec { display: flex; flex-direction: column; gap: 5px; }
+.brief-h {
+  font-size: 12px; font-weight: bold; letter-spacing: 3px;
+  color: var(--teal-bright);
+  text-shadow: 0 0 8px rgba(79, 214, 187, 0.45);
+}
+.brief-body p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.65;
+  letter-spacing: 0.6px;
+  color: rgba(168, 226, 212, 0.86);
+}
+.brief-body b { color: #e8c75a; font-weight: bold; }
+.brief-body i { color: var(--teal-bright); font-style: normal; }
+.brief-keys {
+  display: flex; flex-wrap: wrap; gap: 5px 16px;
+  font-size: 11px; letter-spacing: 1px;
+  color: rgba(168, 226, 212, 0.8);
+}
+.brief-keys b { color: var(--teal-bright); }
+
 /* ---------- service record ---------- */
 .records-list {
   display: flex; flex-direction: column; gap: 7px;
@@ -639,3 +674,42 @@ body.touch-ui .mbtn { padding: 10px 20px; }
   box-shadow: 0 0 14px rgba(232, 199, 90, 0.35);
 }
 .gate-choice .gate-pay { color: #e8c75a; }
+
+/* ---------- run debrief ---------- */
+/* The numbers a stealth run is actually judged on. A grid rather than a
+ * paragraph: the point is to scan it, spot the zero, and go again. */
+.debrief {
+  display: flex; flex-wrap: wrap; justify-content: center;
+  gap: 6px 18px;
+  margin: 12px 0 2px;
+}
+.db-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.db-k {
+  font-size: 9px; letter-spacing: 2px;
+  color: rgba(79, 214, 187, 0.55);
+}
+.db-v {
+  font-size: 16px; font-weight: bold; letter-spacing: 1px;
+  color: var(--teal-bright);
+}
+.db-death {
+  margin-top: 10px;
+  font-size: 11px; letter-spacing: 2px;
+  color: #ff7a6a;
+}
+.db-verdict {
+  margin-top: 8px;
+  max-width: 340px;
+  font-size: 10px; line-height: 1.6; letter-spacing: 1px;
+  color: #e8c75a;
+}
+
+/* ---------- field promotion ---------- */
+/* What your rank is worth on this sortie, said on the screen where you commit
+   to one — a career ladder that never spends is a word, not a reward. */
+.promotion {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #e8c75a;
+  text-shadow: 0 0 8px rgba(232, 199, 90, 0.4);
+}
