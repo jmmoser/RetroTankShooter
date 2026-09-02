@@ -6,7 +6,8 @@ const { loadScripts, fakeHud, check, assert } = require('./helpers');
 loadScripts(['game.js'],
   'global.Game = Game; global.senseRange = senseRange; global.senseNear = senseNear; ' +
   'global.ENEMY_TYPES = ENEMY_TYPES; global.SENSE_SUS = SENSE_SUS; ' +
-  'global.SENSE_RAMP = SENSE_RAMP; global.AMBUSH_MUL = AMBUSH_MUL;');
+  'global.SENSE_RAMP = SENSE_RAMP; global.AMBUSH_MUL = AMBUSH_MUL; ' +
+  'global.SPLASH_AMBUSH_MUL = SPLASH_AMBUSH_MUL;');
 const hud = fakeHud();
 
 function freshGame() {
@@ -121,11 +122,22 @@ check('AMBUSH: an alerted hull takes plain cannon damage', () => {
     'expected plain damage, hp = ' + e.hp);
 });
 
-check('AMBUSH is cannon-only: grenades on unaware hulls stay at listed damage', () => {
+check('a TRAP (grenade/mine) on an unaware hull hits ×SPLASH_AMBUSH_MUL, below the cannon ×3', () => {
+  assert(SPLASH_AMBUSH_MUL > 1 && SPLASH_AMBUSH_MUL < AMBUSH_MUL, 'trap bonus sits between plain and ambush');
   const { g, e } = fieldWith('drone');
-  g._hurtEnemy(0, 25, 'solo', 'nade');
-  assert(g.enemies.length === 1 && Math.abs(e.hp - (e.maxHp - 25)) < 1e-9,
-    'nade damage was multiplied');
+  g._hurtEnemy(0, 25, 'solo', 'nade', 0, -20);
+  assert(g.enemies.length === 1 && Math.abs(e.hp - (e.maxHp - 25 * SPLASH_AMBUSH_MUL)) < 1e-9,
+    'nade damage should be ×' + SPLASH_AMBUSH_MUL + ', hp = ' + e.hp);
+});
+
+check('a blast survivor investigates the BLAST, it does not radio your position', () => {
+  const { g, e } = fieldWith('hunter');
+  g._hurtEnemy(0, 10, 'solo', 'mine', 30, 40);
+  assert(g.enemies.length === 1, 'hunter should survive a weak mine');
+  assert(!e.alerted, 'a splash survivor must not go straight to alerted');
+  assert(g.alarmT <= 0, 'a lobbed grenade from cover must not raise the sector alarm');
+  assert(e.sense >= SENSE_SUS, 'it is suspicious now');
+  assert(e.invX === 30 && e.invZ === 40 && e.invT > 0, 'it goes to look at the blast point');
 });
 
 check('AMBUSH survivor still alerts and raises the alarm — commit to kills', () => {

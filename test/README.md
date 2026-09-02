@@ -13,18 +13,23 @@ context — `helpers.js` loads the needed `js/` files into a vm per process).
 
 | Suite | Covers |
 | --- | --- |
+| `t-audio.js` | `AudioSys` against a fake `AudioContext`: the Safari `interrupted` resume, the per-key voice cap, per-hull fire voices, stingers and the paced heartbeat |
+| `t-balance.js` | the ram cap and the shellback plate, trap damage scaling, the held extraction gate, the grid sweep clock, capped enemy scaling, the contact-lost stand-down, medal-gated tech, the campaign finale, once-per-run field promotion and coach tips, the zero-uplink guard, mine restock, TWIN CANNON heat |
 | `t-game-combat.js` | splash/chain-kill array safety, line-of-sight (segment-vs-AABB), piercing shells, combat soak |
 | `t-game-modes.js` | boss sectors, versus rules (tie-break, self-damage), warp gates, daily determinism, extraction, mutators, upgrade stacking, warden hold AI, run-stat shape parity, `ENEMY_TYPES` knobs (shellback plate arc, warden aura) driving real behavior |
 | `t-geometry.js` | outward face winding (octahedron/box/pyramid), grid edge coverage, arena-wall perimeter/no-overlap, wireframe edge sanity |
+| `t-input.js` | key bindings (defaults, rebinding, persistence), axis composition, the radial gamepad deadzone, active-pad selection, A-not-Enter in play and the pad-only draft edge — against a stubbed DOM/gamepad |
 | `t-m4.js` | matrix composition and the out-parameter scratch-matrix contract |
 | `t-net.js` | lobby full-rejection (host and client sides), mid-game roster pruning, snapshot serialize→apply round-trip, snapshot interpolation |
 | `t-presentation.js` | impact/hit-stop funnel, ground-decal pool (cap, fade, reaping), tread-print cadence, positional-sound encoding |
 | `t-settings-daily.js` | daily best/streak persistence incl. UTC-midnight straddles and corrupted-storage hardening |
-| `t-stealth.js` | `senseRange` as the shared sensor truth, the two-stage detect meter (glimpse telegraph vs confirm), the first-suspicion ping |
+| `t-stealth.js` | `senseRange` as the shared sensor truth, the two-stage detect meter (glimpse telegraph vs confirm), the first-suspicion ping, trap (grenade/mine) ambush damage and the blast-survivor rule |
+| `t-sw-assets.js` | every script/stylesheet `index.html` loads is in the service worker's precache list and exists on disk; the shared version stamp |
 
 ## Browser end-to-end
 
-`e2e.mjs` drives the real game in headless Chromium: boot + build tag,
+`e2e.mjs` drives the real game in a headless browser (Chromium by default;
+`PA_BROWSER=firefox` or `webkit` picks another engine — CI runs all three): boot + build tag,
 service-worker install and cache naming, gameplay (deploy → drive → fire →
 grenades/mines), zero WebGL/console errors, the keyup-in-text-field stuck-key
 regression, and an offline reload against the SW cache. It serves the repo
@@ -37,5 +42,6 @@ node test/e2e.mjs
 ```
 
 Not covered headlessly (browser-API bound, exercised only by `e2e.mjs` or by
-hand): `audio.js` (Web Audio), `input.js` touch/gamepad paths, `hud.js`
+hand): `audio.js` signal routing (only its lifecycle/limiting logic is unit
+tested), `input.js` touch paths, `hud.js`
 canvas drawing, `main.js` screen flow/DOM, and actual GPU rendering output.

@@ -81,6 +81,13 @@ const AMBUSH_MUL = 3;      // cannon damage vs a hull that never saw you — the
                            // gun one-shots bigger prey (and glows brighter)
 const ALERT_RADIUS = 45;   // an alerted hull radios packmates this close
 const EXIT_RADIUS = 13;    // extraction gate: cross the ring to warp out
+const EXIT_CHARGE = 4;     // ...and HOLD it: seconds inside the ring before the warp fires
+const CAMPAIGN_END = 15;   // the third WARLORD: clearing it completes the campaign
+const SWEEP_START = 60;    // seconds of sector time before the grid starts sweeping
+const SWEEP_EVERY = 45;    // ...and how often a fresh blind patrol warps in after that
+const SPLASH_AMBUSH_MUL = 2; // grenade / mine damage vs a hull that never saw it coming
+const RAM_CAP = 105;       // boost-ram damage ceiling before RAM PLATING
+const WRECK_CAP = 14;      // burned-out hulls left standing on the field
 
 /* Losing a hunt. Getting seen has to be a setback you can PLAY OUT OF, not a
  * one-way door into a shooting gallery — otherwise "break line of sight and
@@ -136,6 +143,7 @@ const BOUNTIES = [
   { id: 'graze',  name: 'GRAZE 8 SHOTS',    n: 8 },
   { id: 'mult',   name: 'REACH COMBO ×4',   n: 1 },
   { id: 'silent', name: '3 SILENT KILLS',   n: 3 },
+  { id: 'ghostspike', name: 'SPIKE 2 ZONES UNDETECTED', n: 2 },
 ];
 
 // Boss turret mounts in hull-local space (model faces -Z). Shared with the
@@ -186,25 +194,25 @@ const ENEMY_TYPES = {
  * applyUpgrade (instant stats) or read live from p.up (weapon behavior).
  * This is the run's build system — by mid-game no two tanks fight alike. */
 const UPGRADES = [
-  { id: 'twin',       name: 'TWIN CANNON',      desc: '+1 barrel per trigger pull',            max: 2 },
+  { id: 'twin',       name: 'TWIN CANNON',      desc: '+1 barrel per trigger pull (runs hotter)', max: 2 },
   { id: 'ricochet',   name: 'RICOCHET ROUNDS',  desc: 'shells bounce off walls (+1 bounce)',   max: 2 },
   { id: 'pierce',     name: 'PIERCING CORE',    desc: 'shells punch through +1 tank',          max: 2 },
   { id: 'rapid',      name: 'AUTOLOADER',       desc: 'fire rate +18%',                        max: 3 },
   { id: 'hipower',    name: 'HOT SHELLS',       desc: 'cannon damage +30%',                    max: 3 },
   { id: 'cluster',    name: 'CLUSTER CHARGES',  desc: 'grenades split into bomblets',          max: 1 },
-  { id: 'shockwave',  name: 'SHOCK DISCHARGE',  desc: 'ending a boost slams out a shockwave',  max: 1 },
-  { id: 'ram',        name: 'RAM PLATING',      desc: 'boost-rams hit harder, cost no shields', max: 2 },
+  { id: 'shockwave',  name: 'SHOCK DISCHARGE',  desc: 'ending a boost slams out a shockwave',  max: 1, medal: 'chain5' },
+  { id: 'ram',        name: 'RAM PLATING',      desc: 'boost-rams hit harder, cost no shields, crack plate', max: 2, medal: 'giantkiller' },
   { id: 'siphon',     name: 'SHIELD SIPHON',    desc: 'kills restore 4 shields',               max: 3 },
   { id: 'coolhead',   name: 'COMBO REGULATOR',  desc: 'combo window +1.5s',                    max: 2 },
   { id: 'bandolier',  name: 'BANDOLIER',        desc: '+2 max grenades, +1 max mine (restocked)', max: 2 },
   { id: 'plating',    name: 'REACTIVE PLATING', desc: 'max shields +25 (repaired)',            max: 3 },
   { id: 'cache',      name: 'COOLANT LOOP',     desc: 'heat capacity +25, faster dissipation', max: 3 },
   { id: 'vent',       name: 'VENT TUNING',      desc: 'wider perfect-vent window, +2 supercharged shells', max: 2 },
-  { id: 'razor',      name: 'RAZOR EDGE',       desc: 'grazes refund more boost and pay tech', max: 2 },
-  { id: 'uplink',     name: 'UPLINK SPIKE',     desc: 'capture zones 30% faster',              max: 2 },
-  { id: 'magnet',     name: 'SALVAGE MAGNET',   desc: 'pickups are drawn to you',              max: 1 },
+  { id: 'razor',      name: 'RAZOR EDGE',       desc: 'grazes refund boost, cool the gun, stretch the chain', max: 2 },
+  { id: 'uplink',     name: 'UPLINK SPIKE',     desc: 'spikes hack 30% faster and pulse quieter', max: 2 },
+  { id: 'magnet',     name: 'SALVAGE MAGNET',   desc: 'pickups are drawn to you, +15% drop rate', max: 1 },
   { id: 'overcharge', name: 'BOOST OVERCHARGE', desc: '+35 boost capacity, faster regen',      max: 2 },
-  { id: 'ghost',      name: 'GHOST PLATING',    desc: 'enemy sensors fill 20% slower',         max: 2 },
+  { id: 'ghost',      name: 'GHOST PLATING',    desc: 'enemy sensors fill 20% slower',         max: 2, medal: 'ghost' },
 ];
 
 // Spectre-style solid slabs: saturated flat-shaded colors that pop
@@ -224,6 +232,12 @@ const DEBRIS_COLORS = {
   shellback: [0.62, 0.68, 0.74],
   warden:    [0.95, 0.76, 0.28],
   player:    [0.25, 1.0, 0.82],
+};
+
+// each hull type fires with its own voice (audio.js), so the threat reads by ear
+const ENEMY_FIRE_SFX = {
+  drone: 'fireDrone', hunter: 'fireHunter', sniper: 'fireSniper', phantom: 'firePhantom',
+  shellback: 'fireShellback', warden: 'fireWarden',
 };
 
 const POWERUP_TYPES = {
@@ -357,6 +371,10 @@ class Game {
     this.frameSounds = []; // sfx triggered this update — drained by the net layer
     this.frameBursts = []; // particle bursts this update — drained by the net layer
     this.frameDebris = []; // shard spawns this update — drained by the net layer
+    this.frameWrecks = []; // burned-out hulls placed this update — drained by the net layer
+    this.wrecks = [];      // the carcasses themselves: { type, x, z, angle, life }
+    this.sweepT = 0;       // countdown to the grid's next blind sweep patrol
+    this.campaignWon = false; // sector CAMPAIGN_END cleared this run
     this.levelBonus = 0;
     this.killsThisLevel = 0;
     this.combo = 0;        // style points in the current chain (float)
@@ -521,6 +539,8 @@ class Game {
     this.mutator = null;
     this.gates = null;
     this.runStats = freshRunStats();
+    this.campaignWon = false;
+    this.runSeq = (this.runSeq || 0) + 1;   // main.js keys its warp-in card on this
     // one-shot coaching lines: the first spike explains that zones finish
     // themselves, so nobody sits on a ring waiting for a bar that isn't there
     this._hintSpike = false;
@@ -543,6 +563,9 @@ class Game {
     // Solo campaign only — Daily Ops is a shared leaderboard, and in co-op the
     // host's rank must not silently arm everybody else's tank.
     this.startTech = 0;
+    // reset per RUN, not per page load — one Game instance serves every run
+    // of a session, and a stale flag paid the promotion out exactly once
+    this.startTechPaid = false;
     if (!this.versus && !this.dailySeed && defs.length === 1 &&
         typeof Progress !== 'undefined' && Progress.startingTech) {
       this.startTech = Progress.startingTech();
@@ -586,6 +609,8 @@ class Game {
     this.decals = [];
     this.depots = [];
     this.mines = [];
+    this.wrecks = [];
+    this.sweepT = 0;
     this._flagSites = null;
     this.shake = 0;
     this.hitStop = 0;
@@ -641,7 +666,10 @@ class Game {
     // per-sector bounty: an optional objective, auto-tracked, paid in tech
     this.bounty = null;
     if (!this.versus && !this.bossLevel) {
-      const b = BOUNTIES[(RNG() * BOUNTIES.length) | 0];
+      // the loud bounties (graze, combo) wait until the stealth loop has been
+      // learned — sector 1 and 2 should never be asking for a firefight
+      const pool = BOUNTIES.filter((b) => !((b.id === 'graze' || b.id === 'mult') && L <= 2));
+      const b = pool[(RNG() * pool.length) | 0];
       this.bounty = { id: b.id, name: b.name, n: b.n, prog: 0, paid: false };
     }
     this.lastKillVia = null;
@@ -673,6 +701,9 @@ class Game {
       this._genFlags(Math.min(3 + Math.floor(L / 3), 5));
       this._genEnemies();
       this._genDepots();
+      // a sector with no uplink sites (every placement failed) had no way to
+      // ever open its gate — the run was stuck on an unwinnable map
+      if (!this.flags.length) this._openExtraction();
     }
     // a couple of starter pickups scattered on the field
     for (let i = 0; i < 2; i++) {
@@ -924,7 +955,11 @@ class Game {
   _spawnEnemy(type, x, z, alerted) {
     const L = this.level;
     const spec = ENEMY_TYPES[type];
-    const diff = 1 + (L - 1) * 0.085;
+    // speed / fire-rate scaling is capped: uncapped, deep-sector hunters
+    // outran a boosting hull and disengaging stopped being a decision. What
+    // keeps climbing instead is HP — deep runs are "hulls are harder to
+    // delete", not "you can never leave".
+    const diff = Math.min(1.5, 1 + (L - 1) * 0.085);
     // elites: hardened variants that show up from sector 3 — tougher, faster,
     // meaner and worth half again the score. They strobe white-hot in the
     // arena and wear a ring on the radar. ELITE SURGE triples the odds;
@@ -932,7 +967,8 @@ class Game {
     let eliteP = !this.bossLevel && L >= 3 ? Math.min(0.06 + L * 0.02, 0.3) : 0;
     if (this.mutator === 'elite') eliteP = Math.min(eliteP * 3, 0.75);
     const elite = this.mutator === 'gauntlet' || RNG() < eliteP;
-    const hpMul = (elite ? 1.6 : 1) * (this.mutator === 'swarm' ? 0.7 : 1);
+    const hpMul = (elite ? 1.6 : 1) * (this.mutator === 'swarm' ? 0.7 : 1) *
+      Math.min(1.6, 1 + (L - 1) * 0.05);
     this.enemies.push({
       type,
       elite,
@@ -1040,6 +1076,7 @@ class Game {
     this.frameSounds.length = 0;
     this.frameBursts.length = 0;
     this.frameDebris.length = 0;
+    this.frameWrecks.length = 0;
     if (this.mode !== 'playing') return;
     this.shake = Math.max(0, this.shake - dt * 3);
 
@@ -1063,7 +1100,10 @@ class Game {
       this._updateEnemies(dt);
       this._updateBoss(dt);
       this._updateSpawns(dt);
+      this._updateSweep(dt);
+      this._updateExit(dt);
     }
+    this._updateWrecks(dt);
     this._updateRings(dt);
     this._updateMines(dt);
     this._updateProjectiles(dt);
@@ -1097,7 +1137,7 @@ class Game {
 
     const objectiveDone = this.bossLevel
       ? (this.boss && this.boss.dead && this.boss.deathT <= 0)
-      : (this.exit && this._allAtExit());
+      : (this.exit && (this.exit.charge || 0) >= EXIT_CHARGE);
     if (this._anyAlive() && objectiveDone) {
       this._levelClear();
     } else if (!this._anyAlive()) {
@@ -1164,7 +1204,9 @@ class Game {
     // waves arrive hunting, re-establish contact, re-arm the clock, forever.
     // That loop is what made "break line of sight and run cold" unplayable —
     // the hunt could not time out because the sector kept refilling.
-    if (this.alarmT <= 0 || this.contactT > PRESSURE_GRACE) {
+    // ...except on the way out: the extraction is the finale, and the grid
+    // keeps the screws on whether or not it can see you right now
+    if (this.alarmT <= 0 || (this.contactT > PRESSURE_GRACE && !this.exit)) {
       this.pressureT = Math.min(this.pressureT, 4);
       return;
     }
@@ -1215,6 +1257,7 @@ class Game {
         for (const h of holders) spike = Math.max(spike, h.up ? (h.up.uplink || 0) : 0);
         f.spikeUp = spike;
         f.owners = holders.map((h) => h.id);
+        if (this.alarmT <= 0) this._bountyTick('ghostspike');
         this._burst(f.x, 1.6, f.z, 10, [0.4, 0.9, 1], 7);
         this._sfx('select', f.x, f.z);
         if (holders.some((h) => h.id === this.localId)) {
@@ -1232,7 +1275,9 @@ class Game {
       f.pulseT = (f.pulseT || 0) - dt;
       if (f.pulseT <= 0) {
         f.pulseT = 1.1;
-        this._noise(f.x, f.z, 55, 0.55);
+        // UPLINK SPIKE: a quieter hack — the noise is the price of the spike,
+        // so this is the upgrade that actually changes what a spike costs
+        this._noise(f.x, f.z, 55 - 12 * (f.spikeUp || 0), 0.55);
       }
       if (f.cap >= 1) {
         f.cap = 1;
@@ -1315,6 +1360,20 @@ class Game {
     e.invX = this.lastKnownX + rand(-14, 14);
     e.invZ = this.lastKnownZ + rand(-14, 14);
     e.invT = rand(6, 10);
+    // The LAST hull to let go ends the hunt right there. The alarm clock used
+    // to keep counting down seconds the player had already won (hulls drop
+    // lock at LOSE_CONTACT, the alarm ran 9–20 s), the HUD counted them, the
+    // debrief billed them as hunted — and the stand-down toast almost never
+    // played because by expiry there was nobody left to stand down.
+    if (this.alarmT > 0 && this.alarmT < 1e8 && !this.exit && !this.enemies.some((o) => o.alerted)) {
+      this._standDownToast();
+    }
+  }
+
+  _standDownToast() {
+    this.alarmT = 0;
+    this._sfx('cloak');
+    this.hud.message('CONTACT LOST — YOU ARE A GHOST AGAIN', '#4fd6bb', 2.4, 'alert');
   }
 
   _standDown() {
@@ -1323,16 +1382,9 @@ class Game {
     for (const e of this.enemies) {
       if (!e.alerted) continue;
       any = true;
-      e.alerted = false;
-      e.sense = SENSE_SUS + 0.2;
-      e.invX = this.lastKnownX + rand(-14, 14);
-      e.invZ = this.lastKnownZ + rand(-14, 14);
-      e.invT = rand(6, 10);
+      this._loseContact(e);
     }
-    if (any) {
-      this._sfx('cloak');
-      this.hud.message('CONTACT LOST — YOU ARE A GHOST AGAIN', '#4fd6bb', 2.4, 'alert');
-    }
+    if (any) this._standDownToast();
   }
 
   // ---- in-run TECH drafts ---------------------------------------------------------
@@ -1361,8 +1413,18 @@ class Game {
     p.tech01 = Math.min(1, p.tech / p.techNext);
   }
 
+  /* A few upgrades are EARNED: the medal that proves a play style unlocks the
+   * tech that rewards it (GHOST PLATING for a ghost extraction, SHOCK
+   * DISCHARGE for a ×5 chain, RAM PLATING for a downed WARLORD). Career
+   * progress finally shapes the draft, not just the starting tech. The
+   * headless suites (no Medals) see the full pool. */
+  _upgradeUnlocked(u) {
+    if (!u.medal || typeof Medals === 'undefined') return true;
+    return Medals.has(u.medal);
+  }
+
   _rollOffers(p) {
-    const pool = UPGRADES.filter((u) => (p.up[u.id] || 0) < u.max);
+    const pool = UPGRADES.filter((u) => (p.up[u.id] || 0) < u.max && this._upgradeUnlocked(u));
     if (!pool.length) { this.score += 500; return; }   // full build: cash it in
     for (let i = pool.length - 1; i > 0; i--) {
       const j = (RNG() * (i + 1)) | 0;
@@ -1383,7 +1445,9 @@ class Game {
       case 'bandolier':  p.maxNades += 2; p.nades = Math.min(p.maxNades, p.nades + 2);
                          p.maxMines += 1; p.mines = Math.min(p.maxMines, p.mines + 1); break;
       case 'plating':    p.maxShields += 25; p.shields = Math.min(p.maxShields, p.shields + 25); break;
-      case 'cache':      p.maxHeat += 25; p.heatDiss *= 1.25; p.heat = 0; break;
+      // (no free instant vent on pick: the draft floats over a live fight, and
+      // a heat reset mid-exchange was a fourth upgrade nobody had chosen)
+      case 'cache':      p.maxHeat += 25; p.heatDiss *= 1.25; break;
       case 'overcharge': p.maxBoost += 35; p.boost = p.maxBoost; break;
     }
     p.pendingOffers = null;
@@ -1443,6 +1507,7 @@ class Game {
    * gate opens across the arena — the run ends there, through a sector
    * that is wide awake. The getaway is the finale, not a mop-up. */
   _openExtraction() {
+    if (this.exit) return;
     let best = null, bd = -1;
     for (let i = 0; i < 14; i++) {
       const pos = this._findSpot(6, 30);
@@ -1451,7 +1516,7 @@ class Game {
       if (d > bd) { bd = d; best = pos; }
     }
     if (!best) best = [0, -ARENA_HALF + 30];
-    this.exit = { x: best[0], z: best[1] };
+    this.exit = { x: best[0], z: best[1], charge: 0 };
     this.ghostRun = !this.everAlarmed;   // the sneak is judged before the getaway
     this.everAlarmed = true;
     this.alarmT = 1e9;                   // no going dark on the way out
@@ -1459,7 +1524,48 @@ class Game {
     this.pressureT = Math.min(this.pressureT, 2);
     for (const e of this.enemies) { e.alerted = true; e.sense = 1; e.seenT = 0; }
     this._sfx('alarm');
-    this.hud.message('UPLINK COMPLETE — REACH THE EXTRACTION GATE', '#4fd6bb', 3.2, 'alert');
+    this.hud.message('UPLINK COMPLETE — REACH THE GATE AND HOLD IT', '#4fd6bb', 3.2, 'alert');
+  }
+
+  /* The gate must be HELD. The warp needs EXIT_CHARGE seconds with the whole
+   * squad inside the ring, and a sector that is wide awake gets those seconds
+   * to make its case. A touch-and-go finale let a boosting Scout lap every
+   * uplink ring and the gate without firing a shot; this is a last stand. */
+  _updateExit(dt) {
+    const ex = this.exit;
+    if (!ex) return;
+    const was = ex.charge || 0;
+    if (this._allAtExit()) {
+      ex.charge = Math.min(EXIT_CHARGE, was + dt);
+      if (was <= 0) {
+        this._sfx('charge', ex.x, ex.z);
+        this.hud.message('HOLD THE GATE — WARP CHARGING', '#d8f4ff', 1.6, 'alert');
+      }
+    } else {
+      ex.charge = Math.max(0, was - dt * 2);   // step out and the charge bleeds
+    }
+  }
+
+  /* The clock. A patient player could ghost any sector for free: patrols
+   * wander, eventually show their backs, and nothing ever changed. Past
+   * SWEEP_START the grid starts sweeping — a fresh blind patrol warps in near
+   * a live uplink every SWEEP_EVERY seconds. Not a converge wave (they arrive
+   * blind); just a sector that keeps getting thicker the longer you take. */
+  _updateSweep(dt) {
+    if (this.versus || this.bossLevel || this.exit) return;
+    if (this.levelTime < SWEEP_START) return;
+    this.sweepT -= dt;
+    if (this.sweepT > 0) return;
+    this.sweepT = SWEEP_EVERY;
+    if (this.enemies.length + this.pendingSpawns.length >= 14) return;
+    const live = this.flags.filter((f) => !f.taken);
+    if (!live.length) return;
+    const f = live[(RNG() * live.length) | 0];
+    const pos = this._findSpotNear(f.x, f.z, 14, 34, 4, 45);
+    if (!pos) return;
+    this.pendingSpawns.push({ x: pos[0], z: pos[1], type: this._reinforcementType(), t: 1.1, tick: 0, al: 0 });
+    this._sfx('warp');
+    this.hud.message('GRID SWEEP — FRESH PATROL INBOUND', '#ffd24a', 2, 'chatter');
   }
 
   /* Sector clear condition: every living tank inside the gate ring. */
@@ -1532,7 +1638,10 @@ class Game {
     // kill score rides in the POT until you bank it at a zone — greed is a
     // live decision, not a stat
     if (this.versus) this.score += pts;
-    else this.pot += pts;
+    else {
+      this.pot += pts;
+      if (ownerId === this.localId) this.runStats.potPeak = Math.max(this.runStats.potPeak || 0, this.pot);
+    }
     // stylish play also builds faster: tech income scales with the chain
     this._awardTech(this._playerById(ownerId), Math.round((baseScore / 10) * (1 + (mult - 1) * 0.5)));
     if (ownerId === this.localId) {
@@ -1780,10 +1889,38 @@ class Game {
         const e = this.enemies[j];
         if (dist2(p.x, p.z, e.x, e.z) > 3.4 * 3.4) continue;
         p.ramCd = 0.5;
-        const rdmg = 60 + vmag * 2 + ((p.up && p.up.ram) || 0) * 70;
+        const stacks = (p.up && p.up.ram) || 0;
+        // SHELLBACK plate vs a bare hull: the rammer bounces off, stunned and
+        // bleeding shields, and the siege hull is merely annoyed. RAM PLATING
+        // is what turns the plate into just another target.
+        const plate = ENEMY_TYPES[e.type].frontArmor;
+        const headOn = plate && Math.abs(wrapAngle(angleTo(p.x - e.x, p.z - e.z) - e.angle)) < plate;
+        if (headOn && !stacks) {
+          p.speed *= -0.4;
+          p.vx = fwdX(p.angle) * p.speed; p.vz = fwdZ(p.angle) * p.speed;
+          p.boosting = false;
+          p.shields = Math.max(1, p.shields - 20);
+          this._hurtEnemy(j, 20, p.id, 'ram');
+          this._burst(p.x + fwdX(p.angle) * 2.5, 1.4, p.z + fwdZ(p.angle) * 2.5, 10, [0.7, 0.8, 1.0], 7);
+          this._sfx('deflect', e.x, e.z);
+          if (isLocal) {
+            this._impact(0.7, -fwdX(p.angle) * 6, -fwdZ(p.angle) * 6, 0.08);
+            this.hud.message('PLATE — RAM DEFLECTED', '#ff9d4a', 1.4, 'chatter');
+          }
+          break;
+        }
+        // Capped below the big hulls: a bare ram deletes a drone, a hunter, a
+        // sniper or a warden; a shellback, a phantom or an elite needs RAM
+        // PLATING stacks or a follow-up shell. (Uncapped it out-damaged every
+        // hull in the game for 8 shields and 22 units of noise — the one
+        // universal answer in a game built on choosing an answer.) The shield
+        // cost scales with what you hit: slamming a siege hull costs more than
+        // clipping a drone.
+        const rdmg = Math.min(RAM_CAP, 60 + vmag * 1.2) + stacks * 70;
+        const eHp = e.maxHp || 60;
         this._hurtEnemy(j, rdmg, p.id, 'ram');
         p.speed *= 0.5;
-        if (!(p.up && p.up.ram > 0)) p.shields = Math.max(1, p.shields - 8);
+        if (!stacks) p.shields = Math.max(1, p.shields - (4 + eHp / 15));
         this._sfx('bounce');
         if (isLocal) this._impact(0.5, fwdX(p.angle) * 5, fwdZ(p.angle) * 5, 0.085);
         break;
@@ -1833,11 +1970,13 @@ class Game {
         if (superShot) {
           p.superShots--;
         } else {
-          p.heat += SHOT_HEAT;
+          // TWIN CANNON runs hotter: three shells for seven heat made it the
+          // draft's only right answer, and a triple ambush for free
+          p.heat += SHOT_HEAT * (1 + 0.5 * ((p.up && p.up.twin) || 0));
           if (p.heat >= p.maxHeat) {
             p.heat = p.maxHeat;
             p.overheatT = OVERHEAT_LOCK;
-            this._sfx('lowShield');
+            this._sfx('overheat');
             if (isLocal) this.hud.message('OVERHEAT — COOLING', '#ff4a3c', 1.6, 'alert');
           }
         }
@@ -1859,6 +1998,7 @@ class Game {
         const bx = p.x + fwdX(shotAngle) * 3.2;
         const bz = p.z + fwdZ(shotAngle) * 3.2;
         this._burst(bx, 1.6, bz, superShot ? 8 : 4, superShot ? [0.5, 1, 0.9] : [1, 0.9, 0.5], 5);
+        this._muzzle(bx, 1.6, bz, Math.min(1, p.heat / (p.maxHeat || 100)), superShot ? [0.6, 1, 0.95] : [1, 0.85, 0.5]);
         this._sfx('fire', p.x, p.z);
         this._noise(p.x, p.z, NOISE_SHOT, 0.55);   // the report carries
         if (isLocal) {
@@ -1885,7 +2025,7 @@ class Game {
         this.projectiles.push({
           x: bx, z: bz, y: 1.8, angle: p.angle, kind: 'nade',
           speed: 34 + Math.max(0, p.speed) * 0.5, vy: 14,
-          from: 'player', owner: p.id, dmg: 60, life: 6,
+          from: 'player', owner: p.id, dmg: 60 * this._blastScale(), life: 6,
         });
         this._sfx('nade');
         if (isLocal) this.shake = Math.min(this.shake + 0.2, 0.6);
@@ -1914,6 +2054,9 @@ class Game {
         if (isLocal) this.hud.message('NO MINES', '#ff4a3c', 1.2, 'chatter');
       }
     }
+
+    // a hull this beaten trails smoke — the state reads from across the map
+    if (p.shields <= p.maxShields * 0.3) this._damageSmoke(p, dt, 2.0);
 
     if (isLocal) {
       if (p.shields <= p.maxShields * 0.25 && !p.lowWarned) {
@@ -2184,6 +2327,7 @@ class Game {
       const ex0 = e.x, ez0 = e.z;
       const spec = ENEMY_TYPES[e.type];
       e.hitFlash = Math.max(0, e.hitFlash - dt * 4);
+      if (e.hp < e.maxHp * 0.35) this._damageSmoke(e, dt, 1.7);
       const p = this._nearestPlayer(e.x, e.z);
       const distP = p ? Math.hypot(p.x - e.x, p.z - e.z) : Infinity;
       // a patrol only fights what its sensors actually found
@@ -2403,7 +2547,9 @@ class Game {
             speed: e.shotSpeed, from: 'enemy', dmg: e.dmg, life: 4,
             src: 'A ' + e.type.toUpperCase(),   // for the debrief
           });
-          this._sfx('enemyFire', e.x, e.z);
+          // each hull type has its own report — you can read the threat by ear
+          this._sfx(ENEMY_FIRE_SFX[e.type] || 'enemyFire', e.x, e.z);
+          this._muzzle(e.x + fwdX(e.angle) * 3.2, 1.6, e.z + fwdZ(e.angle) * 3.2, 0.35, [1, 0.5, 0.35]);
           if (e.type === 'sniper') {
             // shoot-and-scoot: slide to a flanking perch so return fire
             // arrives where the sniper was, not where it is
@@ -2463,7 +2609,7 @@ class Game {
       if (!pl.alive) continue;
       const d = Math.hypot(e.x - pl.x, e.z - pl.z);
       if (d < R) this._damagePlayer(pl, e.dmg * (d < 2.5 ? 1 : 1 - ((d - 2.5) / (R - 2.5)) * 0.6),
-        null, 'A RUSHER');
+        null, 'A RUSHER', e);
     }
   }
 
@@ -2604,7 +2750,9 @@ class Game {
           if (!pl.alive) continue;
           if (segDist2(sx, sz, pr.x, pr.z, pl.x, pl.z) < 2.4 * 2.4) {
             dead = true;
-            this._damagePlayer(pl, pr.dmg, null, pr.src || 'ENEMY FIRE');
+            // the hit direction is where the shell CAME FROM, for the HUD
+            this._damagePlayer(pl, pr.dmg, null, pr.src || 'ENEMY FIRE',
+              { x: pr.x - fwdX(pr.angle) * 14, z: pr.z - fwdZ(pr.angle) * 14 });
             break;
           }
         }
@@ -2620,10 +2768,13 @@ class Game {
               // "graze" (free boost/tech for standing there getting hit)
               if (fwdX(pr.angle) * (pl.x - pr.x) + fwdZ(pr.angle) * (pl.z - pr.z) > 0) continue;
               (pr.grz || (pr.grz = {}))[pl.id] = 1;
+              // RAZOR EDGE: a graze also bleeds heat off the gun and stretches
+              // the chain — the upgrade for players who thread fire on purpose
               const razor = (pl.up && pl.up.razor) || 0;
               pl.boost = Math.min(pl.maxBoost, pl.boost + 5 + razor * 3);
               this._awardTech(pl, 1 + razor * 2);
-              if (this.comboT > 0) this.comboT = Math.min(this.comboWin, this.comboT + 0.4);
+              if (razor) pl.heat = Math.max(0, (pl.heat || 0) - 6 * razor);
+              if (this.comboT > 0) this.comboT = Math.min(this.comboWin, this.comboT + 0.4 + 0.4 * razor);
               this._burst(pr.x, 1.4, pr.z, 3, [0.5, 1.0, 0.9], 4);
               this._bountyTick('graze');
             }
@@ -2651,7 +2802,7 @@ class Game {
           this.projectiles.push({
             x: pr.x, z: pr.z, y: 1.2, angle: pr.angle + off + rand(-0.2, 0.2), kind: 'nade',
             speed: rand(10, 16), vy: rand(8, 12), child: true,
-            from: 'player', owner: pr.owner, dmg: 30, life: 3,
+            from: 'player', owner: pr.owner, dmg: 30 * this._blastScale(), life: 3,
           });
         }
       }
@@ -2662,7 +2813,7 @@ class Game {
         const d = Math.hypot(pr.x - pl.x, pr.z - pl.z);
         if (d < R) {
           const dmg = pr.dmg * (d < 3 ? 1 : 1 - (d - 3) / (R - 3) * 0.75);
-          this._damagePlayer(pl, dmg, pr.owner, 'A GRENADE');
+          this._damagePlayer(pl, dmg, pr.owner, 'A GRENADE', pr);
         }
       }
     }
@@ -2672,7 +2823,7 @@ class Game {
       const d = Math.hypot(pr.x - e.x, pr.z - e.z);
       if (d < R) hits.push([e, pr.dmg * (d < 3 ? 1 : 1 - (d - 3) / (R - 3) * 0.75)]);
     }
-    for (const [e, dmg] of hits) this._hurtEnemyRef(e, dmg, pr.owner, 'nade');
+    for (const [e, dmg] of hits) this._hurtEnemyRef(e, dmg, pr.owner, 'nade', pr.x, pr.z);
     const b = this.boss;
     if (b && !b.dead) {
       for (const tu of b.turrets) {
@@ -2719,7 +2870,7 @@ class Game {
   }
 
   _mineBoom(m) {
-    const R = 9, DMG = 70;
+    const R = 9, DMG = 70 * this._blastScale();
     this._burst(m.x, 1.0, m.z, 34, [1, 0.45, 0.6], 15);
     this._burst(m.x, 2.0, m.z, 14, [1, 0.9, 0.7], 9);
     this._sfx('nadeBoom', m.x, m.z);
@@ -2731,7 +2882,7 @@ class Game {
       for (const pl of this.players) {
         if (!pl.alive || pl.id === m.owner) continue;
         const d = Math.hypot(m.x - pl.x, m.z - pl.z);
-        if (d < R) this._damagePlayer(pl, falloff(d), m.owner, 'A MINE');
+        if (d < R) this._damagePlayer(pl, falloff(d), m.owner, 'A MINE', m);
       }
     }
     const hits = [];
@@ -2739,7 +2890,7 @@ class Game {
       const d = Math.hypot(m.x - e.x, m.z - e.z);
       if (d < R) hits.push([e, falloff(d)]);
     }
-    for (const [e, dmg] of hits) this._hurtEnemyRef(e, dmg, m.owner, 'mine');
+    for (const [e, dmg] of hits) this._hurtEnemyRef(e, dmg, m.owner, 'mine', m.x, m.z);
     const b = this.boss;
     if (b && !b.dead) {
       for (const tu of b.turrets) {
@@ -2758,14 +2909,22 @@ class Game {
    * mid-loop, so a captured index can point at a different enemy — or past
    * the end of the array, which crashed the game. Already-removed refs are
    * silently skipped. */
-  _hurtEnemyRef(e, dmg, ownerId, via) {
+  _hurtEnemyRef(e, dmg, ownerId, via, hx, hz) {
     const i = this.enemies.indexOf(e);
-    if (i >= 0) this._hurtEnemy(i, dmg, ownerId, via);
+    if (i >= 0) this._hurtEnemy(i, dmg, ownerId, via, hx, hz);
+  }
+
+  /* Grenade and mine damage grow with the sector. Enemy HP climbs with depth
+   * now, and a flat 60/70 stopped killing anything but drones by sector 4 —
+   * which stranded two bounties, two medals and the whole "mine under a
+   * patrol route" fantasy exactly where the game starts asking for it. */
+  _blastScale() {
+    return 1 + 0.08 * (this.level - 1);
   }
 
   /* via: 'cannon' | 'nade' | 'mine' — which weapon landed the hit, for the
    * weapon-specific medals. */
-  _hurtEnemy(index, dmg, ownerId, via) {
+  _hurtEnemy(index, dmg, ownerId, via, hx, hz) {
     const e = this.enemies[index];
     // WARDEN umbrella: hostiles under it shrug off cannon fire — lob over
     // it, mine it, ram through it, or kill the warden first
@@ -2793,6 +2952,10 @@ class Game {
     // signature, so one-shot power on bigger prey costs sensor reach. A
     // survivor alerts (below), so commit to shells that kill.
     const ambush = via === 'cannon' && !e.alerted && !this.versus;
+    // a blast on a hull that never saw it coming hits hard too — grenades and
+    // mines are the stealth game's traps, not only its loud option
+    const trap = (via === 'nade' || via === 'mine') && !e.alerted && !this.versus;
+    if (trap) dmg *= SPLASH_AMBUSH_MUL;
     if (ambush) {
       dmg *= AMBUSH_MUL;
       this._burst(e.x, 2.0, e.z, 8, [0.35, 1.0, 0.85], 7);
@@ -2802,9 +2965,20 @@ class Game {
     if (ENEMY_TYPES[e.type].cloaks) e.decloakT = Math.max(e.decloakT, 1.2);
     this._burst(e.x, 1.5, e.z, 10, [1, 0.6, 0.3], 8);
     if (e.hp > 0 && !e.alerted && !this.versus) {
-      // a hull that survives a hit is instantly hostile — commit to kills
-      const a = this._playerById(ownerId);
-      this._alertEnemy(e, a ? a.x : e.x, a ? a.z : e.z);
+      if (trap) {
+        // a survivor of a blast knows WHERE THE BLAST WAS, not where you are:
+        // it goes to look, jumpy, instead of radioing your exact coordinates
+        // to everything within 45 units from behind the slab you lobbed over
+        e.sense = Math.min(0.99, Math.max(e.sense, SENSE_SUS + 0.4));
+        e.invX = Number.isFinite(hx) ? hx : e.x;
+        e.invZ = Number.isFinite(hz) ? hz : e.z;
+        e.invT = 7;
+        this.suspicion = true;
+      } else {
+        // a hull that survives a hit is instantly hostile — commit to kills
+        const a = this._playerById(ownerId);
+        this._alertEnemy(e, a ? a.x : e.x, a ? a.z : e.z);
+      }
     }
     if (e.hp <= 0) this._killEnemy(index, ownerId, via);
     else this._sfx('hitEnemy', e.x, e.z);
@@ -2851,6 +3025,7 @@ class Game {
     this._burst(e.x, 1.5, e.z, 34, [1, 0.55, 0.15], 14);
     this._burst(e.x, 1.5, e.z, 16, [0.9, 0.9, 0.9], 9);
     this._spawnShards(e.x, e.z, DEBRIS_COLORS[e.type] || DEBRIS_COLORS.drone);
+    this._addWreck(e.type, e.x, e.z, e.angle, e.elite);
     this._sfx('explosion', e.x, e.z);
     this._addDecal(e.x, e.z, 4.2, 24, 'scorch', 0, 0.62);
     this._impact(0.4, 0, 0, 0.05);
@@ -2872,13 +3047,15 @@ class Game {
       this._burst(e.x, 1.2, e.z, 18, [1, 0.6, 0.2], 10);
       for (const pl of this.players) {
         if (!pl.alive) continue;
-        if (dist2(e.x, e.z, pl.x, pl.z) < 36) this._damagePlayer(pl, 16, null, 'A VOLATILE HULL');
+        if (dist2(e.x, e.z, pl.x, pl.z) < 36) this._damagePlayer(pl, 16, null, 'A VOLATILE HULL', e);
       }
       const hits = this.enemies.filter((o) => dist2(e.x, e.z, o.x, o.z) < 36);
       for (const o of hits) this._hurtEnemyRef(o, 30, ownerId, via);
     }
-    // chance to drop a pickup
-    if (RNG() < 0.42) {
+    // chance to drop a pickup — SALVAGE MAGNET on anyone's hull sweetens it
+    let dropP = 0.42;
+    for (const pl of this.players) if (pl.up && pl.up.magnet) dropP = 0.57;
+    if (RNG() < dropP) {
       const keys = Object.keys(POWERUP_TYPES);
       this._spawnPowerup(e.x, e.z, keys[(RNG() * keys.length) | 0]);
     }
@@ -2887,7 +3064,7 @@ class Game {
   /* `src` names what landed the hit, for the debrief. It is a label, not a
    * reference: a hull that dies in the same frame still has to be nameable
    * on the game-over screen. */
-  _damagePlayer(p, dmg, attackerId, src) {
+  _damagePlayer(p, dmg, attackerId, src, at) {
     const isLocal = p.id === this.localId;
     dmg *= this._diff().dmg;   // versus stays 1:1 — _diff() is STANDARD there
     // SPEED IS ARMOR: above 70% of rated speed the hull sheds a third of the
@@ -2897,11 +3074,18 @@ class Game {
     p.sinceHit = 0;
     this._breakCombo();   // any hit on the squad snaps the kill chain
     if (!this.versus && this.pot > 0) {
-      this.pot = Math.round(this.pot * this._diff().potSpill);   // ...and spills part of the pot
+      const kept = Math.round(this.pot * this._diff().potSpill);
+      // the spill is shown, not just subtracted — losing 30% of the pot in
+      // silence was the game's most expensive invisible event
+      if (isLocal && this.pot - kept > 0 && this.hud.spill) this.hud.spill(this.pot - kept);
+      this.pot = kept;   // ...and spills part of the pot
     }
     if (isLocal) this.levelUntouched = false;
     if (isLocal) {
       this.hud.damage(Math.min(0.8, dmg / 30));
+      // where it came from: a wedge on the crosshair ring, same frame as the
+      // exposure arc, so a hit from behind reads as behind
+      if (at && this.hud.hitFrom && Number.isFinite(at.x) && Number.isFinite(at.z)) this.hud.hitFrom(at.x, at.z);
       this._impact(0.5, 0, 0, Math.min(0.09, 0.03 + dmg / 400));
     }
     this._sfx('hitPlayer', p.x, p.z);
@@ -2919,6 +3103,7 @@ class Game {
       this._burst(p.x, 1.5, p.z, 60, [1, 0.5, 0.1], 18);
       this._burst(p.x, 2.5, p.z, 30, [1, 0.9, 0.6], 12);
       this._spawnShards(p.x, p.z, DEBRIS_COLORS.player);
+      this._addWreck('player', p.x, p.z, p.angle, false);
       this._sfx('bigExplosion', p.x, p.z);
       this._addDecal(p.x, p.z, 6, 40, 'scorch', 0, 0.5);
       if (isLocal) { this.shake = 2; this.hitStop = 0.32; }
@@ -3122,7 +3307,7 @@ class Game {
         if (!pl.alive || b.chargeHits[pl.id]) continue;
         if (dist2(pl.x, pl.z, b.x, b.z) < (b.radius + 2.5) * (b.radius + 2.5)) {
           b.chargeHits[pl.id] = true;
-          this._damagePlayer(pl, 30, null, 'THE WARLORD');
+          this._damagePlayer(pl, 30, null, 'THE WARLORD', b);
           const dx = pl.x - b.x, dz = pl.z - b.z;
           const d = Math.hypot(dx, dz) || 1;
           pl.x += (dx / d) * 6;
@@ -3304,7 +3489,7 @@ class Game {
           const d = Math.hypot(p.x - r.x, p.z - r.z);
           if (Math.abs(d - r.r) < 2.4) {
             r.hit[p.id] = true;   // the wave passed — cover decides if it hurt
-            if (this._losClear(r.x, r.z, p.x, p.z)) this._damagePlayer(p, r.dmg, null, 'A SHOCKWAVE');
+            if (this._losClear(r.x, r.z, p.x, p.z)) this._damagePlayer(p, r.dmg, null, 'A SHOCKWAVE', r);
           }
         }
       }
@@ -3330,6 +3515,78 @@ class Game {
       });
     }
     if (this.particles.length > 1500) this.particles.splice(0, this.particles.length - 1500);
+  }
+
+  /* Muzzle flash: one fat additive sprite that lives a few frames at the
+   * barrel, sized by how hot the gun is. Purely local (a burst already goes
+   * over the wire for the same shot), so it is never queued. */
+  _muzzle(x, y, z, heat01, color) {
+    this.particles.push({
+      x, y, z, vx: 0, vy: 0, vz: 0, kind: 'flash',
+      life: 0.07, maxLife: 0.07,
+      size: 11 + heat01 * 9,
+      r: color[0] * 1.6, g: color[1] * 1.6, b: color[2] * 1.6,
+    });
+  }
+
+  /* Smoke: alpha-blended dark puffs that rise, spread and thin out. The
+   * arena's one particle type was an additive glow dot, which can only ever
+   * say "hot" — smoke says "damaged", "burning", "over". */
+  _smoke(x, y, z, n, size) {
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, Math.PI * 2), v = rand(0.4, 2.2);
+      const life = rand(1.1, 2.1);
+      this.particles.push({
+        x: x + rand(-0.6, 0.6), y: y + rand(-0.3, 0.6), z: z + rand(-0.6, 0.6),
+        vx: Math.cos(a) * v, vz: Math.sin(a) * v, vy: rand(1.6, 3.4),
+        life, maxLife: life, kind: 'smoke',
+        size: size * rand(0.7, 1.2), grow: size * rand(1.6, 2.6),
+        r: 0.16, g: 0.16, b: 0.17,
+      });
+    }
+    if (this.particles.length > 1500) this.particles.splice(0, this.particles.length - 1500);
+  }
+
+  /* A beaten hull trails smoke on a cadence — enemies under 35% and a player
+   * under 30% — so "nearly dead" reads at a glance from across the arena. */
+  _damageSmoke(t, dt, y) {
+    t.smokeT = (t.smokeT || 0) - dt;
+    if (t.smokeT > 0) return;
+    t.smokeT = 0.14;
+    const a = t.angle || 0;
+    this._smoke(t.x - fwdX(a) * 1.2, y, t.z - fwdZ(a) * 1.2, 1, 0.9);
+  }
+
+  /* Wrecks: a destroyed tank leaves its carcass behind — dark, tilted,
+   * smouldering, sinking into the floor at the end of its life — instead of
+   * ten shards for two seconds and a scorch. The field remembers the fight.
+   * Mirrored to co-op clients through frameWrecks; queue=false when replaying
+   * a host event. Cosmetic: nothing collides with one. */
+  _addWreck(type, x, z, angle, elite, queue = true) {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+    if (queue) this.frameWrecks.push({ t: type, x, z, a: angle || 0, el: elite ? 1 : 0 });
+    if (this.wrecks.length >= WRECK_CAP) this.wrecks.shift();
+    this.wrecks.push({
+      type, x, z, angle: angle || 0, elite: !!elite, life: 32, max: 32,
+      roll: rand(-0.4, 0.4), pitch: rand(-0.3, 0.3), yawV: rand(-0.7, 0.7), settle: 0.7,
+      smokeT: 0,
+    });
+    this._smoke(x, 1.6, z, 12, 2.4);
+  }
+
+  _updateWrecks(dt) {
+    for (let i = this.wrecks.length - 1; i >= 0; i--) {
+      const w = this.wrecks[i];
+      w.life -= dt;
+      if (w.life <= 0) { this.wrecks.splice(i, 1); continue; }
+      // the carcass skids and settles for a beat, then smoulders for a while
+      if (w.settle > 0) { w.settle -= dt; w.angle += w.yawV * dt; }
+      w.smokeT -= dt;
+      if (w.smokeT <= 0 && w.life > w.max * 0.45) {
+        w.smokeT = 0.3 + rand(0, 0.3);
+        this._smoke(w.x + rand(-1, 1), 1.5, w.z + rand(-1, 1), 1, 1.4);
+      }
+    }
   }
 
   /* A destroyed tank shatters into tumbling flat-shaded polygon shards —
@@ -3432,6 +3689,15 @@ class Game {
       const pt = this.particles[i];
       pt.life -= dt;
       if (pt.life <= 0) { this.particles.splice(i, 1); continue; }
+      if (pt.kind === 'flash') continue;   // pinned to the barrel, gone in frames
+      if (pt.kind === 'smoke') {
+        // buoyant, no gravity: drifts up, spreads out, slows down
+        pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.z += pt.vz * dt;
+        const k = Math.max(0, 1 - 1.4 * dt);
+        pt.vx *= k; pt.vz *= k; pt.vy *= Math.max(0, 1 - 0.5 * dt);
+        pt.size += pt.grow * dt;
+        continue;
+      }
       pt.x += pt.vx * dt;
       pt.y += pt.vy * dt;
       pt.z += pt.vz * dt;
@@ -3450,13 +3716,24 @@ class Game {
     // GHOST EXTRACTION: the alarm never went off before the gate opened —
     // the purest way to play the sector, paid accordingly
     if (this.ghostRun && !this.bossLevel) {
-      this.levelBonus += 500 * this.level;
+      // ...but the ghost bonus decays past two minutes: the patient sneak is
+      // still the best money in the game, it just stops being time-free
+      const patience = Math.max(0.5, 1 - Math.max(0, this.levelTime - 120) / 240);
+      this.levelBonus += Math.round(500 * this.level * patience);
       this.runStats.ghosts++;
       this._medal('ghost');
+    }
+    // The third WARLORD is the end of the campaign proper. The run can keep
+    // going into the deep — endless in all but name — but this is the beat
+    // the whole ladder was climbing toward, and it is paid like one.
+    if (!this.versus && this.level === CAMPAIGN_END) {
+      this.campaignWon = true;
+      this.levelBonus += 5000;
     }
     this.score += this.levelBonus;
     this.pot = 0;
     if (this.levelUntouched) this._medal('untouchable');
+    if (this.campaignWon && this.level === CAMPAIGN_END) this._medal('campaign');
     // a cleared sector IS the walk: whatever the pilot skipped, they got
     // through it, so the coach retires rather than nagging into sector 2
     if (this.coach) this.coach.finish(this);
@@ -3503,6 +3780,9 @@ class Game {
       const base = wasDead ? 0 : p.shields;
       p.shields = Math.min(p.maxShields, base + p.maxShields * 0.4);
       p.nades = Math.min(p.maxNades, p.nades + 2);
+      // mines restock too — the JUGGERNAUT's and MARAUDER's "extra mines"
+      // identity used to die after sector 1
+      p.mines = Math.min(p.maxMines, (p.mines || 0) + 1);
     }
     this.startLevel();
     // riskier gates pay their tech signing bonus the moment you deploy
@@ -3514,7 +3794,9 @@ class Game {
     this.frameSounds.length = 0;
     this.frameBursts.length = 0;
     this.frameDebris.length = 0;
+    this.frameWrecks.length = 0;
     this.noises.length = 0;   // no patrols left to hear anything
+    this._updateWrecks(dt);
     this.deathTimer -= dt;
     this.shake = Math.max(0, this.shake - dt * 1.2);
     this._updateParticles(dt);

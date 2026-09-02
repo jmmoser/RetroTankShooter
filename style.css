@@ -713,3 +713,89 @@ body.touch-ui .mbtn { padding: 10px 20px; }
   color: #e8c75a;
   text-shadow: 0 0 8px rgba(232, 199, 90, 0.4);
 }
+
+/* ---------- AAA pass: accessibility, motion, layout fixes ---------- */
+/* visually hidden, still read by assistive tech */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+/* keyboard focus is visible even outside the menu model (Tab users) */
+.mbtn:focus-visible, .loadout:focus-visible, .ll:focus-visible {
+  outline: 2px solid var(--teal-bright);
+  outline-offset: 2px;
+}
+/* long menus (SETTINGS, CONTROLS) scroll inside the panel instead of running
+   off a 500 px landscape phone — the accessibility rows were the ones lost */
+.menu.scroll {
+  max-height: 58vh;
+  overflow-y: auto;
+  touch-action: pan-y;
+  scrollbar-width: thin;
+  padding: 2px 4px;
+}
+@media (max-height: 500px) {
+  .menu.scroll { max-height: 66vh; }
+  .panel-sub { font-size: 10px; }
+}
+/* screen transitions: a short fade-and-settle in, a quick fade out. Cheap,
+   and it is the difference between "a div appeared" and "a screen arrived". */
+@keyframes screen-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.screen:not(.hidden) { animation: screen-in 0.2s ease-out; }
+.screen.leaving { opacity: 0; transform: scale(0.985); pointer-events: none; transition: opacity 0.14s ease, transform 0.14s ease; }
+/* REDUCED MOTION: no blink, no slide, no CRT flicker */
+body.reduced-motion .blink { animation: none; }
+body.reduced-motion .screen:not(.hidden) { animation: none; }
+body.reduced-motion .screen.leaving { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .screen:not(.hidden) { animation: none; }
+}
+/* contrast: the hints and medal captions sat under 4.5:1 */
+.menu-hint { font-size: 11px; color: rgba(79, 214, 187, 0.75); }
+.medal .m-how { font-size: 10px; color: rgba(79, 214, 187, 0.78); }
+.db-cell .db-k { font-size: 10px; }
+/* the TECH draft on a phone: a narrow strip top-right under the CAM/pause
+   buttons, out of the floating stick's spawn zone on the left */
+body.touch-ui .screen.nonmodal {
+  justify-content: flex-start;
+  align-items: flex-end;
+  padding-top: calc(70px + var(--sa-t));
+  padding-bottom: 0;
+  padding-right: calc(10px + var(--sa-r));
+}
+body.touch-ui .screen.nonmodal .panel { width: min(300px, 46vw); padding: 10px 12px 8px; gap: 8px; }
+body.touch-ui .screen.nonmodal .panel-head { font-size: 14px; letter-spacing: 3px; margin-top: 0; }
+body.touch-ui .screen.nonmodal .panel-sub { display: none; }
+body.touch-ui .screen.nonmodal .draft-menu { width: 100%; gap: 5px; }
+body.touch-ui .screen.nonmodal .mbtn.draft-choice { min-height: 0; padding: 6px 10px; font-size: 11px; }
+/* sim-fault toast sits under the update toast's slot */
+.sim-toast { color: #ff6a5a; border-color: rgba(255, 106, 90, 0.7); box-shadow: 0 0 18px rgba(255, 90, 78, 0.25); top: calc(64px + var(--sa-t)); }
+/* warp card: the sector name, centred, for a beat */
+.sector-card {
+  position: absolute; left: 0; right: 0; top: 34%;
+  z-index: 12; pointer-events: none; text-align: center;
+  color: var(--teal-bright);
+  text-shadow: 0 0 18px rgba(79, 214, 187, 0.8);
+  animation: card-in 1.6s ease-out forwards;
+}
+.sector-card.red { color: #ff5a4e; text-shadow: 0 0 18px rgba(255, 90, 78, 0.8); }
+.sector-card > div:first-child { font-size: clamp(28px, 6vw, 54px); font-weight: bold; letter-spacing: 0.3em; }
+.sector-card > div:last-child { margin-top: 6px; font-size: 12px; letter-spacing: 5px; opacity: 0.8; }
+@keyframes card-in {
+  0%   { opacity: 0; transform: scale(1.06); letter-spacing: 0.5em; }
+  12%  { opacity: 1; transform: none; }
+  75%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-8px); }
+}
+body.reduced-motion .sector-card { animation: card-fade 1.6s ease-out forwards; }
+@keyframes card-fade { 0% { opacity: 0; } 12% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
+/* controls screen rows */
+.mbtn.bind-row { justify-content: space-between; padding: 8px 16px; font-size: 12px; }
+.bind-row .bind-keys { color: #e8c75a; letter-spacing: 2px; font-size: 12px; }
+.bind-row.listening { border-color: #e8c75a; }
+.bind-row.listening .bind-keys { color: #fff; animation: blink 0.6s steps(2, start) infinite; }
+/* gamepad glyphs on the menu key chips when a pad is in hand */
+body.pad-ui .mbtn .mkey { display: none; }

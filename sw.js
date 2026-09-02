@@ -32,6 +32,16 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// the page can ask a waiting worker to take over (the update toast)
+self.addEventListener('message', (e) => {
+  if (e.data === 'skipWaiting') self.skipWaiting();
+});
+
+// only the shipped files are ever written back into the versioned cache —
+// the runtime handler used to store any same-origin GET forever, ?join=
+// variants included
+const ASSET_PATHS = new Set(ASSETS.map((u) => new URL(u, self.registration.scope).pathname));
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
@@ -40,11 +50,11 @@ self.addEventListener('fetch', (e) => {
     caches.match(e.request, { ignoreSearch: true }).then((hit) =>
       hit ||
       fetch(e.request).then((res) => {
-        if (res.ok) {
+        if (res.ok && ASSET_PATHS.has(url.pathname)) {
           const copy = res.clone();
           // tie the cache write to the event's lifetime so the worker isn't
           // terminated before the put completes
-          e.waitUntil(caches.open(CACHE).then((c) => c.put(e.request, copy)));
+          e.waitUntil(caches.open(CACHE).then((c) => c.put(new Request(url.pathname), copy)));
         }
         return res;
       })

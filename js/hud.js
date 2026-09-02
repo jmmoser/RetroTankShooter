@@ -30,6 +30,25 @@ class HUD {
     this.pickupFlash = 0;
     this.recordScore = 0; // the score being chased (high score / daily best);
                           // main.js arms it per run, score goes gold past it
+    this.hits = [];       // recent hit directions {x, z, t}: wedges on the crosshair ring
+    this.spillT = 0;      // pot-spill flash timer
+    this.spillAmt = 0;
+    this.scale = 1;       // HUD SCALE setting (main.js sets it)
+    this.glowOK = true;   // canvas shadowBlur is expensive on phones; main.js flips it
+    this.live = null;     // aria-live mirror for alert-tier messages (main.js wires it)
+  }
+
+  /* A hit landed from world position (x, z): the HUD draws a red wedge on the
+   * bearing for a moment, in the same hull-relative frame as the exposure arc. */
+  hitFrom(x, z) {
+    this.hits.push({ x, z, t: 0 });
+    if (this.hits.length > 6) this.hits.shift();
+  }
+
+  /* Part of the pot just spilled: flash the label and fling the number. */
+  spill(amount) {
+    this.spillT = 0.9;
+    this.spillAmt = amount | 0;
   }
 
   resize() {
@@ -63,6 +82,8 @@ class HUD {
     }
     this.messages.push({ text, t: 0, dur, color, alert: tier === 'alert' });
     if (this.messages.length > 3) this.messages.shift();
+    // screen readers: alerts are the lines that change what you should do
+    if (tier === 'alert' && this.live) { try { this.live.textContent = text; } catch (e) {} }
   }
 
   damage(amount01) {
@@ -90,8 +111,9 @@ class HUD {
     this.clear();
     const ctx = this.ctx;
     const W = this.canvas.width, H = this.canvas.height;
-    const s = Math.min(W, H) / 720; // ui scale
+    const s = Math.min(W, H) / 720 * (this.scale || 1); // ui scale
     ctx.textBaseline = 'middle';
+    this.spillT = Math.max(0, this.spillT - dt);
 
     this.flash = Math.max(0, this.flash - dt * 1.8);
     this.pickupFlash = Math.max(0, this.pickupFlash - dt * 1.5);
@@ -120,6 +142,7 @@ class HUD {
 
     this._crosshair(ctx, W, H, s);
     this._exposure(ctx, W, H, s, game);
+    this._hitWedges(ctx, W, H, s, game, dt);
     this._radar(ctx, W, H, s, game);
     this._bars(ctx, W, H, s, game);
     this._objective(ctx, W, H, s, game);
@@ -321,6 +344,23 @@ class HUD {
       ctx.fillText(label, W / 2, topY + 14 * s);
     }
 
+    // the gate charge: the warp needs the squad in the ring for a few
+    // seconds, and that wait has to be a bar, not a mystery
+    if (game.exit && (game.exit.charge || 0) > 0 && typeof EXIT_CHARGE !== 'undefined') {
+      const k = Math.max(0, Math.min(1, game.exit.charge / EXIT_CHARGE));
+      const bw = 200 * s, bh = 7 * s;
+      const bx = W / 2 - bw / 2, by = topY + 42 * s;   // under the status line, in the bounty's slot
+      ctx.font = font(10, true);
+      ctx.fillStyle = '#d8f4ff';
+      ctx.fillText('WARP CHARGING — HOLD THE RING', W / 2, by - 8 * s);
+      ctx.strokeStyle = 'rgba(216,244,255,0.7)';
+      ctx.lineWidth = Math.max(1, s);
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.fillStyle = '#d8f4ff';
+      ctx.fillRect(bx + s, by + s, (bw - 2 * s) * k, bh - 2 * s);
+      return;
+    }
+
     // sector bounty, live under the dish
     if (game.bounty) {
       const b = game.bounty;
@@ -371,7 +411,7 @@ class HUD {
     const col = sus ? [255, 90, 60] : [255, 210, 74];
     ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${0.9 * strobe})`;
     ctx.shadowColor = `rgb(${col[0]},${col[1]},${col[2]})`;
-    ctx.shadowBlur = 10 * s * strobe;
+    ctx.shadowBlur = this.glowOK ? 10 * s * strobe : 0;
     ctx.beginPath();
     // fill from the arc's center outward both ways: the mark stays aimed at
     // the watcher instead of sliding off the bearing as it fills
@@ -392,6 +432,34 @@ class HUD {
       ctx.font = `bold ${Math.round(11 * s)}px "Courier New", monospace`;
       ctx.fillStyle = `rgba(255,90,60,${strobe})`;
       ctx.fillText('EYES ON', cx, cy - r - 20 * s);
+    }
+    ctx.restore();
+  }
+
+  /* Damage direction: every recent hit paints a red wedge on the crosshair
+   * ring at the bearing it came from, fading over ~0.7 s. Same hull-relative
+   * frame as the exposure arc, so "behind you" is drawn behind the crosshair
+   * in both camera modes. */
+  _hitWedges(ctx, W, H, s, game, dt) {
+    if (!this.hits.length || !game.player) return;
+    const p = game.player;
+    const cx = W / 2, cy = H / 2, r = 64 * s;
+    ctx.save();
+    ctx.lineCap = 'butt';
+    for (let i = this.hits.length - 1; i >= 0; i--) {
+      const h = this.hits[i];
+      h.t += dt;
+      if (h.t > 0.7) { this.hits.splice(i, 1); continue; }
+      const k = 1 - h.t / 0.7;
+      const bearing = Math.atan2(-(h.x - p.x), -(h.z - p.z)) - p.angle;
+      const a = -bearing - Math.PI / 2;
+      ctx.lineWidth = (6 + 3 * k) * s;
+      ctx.strokeStyle = `rgba(255,70,50,${0.85 * k})`;
+      ctx.shadowColor = '#ff4a3c';
+      ctx.shadowBlur = this.glowOK ? 12 * s * k : 0;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, a - 0.42, a + 0.42);
+      ctx.stroke();
     }
     ctx.restore();
   }
@@ -720,6 +788,26 @@ class HUD {
       if (e.cloak > 0.6) continue; // cloaked phantoms hide from radar too
       const [bx, by] = toRadar(e.x, e.z);
       const r = 3.2 * s;
+      // an ALERTED hull beyond the dish is the threat you most need to know
+      // about and the one the dish used to drop: pin it to the rim
+      {
+        const dx = bx - cx, dy = by - cy;
+        const dd = Math.hypot(dx, dy);
+        if (dd > R - 4 * s) {
+          if (!e.alerted) continue;
+          const nx = dx / dd, ny = dy / dd;
+          const px2 = cx + nx * (R - 6 * s), py2 = cy + ny * (R - 6 * s);
+          ctx.globalAlpha = 0.6 + 0.4 * Math.sin(t * 9);
+          ctx.fillStyle = enemyBlipColor(e.type);
+          ctx.beginPath();
+          ctx.moveTo(px2 + nx * 5 * s, py2 + ny * 5 * s);
+          ctx.lineTo(px2 - ny * 3.5 * s, py2 + nx * 3.5 * s);
+          ctx.lineTo(px2 + ny * 3.5 * s, py2 - nx * 3.5 * s);
+          ctx.closePath();
+          ctx.fill();
+          continue;
+        }
+      }
       ctx.globalAlpha = e.alerted ? 1 : ((e.sense || 0) >= 0.4 ? 0.8 : 0.42);
       ctx.fillStyle = enemyBlipColor(e.type);
       ctx.beginPath();
@@ -914,11 +1002,22 @@ class HUD {
     ctx.fillText('SCORE ' + String(game.score).padStart(7, '0'), W - pad, H - pad - 64 * s);
     ctx.shadowBlur = 0;
     // the unbanked pot: kill score riding on the line until a zone banks it
-    if (!game.versus && (game.pot || 0) > 0) {
+    const spill = this.spillT > 0;
+    if (!game.versus && ((game.pot || 0) > 0 || spill)) {
       const pp = 1 + 0.05 * Math.sin(performance.now() / 140);
       ctx.font = `bold ${Math.round(13 * s * pp)}px "Courier New", monospace`;
-      ctx.fillStyle = '#ffd24a';
-      ctx.fillText('POT +' + game.pot, W - pad, H - pad - 102 * s);
+      ctx.fillStyle = spill && Math.sin(performance.now() / 60) > 0 ? '#ff6a5a' : '#ffd24a';
+      ctx.fillText('POT +' + (game.pot || 0), W - pad, H - pad - 102 * s);
+      ctx.font = font(16, true);
+    }
+    if (spill && this.spillAmt > 0) {
+      // the spilled slice flies up and away from the label, reddening
+      const k = 1 - this.spillT / 0.9;
+      ctx.globalAlpha = 1 - k;
+      ctx.font = font(15, true);
+      ctx.fillStyle = '#ff6a5a';
+      ctx.fillText('−' + this.spillAmt + ' SPILLED', W - pad - 110 * s - 50 * s * k, H - pad - (102 + 14 * k) * s);
+      ctx.globalAlpha = 1;
       ctx.font = font(16, true);
     }
     if (onRecord) {
@@ -993,7 +1092,7 @@ class HUD {
       ctx.globalAlpha = a;
       ctx.fillStyle = m.color;
       ctx.shadowColor = m.color;
-      ctx.shadowBlur = m.alert ? 14 : 6;
+      ctx.shadowBlur = this.glowOK ? (m.alert ? 14 : 6) : 0;
       ctx.fillText(m.text, W / 2, y);
       ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;

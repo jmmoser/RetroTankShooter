@@ -8,13 +8,27 @@
  */
 const Net = (() => {
   const ENEMY_ORDER = ['drone', 'hunter', 'sniper', 'phantom', 'rusher', 'shellback', 'warden'];
-  const ID_PREFIX = 'phantom-arena-v3-';   // namespaces our ids on the shared broker
-                                           // (v3: stealth/extraction protocol)
+  const ID_PREFIX = 'phantom-arena-v4-';   // namespaces our ids on the shared broker
+                                           // (v4: held gate, wrecks, host clock)
   const MAX_PLAYERS = 4;
+  const CODE_LEN = 5;      // 32^5 ≈ 33M rooms: not scannable in a lunch break
+  const JOIN_TIMEOUT = 10000;   // ms before a silent connect is reported
+  const INPUT_HZ = 30;     // client input send rate (was every render frame)
+
+  // Optional TURN/STUN override for deployments behind symmetric NAT:
+  // window.PA_ICE_SERVERS = [{ urls: 'turn:...', username, credential }]
+  function peerOpts() {
+    try {
+      const ice = window.PA_ICE_SERVERS;
+      if (Array.isArray(ice) && ice.length) return { config: { iceServers: ice } };
+    } catch (e) {}
+    return undefined;
+  }
 
   // Interpolation: clients render remote entities this far in the past so
   // there are always two snapshots to blend between — motion stays 60 fps
-  // smooth instead of stepping at the 30 Hz snapshot rate.
+  // smooth instead of stepping at the 30 Hz snapshot rate. The delay is the
+  // floor; it grows with measured arrival jitter (see clientHandle 's').
   const INTERP_DELAY = 0.1;
   const SNAP_KEEP = 30;   // ~1s of history
 
@@ -35,6 +49,13 @@ const Net = (() => {
     mode: 'coop',        // 'coop' | 'versus' — host picks in the lobby
     snaps: [],           // client: [{ t, msg, idx }] snapshot history for interpolation
     rejected: false,     // client: host said 'full' — ignore everything after
+    clockOff: null,      // client: host clock minus local clock (seconds)
+    jitter: 0,           // client: smoothed lateness of snapshot arrivals
+    delay: INTERP_DELAY, // client: live interpolation delay
+    joinTimer: null,     // client: connect watchdog
+    inSeq: 0,            // client: input sequence number
+    inLast: 0,           // client: time of the last input send
+    inPrev: '',          // client: the last input payload, to send on change only
   };
 
   /* Build an id -> entry map once per snapshot (interpolation runs at render
@@ -64,7 +85,7 @@ const Net = (() => {
   function randCode() {
     const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/O/0/1 — easier to read aloud
     let s = '';
-    for (let i = 0; i < 4; i++) s += A[(Math.random() * A.length) | 0];
+    for (let i = 0; i < CODE_LEN; i++) s += A[(Math.random() * A.length) | 0];
     return s;
   }
   function peerIdFor(code) { return ID_PREFIX + code; }
@@ -84,7 +105,7 @@ const Net = (() => {
     state.id = 'host';
     state.roster = [{ id: 'host', name: name || 'PLAYER 1', loadoutIndex: loadoutIndex || 0 }];
 
-    const peer = new Peer(peerIdFor(code));
+    const peer = new Peer(peerIdFor(code), peerOpts());
     state.peer = peer;
 
     peer.on('open', () => {
@@ -149,27 +170,41 @@ const Net = (() => {
         state.roster.push({
           id: conn.peer,
           name: ((typeof msg.name === 'string' && msg.name) || ('PLAYER ' + (state.roster.length + 1))).slice(0, 14),
-          loadoutIndex: msg.loadoutIndex || 0,
+          loadoutIndex: validLoadout(msg.loadoutIndex),
         });
       }
       if (cb.onRoster) cb.onRoster(state.roster);
       broadcast({ t: 'roster', roster: state.roster, mode: state.mode });
     } else if (msg.t === 'loadout' && !state.started) {
       const r = state.roster.find((x) => x.id === conn.peer);
-      if (r) { r.loadoutIndex = msg.loadoutIndex | 0; if (cb.onRoster) cb.onRoster(state.roster); broadcast({ t: 'roster', roster: state.roster, mode: state.mode }); }
+      if (r) { r.loadoutIndex = validLoadout(msg.loadoutIndex); if (cb.onRoster) cb.onRoster(state.roster); broadcast({ t: 'roster', roster: state.roster, mode: state.mode }); }
     } else if (msg.t === 'input') {
       const i = msg.in;
       if (i && typeof i === 'object') {
+        // sequenced: an old packet arriving after a newer one is dropped
+        const seq = msg.q | 0;
+        const prev = state.inputs[conn.peer];
+        if (prev && seq && prev.q && seq < prev.q && prev.q - seq < 1e6) return;
         state.inputs[conn.peer] = {
           t: finite01(i.t, 1), d: finite01(i.d, 1),
           f: i.f ? 1 : 0, g: i.g ? 1 : 0, b: i.b ? 1 : 0,
-          m: i.m ? 1 : 0, v: i.v ? 1 : 0,
+          m: i.m ? 1 : 0, v: i.v ? 1 : 0, q: seq,
         };
       }
     } else if (msg.t === 'pick') {
       // client answered a TECH draft — the host's sim validates and applies
       if (cb.onPick) cb.onPick(conn.peer, msg.u);
     }
+  }
+
+  /* A client's chassis pick is clamped to the free ones: the locked MARAUDER
+   * is the host's unlock to share, not a client's to claim off the wire. */
+  function validLoadout(v) {
+    v = v | 0;
+    const maxFree = 2;
+    let allowed = maxFree;
+    try { if (typeof Progress !== 'undefined' && Progress.marauderUnlocked()) allowed = 3; } catch (e) {}
+    return Math.max(0, Math.min(allowed, v));
   }
 
   /* Host: deliver a TECH draft (3 upgrade ids) to one remote player. */
@@ -235,9 +270,10 @@ const Net = (() => {
     });
   }
 
-  function serializeState(game, snd, bu, de) {
+  function serializeState(game, snd, bu, de, wr) {
     return {
       t: 's',
+      hs: (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000,   // host clock
       md: game.mode,
       sc: game.score,
       sk: game.shake,
@@ -267,6 +303,7 @@ const Net = (() => {
           el: e.elite ? 1 : 0,
           // awareness for the client's radar/rings: 0 patrol, 1 sus, 2 alerted
           aw: e.alerted ? 2 : ((e.sense || 0) >= SENSE_SUS ? 1 : 0),
+          dm: e.hp < e.maxHp * 0.35 ? 1 : 0,   // trailing smoke
         };
       }),
       mi: game.mines.map((m) => ({ x: m.x, z: m.z, a: m.arm <= 0 ? 1 : 0 })),
@@ -285,7 +322,7 @@ const Net = (() => {
       al: game.alert,
       alm: game.alarmT > 0 ? 1 : 0,
       sus: game.suspicion ? 1 : 0,
-      ex: game.exit ? { x: game.exit.x, z: game.exit.z } : null,
+      ex: game.exit ? { x: game.exit.x, z: game.exit.z, c: Math.round((game.exit.charge || 0) * 100) / 100 } : null,
       cb: game.combo, ct: game.comboT, mu: game.mult, cw: game.comboWin,
       pt: game.pot || 0,
       by: game.bounty ? { p: game.bounty.prog, d: game.bounty.paid ? 1 : 0 } : undefined,
@@ -307,10 +344,11 @@ const Net = (() => {
       snd: snd || game.frameSounds.slice(),
       bu: (bu || game.frameBursts).map((b) => ({ x: b.x, y: b.y, z: b.z, n: b.n, c: b.c, p: b.p })),
       de: (de || game.frameDebris).map((d) => ({ x: d.x, z: d.z, c: d.c })),
+      wr: (wr || game.frameWrecks || []).map((w) => ({ t: w.t, x: w.x, z: w.z, a: w.a, el: w.el })),
     };
   }
 
-  function broadcastState(game, snd, bu, de) { broadcast(serializeState(game, snd, bu, de)); }
+  function broadcastState(game, snd, bu, de, wr) { broadcast(serializeState(game, snd, bu, de, wr)); }
   function broadcastScreen(msg) { broadcast(Object.assign({ t: 'sc' }, msg)); }
 
   // ---- CLIENT -------------------------------------------------------------
@@ -322,19 +360,35 @@ const Net = (() => {
     state.code = code;
     state.rejected = false;
 
-    const peer = new Peer();
+    const peer = new Peer(peerOpts());
     state.peer = peer;
+    state.clockOff = null; state.jitter = 0; state.delay = INTERP_DELAY;
+    state.inSeq = 0; state.inLast = 0; state.inPrev = '';
+
+    // Watchdog: behind symmetric NAT (no TURN) the data channel never opens
+    // and PeerJS never says so — the UI sat on CONNECTING… forever.
+    const clearWatch = () => { if (state.joinTimer) { clearTimeout(state.joinTimer); state.joinTimer = null; } };
+    state.joinTimer = setTimeout(() => {
+      state.joinTimer = null;
+      if (state.role !== 'client' || (state.hostConn && state.hostConn.open)) return;
+      try { peer.destroy(); } catch (e) {}
+      if (cb.onError) cb.onError('Could not reach the host — a firewall or NAT is in the way. Try again, or another network.');
+    }, JOIN_TIMEOUT);
 
     peer.on('open', (id) => {
       state.id = id;
       const conn = peer.connect(peerIdFor(code), { reliable: true });
       state.hostConn = conn;
-      conn.on('open', () => { try { conn.send({ t: 'join', name: name || 'PLAYER', loadoutIndex: loadoutIndex || 0 }); } catch (e) {} });
+      conn.on('open', () => {
+        clearWatch();
+        try { conn.send({ t: 'join', name: name || 'PLAYER', loadoutIndex: loadoutIndex || 0 }); } catch (e) {}
+      });
       conn.on('data', (msg) => clientHandle(msg));
-      conn.on('close', () => { if (!state.rejected && cb.onError) cb.onError('Disconnected from host.'); });
-      conn.on('error', () => { if (!state.rejected && cb.onError) cb.onError('Connection error.'); });
+      conn.on('close', () => { clearWatch(); if (!state.rejected && cb.onError) cb.onError('Disconnected from host.'); });
+      conn.on('error', () => { clearWatch(); if (!state.rejected && cb.onError) cb.onError('Connection error.'); });
     });
     peer.on('error', (err) => {
+      clearWatch();
       const type = err && err.type;
       if (type === 'peer-unavailable') { if (cb.onError) cb.onError('No game found for code ' + code + '.'); }
       else if (cb.onError) cb.onError('Network error: ' + (type || err));
@@ -378,8 +432,26 @@ const Net = (() => {
       case 's':
         if (!Array.isArray(msg.pl) || !Array.isArray(msg.en) || !Array.isArray(msg.pr) ||
             !Array.isArray(msg.pu) || !Array.isArray(msg.fg)) break;
+        // Snapshots are timestamped on the HOST's clock, not on receipt, so
+        // network jitter no longer maps 1:1 into interpolation stutter. The
+        // clock offset tracks the earliest (least delayed) arrivals and decays
+        // slowly to follow drift; each packet's lateness against it feeds a
+        // smoothed jitter figure, and the render delay grows with it.
+        {
+          const now = performance.now() / 1000;
+          if (typeof msg.hs === 'number' && Number.isFinite(msg.hs)) {
+            const off = msg.hs - now;
+            if (state.clockOff == null) state.clockOff = off;
+            else state.clockOff = Math.max(off, state.clockOff - 0.0002);
+            const late = Math.max(0, state.clockOff - off);
+            state.jitter += (late - state.jitter) * 0.1;
+            state.delay = Math.max(INTERP_DELAY, Math.min(0.3, INTERP_DELAY + 2 * state.jitter));
+          }
+        }
         state.snaps.push({
-          t: performance.now() / 1000, msg,
+          t: (typeof msg.hs === 'number' && Number.isFinite(msg.hs))
+            ? msg.hs - (state.clockOff || 0) : performance.now() / 1000,
+          msg,
           idx: {
             pl: indexBy(msg.pl, 'id'), en: indexBy(msg.en, 'i'),
             pr: indexBy(msg.pr, 'i'), ri: indexBy(msg.ri, 'i'),
@@ -398,17 +470,26 @@ const Net = (() => {
     }
   }
 
-  function sendInput(input) {
+  /* Client input goes up at INPUT_HZ or on change, sequenced — not once per
+   * render frame. 144 unsequenced messages a second over the one reliable
+   * channel had the 30 Hz state stream queueing behind lost input packets.
+   * force=true bypasses the rate limit (a zeroing packet on tab hide). */
+  function sendInput(input, force) {
     const c = state.hostConn;
-    if (c && c.open) {
-      try {
-        c.send({ t: 'input', in: {
-          t: input.turn, d: input.drive,
-          f: input.fire ? 1 : 0, g: input.nade ? 1 : 0, b: input.boost ? 1 : 0,
-          m: input.mine ? 1 : 0, v: input.vent ? 1 : 0,
-        } });
-      } catch (e) {}
-    }
+    if (!c || !c.open) return;
+    const payload = {
+      t: +input.turn || 0, d: +input.drive || 0,
+      f: input.fire ? 1 : 0, g: input.nade ? 1 : 0, b: input.boost ? 1 : 0,
+      m: input.mine ? 1 : 0, v: input.vent ? 1 : 0,
+    };
+    const key = payload.t.toFixed(2) + payload.d.toFixed(2) + payload.f + payload.g + payload.b + payload.m + payload.v;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (!force && key === state.inPrev && now - state.inLast < 1000 / INPUT_HZ * 4) return;
+    if (!force && key !== state.inPrev && now - state.inLast < 1000 / INPUT_HZ * 0.5) return;
+    state.inPrev = key;
+    state.inLast = now;
+    state.inSeq = (state.inSeq + 1) | 0;
+    try { c.send({ t: 'input', q: state.inSeq, in: payload }); } catch (e) {}
   }
 
   // ---- client-side snapshot application -----------------------------------
@@ -430,6 +511,7 @@ const Net = (() => {
     game.mines = [];
     game.boss = null;
     game.rings = [];
+    game.wrecks = [];
     game.versus = !!msg.vs;
     game.killTarget = msg.kt || 10;
     game.killCounts = {};
@@ -497,6 +579,9 @@ const Net = (() => {
       nid: d.i, type: ENEMY_ORDER[d.k] || 'drone', x: d.x, z: d.z, angle: d.a,
       hitFlash: d.h, cloak: d.c || 0, elite: !!d.el,
       alerted: d.aw === 2, sense: d.aw === 2 ? 1 : d.aw === 1 ? 0.6 : 0,
+      damaged: !!d.dm,
+      // hp is not on the wire; give the cosmetic smoke cadence something to read
+      hp: d.dm ? 1 : 100, maxHp: 100,
     }));
     game.mines = (msg.mi || []).map((d) => ({ x: d.x, z: d.z, arm: d.a ? 0 : 1, life: 60, owner: null }));
     if (msg.vk) game.killCounts = msg.vk;
@@ -518,9 +603,9 @@ const Net = (() => {
     game.alarmT = msg.alm ? 1 : 0;   // clients only need on/off for HUD + music
     game.suspicion = !!msg.sus;
     const hadExit = !!game.exit;
-    game.exit = msg.ex ? { x: msg.ex.x, z: msg.ex.z } : null;
+    game.exit = msg.ex ? { x: msg.ex.x, z: msg.ex.z, charge: (msg.ex.c || 0) * EXIT_CHARGE } : null;
     if (!hadExit && game.exit) {
-      game.hud.message('UPLINK COMPLETE — REACH THE EXTRACTION GATE', '#4fd6bb', 3.2, 'alert');
+      game.hud.message('UPLINK COMPLETE — REACH THE GATE AND HOLD IT', '#4fd6bb', 3.2, 'alert');
     }
     game.combo = msg.cb || 0;
     game.comboT = msg.ct || 0;
@@ -558,6 +643,12 @@ const Net = (() => {
       if (b.n >= 24) game._addDecal(b.x, b.z, 2.5 + b.n * 0.09, 26, 'scorch', 0, 0.6);
     }
     if (msg.de) for (const d of msg.de) game._spawnShards(d.x, d.z, d.c, false);
+    if (msg.wr && game._addWreck) {
+      for (const w of msg.wr) {
+        if (typeof w.t !== 'string' || !Number.isFinite(w.x) || !Number.isFinite(w.z)) continue;
+        game._addWreck(w.t, w.x, w.z, +w.a || 0, !!w.el, false);
+      }
+    }
     if (msg.snd) {
       for (const s of msg.snd) {
         // a placed sound arrives as [key, x, z]; a flat one as a bare string.
@@ -592,7 +683,7 @@ const Net = (() => {
     const snaps = state.snaps;
     if (snaps.length < 2) return;
     const now = performance.now() / 1000;
-    const rt = now - INTERP_DELAY;
+    const rt = now - (state.delay || INTERP_DELAY);
 
     let i = snaps.length - 1;
     while (i > 0 && snaps[i].t > rt) i--;
@@ -667,6 +758,7 @@ const Net = (() => {
   }
 
   function leave() {
+    if (state.joinTimer) { clearTimeout(state.joinTimer); state.joinTimer = null; }
     try { if (state.peer) state.peer.destroy(); } catch (e) {}
     state.role = 'solo'; state.peer = null; state.hostConn = null;
     state.conns = []; state.roster = []; state.inputs = {};
@@ -674,6 +766,8 @@ const Net = (() => {
     state.mode = 'coop';
     state.snaps = [];
     state.rejected = false;
+    state.clockOff = null; state.jitter = 0; state.delay = INTERP_DELAY;
+    state.inSeq = 0; state.inLast = 0; state.inPrev = '';
   }
 
   return {
@@ -685,6 +779,8 @@ const Net = (() => {
     clientJoin: clientJoin, clientSetLoadout: clientSetLoadout, sendInput: sendInput,
     applyLevel: applyLevel, applyState: applyState, clientInterpolate: clientInterpolate,
     leave: leave,
+    interpDelay: () => state.delay,
+    codeLength: CODE_LEN,
     get role() { return state.role; },
   };
 })();

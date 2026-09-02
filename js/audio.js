@@ -109,8 +109,33 @@ const AudioSys = (() => {
     musicDuck.gain.value = 1;
     musicDuck.connect(limiter);
 
+    // Safari parks the context in 'interrupted' after a phone call, Siri or an
+    // AirPods switch and never brings it back on its own — the game went
+    // permanently silent until reload. Note the state; the next gesture (and
+    // the next tab focus) calls resume(), which now resumes anything that is
+    // not 'running' rather than only 'suspended'.
+    try { ctx.onstatechange = () => { if (ctx.state !== 'running') needResume = true; }; } catch (e) {}
+
     dest = master;
     return true;
+  }
+  let needResume = false;
+
+  /* iOS routes Web Audio through the ringer switch unless a media element is
+   * playing — a silent, looping <audio> unlocked on the first gesture is the
+   * standard way to keep a game audible with the phone on silent. */
+  let silentEl = null;
+  function keepAliveElement() {
+    if (silentEl || typeof document === 'undefined' || !/iP(hone|ad|od)/.test(navigator.userAgent || '')) return;
+    try {
+      silentEl = document.createElement('audio');
+      silentEl.setAttribute('playsinline', '');
+      silentEl.loop = true;
+      silentEl.volume = 0.01;
+      silentEl.src = 'data:audio/wav;base64,UklGRmQGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YUAGAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
+      const p = silentEl.play();
+      if (p && p.catch) p.catch(() => {});
+    } catch (e) { silentEl = null; }
   }
 
   /* Listener pose, pushed by the main loop every frame. Forward is
@@ -165,21 +190,36 @@ const AudioSys = (() => {
     return { input: lp, send: sendGain };
   }
 
-  /* Sidechain: a detonation pulls the soundtrack down and lets it back up. */
+  /* Sidechain: a detonation pulls the soundtrack down and lets it back up.
+   * Held-and-released rather than read-and-ramped: reading gain.value mid-ramp
+   * clicks on some engines, and a second duck landing inside the first must
+   * deepen it, not cancel it. */
   function duckMusic(amount, seconds) {
     if (!musicDuck) return;
     const t = ctx.currentTime;
     const g = musicDuck.gain;
-    g.cancelScheduledValues(t);
-    g.setValueAtTime(g.value, t);
-    g.linearRampToValueAtTime(Math.max(0.05, 1 - amount), t + 0.03);
-    g.linearRampToValueAtTime(1, t + 0.03 + seconds);
+    const target = Math.max(0.05, 1 - amount);
+    if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t);
+    else { g.cancelScheduledValues(t); g.setValueAtTime(Math.min(g.value, 1), t); }
+    g.setTargetAtTime(Math.min(target, g.value), t, 0.012);
+    g.setTargetAtTime(1, t + 0.06, seconds * 0.45);
   }
 
   function resume() {
     if (!ensure()) return;
-    if (ctx.state === 'suspended') ctx.resume();
+    // anything that is not running — 'suspended' before the first gesture,
+    // 'interrupted' on Safari after a call — gets resumed
+    if (ctx.state !== 'running' || needResume) {
+      needResume = false;
+      try { const p = ctx.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+    }
+    keepAliveElement();
     startMusicEngine();   // the first user gesture also boots the soundtrack
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && ctx && ctx.state !== 'running') resume();
+    });
   }
 
   function setVolume(v01) {
@@ -250,6 +290,24 @@ const AudioSys = (() => {
   const sfx = {
     fire()       { tone('square', 620, 140, 0.16, 0.35); noise(0.08, 0.18, 4000, 800); },
     enemyFire()  { tone('square', 380, 90, 0.18, 0.22); },
+    // every hull type has its own report, so a stealth player who is heads
+    // down on the floor cones can still tell WHAT just fired and from where
+    fireDrone()     { tone('square', 380, 90, 0.18, 0.22); },
+    fireHunter()    { tone('square', 540, 130, 0.08, 0.2); tone('square', 540, 130, 0.08, 0.2, 0.07); tone('square', 540, 130, 0.08, 0.18, 0.14); },
+    fireSniper()    { noise(0.05, 0.32, 9000, 2500); tone('sawtooth', 980, 120, 0.34, 0.26); },
+    firePhantom()   { tone('sine', 72, 38, 0.32, 0.44); tone('triangle', 1900, 260, 0.16, 0.12); },
+    fireShellback() { tone('square', 150, 42, 0.3, 0.3); noise(0.16, 0.22, 800, 180); },
+    fireWarden()    { tone('triangle', 660, 330, 0.14, 0.2); tone('triangle', 990, 495, 0.1, 0.14, 0.05); },
+    // the gun locking up is its own event now — it used to borrow lowShield,
+    // so "out of shields" and "out of gun" were indistinguishable by ear
+    overheat()   { tone('sawtooth', 230, 190, 0.2, 0.26); tone('sawtooth', 230, 190, 0.2, 0.26, 0.24); noise(0.3, 0.14, 2600, 500); },
+    // UI: a family, not one blip — hover, confirm, back, toggle, tick
+    hover()      { tone('square', 1200, 1200, 0.025, 0.09); },
+    back()       { tone('square', 620, 440, 0.07, 0.16); },
+    toggleOn()   { tone('square', 700, 1050, 0.06, 0.18); },
+    toggleOff()  { tone('square', 1050, 700, 0.06, 0.18); },
+    tick()       { tone('triangle', 1500, 1500, 0.03, 0.14); },
+    confirm()    { tone('square', 660, 660, 0.06, 0.2); tone('square', 990, 990, 0.09, 0.2, 0.06); },
     hitEnemy()   { tone('square', 220, 60, 0.12, 0.3); noise(0.1, 0.2, 2500, 400); },
     hitPlayer()  { tone('sawtooth', 160, 40, 0.25, 0.45); noise(0.2, 0.35, 1800, 200); },
     hitWall()    { noise(0.07, 0.15, 3000, 600); },
@@ -371,6 +429,35 @@ const AudioSys = (() => {
     boss:   { bars: [45, 46, 43, 44], drums: true,  drive: 2 },
   };
   const ARP = [0, 3, 7, 12, 7, 3];   // minor arpeggio, up and back
+  // the lead line: only over the top of the mix, when the grid is hunting
+  const LEAD = [12, 15, 19, 22, 19, 15, 14, 12];
+
+  /* Stingers: one- or two-bar musical punctuation for the beats the score
+   * has no other way to mark — a silent kill, a glimpse, the alarm, a ghost
+   * extraction, a broken chain. Quantized to the next 8th so they land on
+   * the grid instead of over it. */
+  const STINGERS = {
+    silent: (t, root) => { mOsc('triangle', mf(root + 24), t, MSTEP * 2, 0.07, 3000); mOsc('triangle', mf(root + 27), t + MSTEP * 2, MSTEP * 4, 0.07, 3000); },
+    eyes:   (t, root) => { mOsc('sawtooth', mf(root + 13), t, MSTEP * 6, 0.06, 900); },
+    alarm:  (t, root) => { [0, 1, 3].forEach((n, i) => mOsc('square', mf(root + 12 + n), t + i * MSTEP * 2, MSTEP * 2.2, 0.07, 2400)); },
+    ghost:  (t, root) => { [0, 7, 12, 19, 24].forEach((n, i) => mOsc('triangle', mf(root + 12 + n), t + i * MSTEP * 1.5, MSTEP * 4, 0.07, 3500)); },
+    break:  (t, root) => { [7, 3, 0].forEach((n, i) => mOsc('sawtooth', mf(root + 12 + n), t + i * MSTEP * 2, MSTEP * 2.5, 0.06, 1200)); },
+    promote:(t, root) => { [0, 4, 7, 12, 16].forEach((n, i) => mOsc('square', mf(root + 24 + n), t + i * MSTEP, MSTEP * 3, 0.06, 3200)); },
+  };
+
+  function stinger(name) {
+    if (!ctx || !musicBus || muted || musicVol <= 0) return;
+    const fn = STINGERS[name];
+    if (!fn) return;
+    // next 8th-note boundary at or after now: even steps are 8ths
+    const now = ctx.currentTime;
+    let t = musicNext - (musicStep & 1) * MSTEP;
+    while (t - MSTEP * 2 > now) t -= MSTEP * 2;
+    if (t < now) t = now + 0.01;
+    const mood = MOODS[musicMood] || MOODS.combat;
+    const root = mood.bars[(musicStep >> 4) & 3];
+    fn(t, root);
+  }
 
   function musicGainValue() { return muted ? 0 : musicVol * 0.5; }
 
@@ -417,7 +504,9 @@ const AudioSys = (() => {
     if (!ctx || !musicBus) return;
     // hidden tabs clamp setInterval to >=1s while the AudioContext keeps
     // running — schedule far enough ahead that the soundtrack doesn't gap
-    const ahead = (typeof document !== 'undefined' && document.hidden) ? 1.6 : 0.28;
+    // half a second visible: a level-gen hitch or GC pause under ~0.4 s used
+    // to gap the soundtrack on a 0.28 s lookahead
+    const ahead = (typeof document !== 'undefined' && document.hidden) ? 1.6 : 0.5;
     while (musicNext < ctx.currentTime + ahead) {
       if ((musicStep & 15) === 0 && pendingMood) {
         musicMood = pendingMood;
@@ -530,6 +619,12 @@ const AudioSys = (() => {
     } else if ((pos & 1) === 0 || inten > 0.55) {
       mOsc('square', mf(root + 12 + ARP[(step >> 1) % ARP.length]), t, MSTEP * 1.1,
         0.04 + inten * 0.03, 1400 + inten * 2600);
+    }
+
+    // lead: a fourth layer over the hats, gated on the hunt being on
+    if (mood.drive > 0 && inten > 0.7 && (pos === 2 || pos === 7 || pos === 10 || pos === 13)) {
+      mOsc('sawtooth', mf(root + 12 + LEAD[((step >> 2) + bar * 2) & 7]), t, MSTEP * 2.6,
+        0.045 + (inten - 0.7) * 0.06, 2200 + inten * 1200);
     }
 
     if (mood.drums) {
@@ -660,15 +755,71 @@ const AudioSys = (() => {
     }
   }
 
+  /* Low-shield heartbeat: a lub-dub on a cadence that quickens as the shields
+   * drain. Driven every frame by main.js (level 0 = off); scheduled beat by
+   * beat rather than as a looping node, so there is nothing to leak. */
+  let heartNext = 0;
+  function setHeartbeat(level01) {
+    if (!ctx || muted || !(level01 > 0)) { heartNext = 0; return; }
+    const now = ctx.currentTime;
+    if (now < heartNext) return;
+    const k = Math.min(1, level01);
+    heartNext = now + 1.05 - k * 0.45;
+    const beat = (delay, vol) => {
+      const t0 = now + delay;
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(58, t0);
+      o.frequency.exponentialRampToValueAtTime(34, t0 + 0.12);
+      env(g, t0, vol, 0.008, 0.16);
+      o.connect(g); g.connect(master);
+      o.start(t0); o.stop(t0 + 0.24);
+    };
+    beat(0, 0.22 + k * 0.2);
+    beat(0.17, 0.14 + k * 0.14);
+  }
+
   /* play('explosion')                 — flat, centred (UI, stingers)
    * play('explosion', { x, z })       — placed in the arena
-   * Anything that shakes the room also ducks the soundtrack under itself. */
+   * Anything that shakes the room also ducks the soundtrack under itself.
+   *
+   * Voice limiting: every play() builds 3–8 nodes, and a rusher chain-pop or
+   * a WARLORD death used to spawn dozens of identical explosions in one frame
+   * — a main-thread stall, a pumping limiter, mud. Each key keeps a small
+   * pool of live voices; past the cap the newest is dropped (identical sounds
+   * stack into nothing anyway), and the same key from the same spot within a
+   * frame is folded into one. */
   const BIG = { explosion: 1, bigExplosion: 1, nadeBoom: 1, bossDown: 1, shock: 1 };
+  const VOICE_CAP = {
+    explosion: 4, bigExplosion: 3, nadeBoom: 4, shock: 3, hitEnemy: 6, hitWall: 4, hitPlayer: 3,
+    fire: 6, enemyFire: 6, fireDrone: 5, fireHunter: 4, fireSniper: 3, firePhantom: 3,
+    fireShellback: 3, fireWarden: 3, deflect: 4, warp: 3, bounce: 3, ping: 3, powerup: 2,
+  };
+  const VOICE_LEN = 0.55;   // how long a voice counts against its cap
+  const voices = {};        // key -> [end times]
+  const lastAt = {};        // key -> { t, x, z } for the same-spot fold
+  let voicesDropped = 0;    // diagnostics / tests
+
+  function admit(name, at) {
+    const cap = VOICE_CAP[name];
+    if (!cap) return true;
+    const now = ctx.currentTime;
+    const last = lastAt[name];
+    if (last && now - last.t < 0.03 && at && last.x != null &&
+        Math.abs(last.x - at.x) < 2 && Math.abs(last.z - at.z) < 2) { voicesDropped++; return false; }
+    const live = voices[name] || (voices[name] = []);
+    while (live.length && live[0] <= now) live.shift();
+    if (live.length >= cap) { voicesDropped++; return false; }
+    live.push(now + VOICE_LEN);
+    lastAt[name] = { t: now, x: at ? at.x : null, z: at ? at.z : null };
+    return true;
+  }
 
   function play(name, at) {
     if (!ctx || muted) return;
     const fn = sfx[name];
     if (!fn) return;
+    if (!admit(name, at)) return;
     const bus = at ? positionalBus(at.x, at.z) : null;
     dest = bus ? bus.input : master;
     send = bus ? bus.send : null;
@@ -683,7 +834,9 @@ const AudioSys = (() => {
 
   return {
     resume, play, setEngine, stopEngine, toggleMuted, isMuted, setVolume,
-    setMusicVolume, setMusicMood, setMusicIntensity,
+    setMusicVolume, setMusicMood, setMusicIntensity, stinger, setHeartbeat,
     setListener, clearListener,
+    // diagnostics for the headless suite
+    _voicesDropped: () => voicesDropped, _hasSfx: (k) => !!sfx[k],
   };
 })();
