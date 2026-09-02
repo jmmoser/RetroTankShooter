@@ -5,6 +5,10 @@
  * and stick also navigate menus by synthesizing the same virtual key edges
  * the keyboard uses, so every screen works from the couch.
  *
+ * Keys are REBINDABLE: the defaults below seed a table that the CONTROLS
+ * screen edits (captureNext / rebind / resetBinds) and that persists under
+ * pa_binds. Menu hotkeys stay fixed — they are labelled on the buttons.
+ *
  * Touch is a first-class scheme, not a fallback:
  *  - A floating joystick spawns wherever the left thumb lands and stays
  *    anchored there; overshoot past the rim just clamps, so the base never
@@ -24,18 +28,96 @@ const Input = (() => {
   let nadeHeld = false;
   let mineHeld = false;
 
-  const KEYMAP = {
-    ArrowUp: 'forward', KeyW: 'forward',
-    ArrowDown: 'back', KeyS: 'back',
-    ArrowLeft: 'left', KeyA: 'left',
-    ArrowRight: 'right', KeyD: 'right',
-    Space: 'fire',
-    KeyX: 'nade', ControlLeft: 'nade',
-    KeyV: 'mine',
-    KeyR: 'vent',
-    ShiftLeft: 'boost', ShiftRight: 'boost',
-    KeyC: 'cam', KeyP: 'pause',
+  // ---- bindings ----------------------------------------------------------
+  // action -> [primary code, alternate code]. Rebinding replaces the primary
+  // and steals the code from whichever action held it.
+  const DEFAULT_BINDS = {
+    forward: ['KeyW', 'ArrowUp'],
+    back:    ['KeyS', 'ArrowDown'],
+    left:    ['KeyA', 'ArrowLeft'],
+    right:   ['KeyD', 'ArrowRight'],
+    fire:    ['Space'],
+    nade:    ['KeyX', 'ControlLeft'],
+    mine:    ['KeyV'],
+    vent:    ['KeyR'],
+    boost:   ['ShiftLeft', 'ShiftRight'],
+    cam:     ['KeyC'],
+    pause:   ['KeyP'],
   };
+  const ACTIONS = Object.keys(DEFAULT_BINDS);
+  const ACTION_LABELS = {
+    forward: 'DRIVE FORWARD', back: 'REVERSE / BRAKE', left: 'STEER LEFT', right: 'STEER RIGHT',
+    fire: 'FIRE CANNON', nade: 'GRENADE', mine: 'DROP MINE', vent: 'VENT HEAT',
+    boost: 'BOOST', cam: 'CAMERA', pause: 'PAUSE',
+  };
+  let binds = {};
+  let KEYMAP = {};   // code -> action, rebuilt from binds
+
+  function cloneDefaults() {
+    const o = {};
+    for (const a of ACTIONS) o[a] = DEFAULT_BINDS[a].slice();
+    return o;
+  }
+  function rebuildMap() {
+    KEYMAP = {};
+    for (const a of ACTIONS) for (const c of binds[a]) if (c) KEYMAP[c] = a;
+  }
+  function loadBinds() {
+    binds = cloneDefaults();
+    try {
+      const raw = JSON.parse((typeof Store !== 'undefined' ? Store.get('pa_binds') : localStorage.getItem('pa_binds')) || 'null');
+      if (raw && typeof raw === 'object') {
+        for (const a of ACTIONS) {
+          if (!Array.isArray(raw[a])) continue;
+          const list = raw[a].filter((c) => typeof c === 'string' && /^[A-Za-z0-9]{1,24}$/.test(c)).slice(0, 2);
+          if (list.length) binds[a] = list;
+        }
+      }
+    } catch (e) {}
+    rebuildMap();
+  }
+  function saveBinds() {
+    const json = JSON.stringify(binds);
+    if (typeof Store !== 'undefined') Store.set('pa_binds', json);
+    else { try { localStorage.setItem('pa_binds', json); } catch (e) {} }
+  }
+  loadBinds();
+
+  /* Bind `code` as the primary key for `action`, keeping its alternate; the
+   * code is taken away from any other action that had it (that action's
+   * alternate moves up, or it is left unbound). Escape is never bindable. */
+  function rebind(action, code) {
+    if (!binds[action] || typeof code !== 'string' || code === 'Escape') return false;
+    for (const a of ACTIONS) binds[a] = binds[a].filter((c) => c !== code);
+    const list = binds[action];
+    binds[action] = [code].concat(list.slice(1, 2));
+    rebuildMap();
+    saveBinds();
+    return true;
+  }
+  function resetBinds() { binds = cloneDefaults(); rebuildMap(); saveBinds(); }
+  function getBinds() { const o = {}; for (const a of ACTIONS) o[a] = binds[a].slice(); return o; }
+
+  /* Human name for a KeyboardEvent.code. */
+  function labelFor(code) {
+    if (!code) return '—';
+    const SPECIAL = {
+      Space: 'SPACE', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+      ShiftLeft: 'L SHIFT', ShiftRight: 'R SHIFT', ControlLeft: 'L CTRL', ControlRight: 'R CTRL',
+      AltLeft: 'L ALT', AltRight: 'R ALT', Enter: 'ENTER', Tab: 'TAB', Backspace: 'BKSP',
+      CapsLock: 'CAPS', Escape: 'ESC',
+    };
+    if (SPECIAL[code]) return SPECIAL[code];
+    let m = /^Key([A-Z])$/.exec(code); if (m) return m[1];
+    m = /^Digit(\d)$/.exec(code); if (m) return m[1];
+    m = /^Numpad(.+)$/.exec(code); if (m) return 'NUM ' + m[1].toUpperCase();
+    return code.toUpperCase();
+  }
+
+  // capture mode: the next keydown is handed to `cb` instead of the game
+  let captureCb = null;
+  function captureNext(cb) { captureCb = typeof cb === 'function' ? cb : null; }
+  function capturing() { return !!captureCb; }
 
   function typingInField(e) {
     const el = e.target;
@@ -44,6 +126,15 @@ const Input = (() => {
 
   window.addEventListener('keydown', (e) => {
     if (typingInField(e)) return; // let text fields (e.g. room code) receive keys
+    if (captureCb) {
+      // a rebind capture eats everything except Escape (which cancels)
+      e.preventDefault();
+      if (e.repeat) return;
+      const cb = captureCb;
+      captureCb = null;
+      cb(e.code === 'Escape' ? null : e.code);
+      return;
+    }
     if (e.repeat) {
       if (KEYMAP[e.code]) e.preventDefault();
       return;
@@ -171,8 +262,37 @@ const Input = (() => {
     return false;
   }
 
+  function rumbleAllowed() {
+    try { return typeof Settings === 'undefined' || Settings.get('rumble') !== false; } catch (e) { return true; }
+  }
+
+  /* Phone haptics (touch mode only) — and, when a pad is connected, the same
+   * call rumbles it. Both honour the RUMBLE setting. */
   function vibrate(ms) {
+    if (!rumbleAllowed()) return;
     if (touch.mode && navigator.vibrate) { try { navigator.vibrate(ms); } catch (e) {} }
+    if (pad.connected) rumble(0.5, 0.8, ms);
+  }
+
+  /* Gamepad rumble via the (still-prefixed-in-spirit) vibrationActuator:
+   * strong/weak 0..1, duration in ms. Silently a no-op where unsupported. */
+  let rumbleUntil = 0;
+  function rumble(strong, weak, ms) {
+    if (!rumbleAllowed()) return;
+    const act = pad.actuator;
+    if (!act || typeof act.playEffect !== 'function') return;
+    const now = performance.now();
+    // don't let a weak buzz cut a big one short
+    if (now < rumbleUntil && strong < pad.rumbleStrong) return;
+    pad.rumbleStrong = strong;
+    rumbleUntil = now + ms;
+    try {
+      const p = act.playEffect('dual-rumble', {
+        startDelay: 0, duration: Math.max(10, Math.min(1000, ms | 0)),
+        strongMagnitude: Math.max(0, Math.min(1, strong)), weakMagnitude: Math.max(0, Math.min(1, weak)),
+      });
+      if (p && p.catch) p.catch(() => {});
+    } catch (e) {}
   }
 
   // Last input wins: a touch turns the touch UI on, a mouse press on a
@@ -236,7 +356,7 @@ const Input = (() => {
     // overlays keep their DOM taps: screens, and the update toast (which can
     // appear mid-run — swallowing its pointerdown made it untappable exactly
     // when "tap to restart" matters)
-    if (e.target && e.target.closest && e.target.closest('.screen, .update-toast')) return;
+    if (e.target && e.target.closest && e.target.closest('.screen, .update-toast, .sim-toast')) return;
     e.preventDefault();
     const x = e.clientX, y = e.clientY;
 
@@ -288,34 +408,72 @@ const Input = (() => {
   // Held actions feed axis(); momentary ones synthesize the same virtual key
   // edges the keyboard produces, so menus and screen flow need no new code.
 
-  const PAD_DEAD = 0.18;
+  const DEADZONES = [0.10, 0.18, 0.26, 0.34, 0.42];   // the DEADZONE setting indexes this
   const pad = {
     connected: false,
+    index: -1,         // which slot we read; the last pad that moved wins
+    actuator: null,
+    rumbleStrong: 0,
     turn: 0, drive: 0,
     fire: false, nade: false, mine: false, boost: false, vent: false,
     prev: [],          // previous frame's button states, for edge detection
+    prevB: false,
     prevStickX: 0, prevStickY: 0,
   };
 
-  function padAxis(gp, i) {
-    const v = gp.axes[i] || 0;
-    if (Math.abs(v) < PAD_DEAD) return 0;
-    return (v - Math.sign(v) * PAD_DEAD) / (1 - PAD_DEAD);
+  function padDead() {
+    try {
+      if (typeof Settings !== 'undefined') {
+        const i = Settings.get('deadzone');
+        if (typeof i === 'number' && DEADZONES[i] != null) return DEADZONES[i];
+      }
+    } catch (e) {}
+    return DEADZONES[1];
+  }
+
+  /* Radial deadzone: the dead region is a disc, not a square — a per-axis
+   * deadzone made diagonals notch and a slight forward push while steering
+   * hard read as zero throttle. Returns [x, y] rescaled to the live range. */
+  function padStick(gp, ix, iy) {
+    const x = gp.axes[ix] || 0, y = gp.axes[iy] || 0;
+    const dead = padDead();
+    const m = Math.hypot(x, y);
+    if (m < dead) return [0, 0];
+    const k = Math.min(1, (m - dead) / (1 - dead)) / m;
+    return [x * k, y * k];
+  }
+
+  function padActive(gp) {
+    if (!gp || !gp.connected) return false;
+    for (const b of gp.buttons) if (b && b.pressed) return true;
+    for (let i = 0; i < Math.min(4, gp.axes.length); i++) if (Math.abs(gp.axes[i]) > 0.5) return true;
+    return false;
   }
 
   function pollGamepad() {
     let gp = null;
     try {
       const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-      for (const g of pads) if (g && g.connected) { gp = g; break; }
+      // the pad that was last touched is the one in someone's hands — a
+      // dormant wheel in slot 0 must not shadow the controller in slot 1
+      let first = null;
+      for (let i = 0; i < pads.length; i++) {
+        const g = pads[i];
+        if (!g || !g.connected) continue;
+        if (!first) first = g;
+        if (padActive(g)) { pad.index = i; gp = g; break; }
+      }
+      if (!gp) gp = (pad.index >= 0 && pads[pad.index] && pads[pad.index].connected) ? pads[pad.index] : first;
     } catch (e) {}
     pad.connected = !!gp;
     if (!gp) {
       pad.turn = 0; pad.drive = 0;
       pad.fire = pad.nade = pad.mine = pad.boost = pad.vent = false;
       pad.prev.length = 0;
+      pad.actuator = null;
       return;
     }
+    pad.actuator = gp.vibrationActuator || null;
 
     const held = (i) => !!(gp.buttons[i] && gp.buttons[i].pressed);
     const edge = (i, code) => {
@@ -325,7 +483,7 @@ const Input = (() => {
     };
 
     // held actions: stick + face buttons/triggers
-    const sx = padAxis(gp, 0), sy = padAxis(gp, 1);
+    const [sx, sy] = padStick(gp, 0, 1);
     pad.turn = -sx;
     pad.drive = -sy;
     pad.fire = held(0) || held(7);    // A / RT
@@ -340,10 +498,19 @@ const Input = (() => {
     edge(8, 'Escape');                // Select backs out
     edge(12, 'ArrowUp'); edge(13, 'ArrowDown');
     edge(14, 'ArrowLeft'); edge(15, 'ArrowRight');
-    // A doubles as confirm; B backs out of menus but must never do so while
-    // the playfield is live (there it's the grenade button).
-    edge(0, 'Enter');
-    if (!touch.enabled) { if (held(1) && !pad.prevB) pressed['Escape'] = true; }
+    // a pad-only edge: the in-play TECH card confirms on d-pad right, and a
+    // keyboard ArrowRight (steering) must never do that
+    { const now = held(15); if (now && !pad.prevR) pressed['PadRight'] = true; pad.prevR = now; }
+    // A doubles as confirm, B backs out — but neither while the playfield is
+    // live: there A is the cannon and B the grenade, and an A that also
+    // committed the focused TECH card mid-firefight picked upgrades by
+    // accident. In play the d-pad steers the card and ► installs it.
+    if (!touch.enabled) {
+      edge(0, 'Enter');
+      if (held(1) && !pad.prevB) pressed['Escape'] = true;
+    } else {
+      pad.prev[0] = held(0);
+    }
     pad.prevB = held(1);
 
     // stick flicks navigate menus: fire an edge on each threshold crossing
@@ -413,5 +580,14 @@ const Input = (() => {
 
   function touchUI() { return ui; }
 
-  return { axis, consume, clearFrame, setPlayfieldActive, touchUI, vibrate, pollGamepad, padConnected };
+  return {
+    axis, consume, clearFrame, setPlayfieldActive, touchUI, vibrate, rumble, pollGamepad, padConnected,
+    // bindings
+    actions: ACTIONS, actionLabel: (a) => ACTION_LABELS[a] || a, binds: getBinds, rebind, resetBinds,
+    labelFor, captureNext, capturing,
+    // test seams
+    _keydown: (code) => { const a = KEYMAP[code]; if (a) { keys[a] = true; pressed[a] = true; } pressed[code] = true; },
+    _keyup: (code) => { const a = KEYMAP[code]; if (a) keys[a] = false; },
+    _setPad: (o) => Object.assign(pad, o),
+  };
 })();

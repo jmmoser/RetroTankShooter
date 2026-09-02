@@ -163,11 +163,13 @@ uniform mat4 uModel;
 uniform mat4 uShadowMat;
 uniform mediump float uPointMode;
 uniform mediump float uPixelScale;
+uniform mediump float uPointCap;
 varying vec3 vColor;
 varying vec3 vNormal;
 varying vec3 vWorld;
 varying float vFogDepth;
 varying vec4 vShadowPos;
+varying float vAlpha;
 void main() {
   vec4 world = uModel * vec4(aPos, 1.0);
   vec4 viewPos = uView * world;
@@ -184,8 +186,12 @@ void main() {
   vWorld = world.xyz;
   vFogDepth = -viewPos.z;
   vShadowPos = uShadowMat * world;
+  // sprites: aNormal.x is the size, aNormal.y the alpha (alpha-blended smoke)
+  vAlpha = aNormal.y;
   if (uPointMode > 0.5) {
-    gl_PointSize = clamp(aNormal.x * uPixelScale / max(gl_Position.w, 0.1), 1.0, 64.0);
+    // the cap scales with the canvas: a fixed 64 px used to shrink big
+    // explosions on 2x displays (uPointCap is set per frame in beginFrame)
+    gl_PointSize = clamp(aNormal.x * uPixelScale / max(gl_Position.w, 0.1), 1.0, uPointCap);
   }
 }
 `;
@@ -199,6 +205,7 @@ uniform float uFogDensity;
 uniform float uUnlit;
 uniform float uPointMode;
 uniform float uSoftPoint;
+uniform float uAlphaMode;
 uniform vec3 uTint;
 uniform int uNumLights;
 uniform vec4 uLightPosR[${MAX_LIGHTS}];   // xyz = world pos, w = 1/radius
@@ -211,6 +218,11 @@ varying vec3 vNormal;
 varying vec3 vWorld;
 varying float vFogDepth;
 varying vec4 vShadowPos;
+varying float vAlpha;
+
+float hash2(highp vec2 p) {
+  return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
 
 float unpackDepth(vec4 c) {
   return dot(c, vec4(1.0, 1.0 / 255.0, 1.0 / 65025.0, 1.0 / 16581375.0));
@@ -251,6 +263,9 @@ void main() {
       float r = sqrt(r2) * 2.0;
       pointFade = (1.0 - r) * (1.0 - r) * (1.0 + 2.0 * r);
     }
+    // a sprite flying through the lens fades out instead of filling the
+    // frame with a 192 px blur — muzzle sparks used to do exactly that
+    pointFade *= smoothstep(1.2, 5.0, vFogDepth);
   }
   vec3 N = normalize(vNormal);
   vec3 V = normalize(uCamPos - vWorld);
@@ -259,6 +274,17 @@ void main() {
   // ambient is only lightly shadowed — shadowed facets go cool and deep, not
   // black, which is what keeps the arena readable in the dark
   vec3 lit = vColor * (0.32 * (0.80 + 0.20 * shadow) + 0.7 * diff * shadow);
+  // floor panelling: one flat colour and a grid reads as "no floor". A hashed
+  // per-panel tone plus faint seams gives tread prints, scorch and shadows
+  // something to sit on. Floor only — slab tops keep their flat shading.
+  if (uUnlit < 0.5 && N.y > 0.9 && vWorld.y < 0.05) {
+    highp vec2 pw = vWorld.xz / 6.0;
+    float panel = hash2(floor(pw));
+    vec2 f = fract(pw);
+    float edge = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
+    float seam = smoothstep(0.0, 0.05, edge);
+    lit *= (0.90 + 0.18 * panel) * (0.82 + 0.18 * seam);
+  }
   // specular: a tight sun highlight rakes across the facets as hulls turn
   vec3 H = normalize(uLightDir + V);
   float spec = pow(max(dot(N, H), 0.0), 28.0) * diff * shadow;
@@ -278,10 +304,13 @@ void main() {
     dyn += uLightCol[i] * (att * att);
   }
   lit += dyn * (vColor * 1.4 + 0.12);
-  vec3 col = mix(lit, vColor, uUnlit) * uTint * pointFade;
+  // alpha-blended sprites (smoke) carry the soft edge in alpha, not in colour
+  float alphaPt = uPointMode * uAlphaMode;
+  vec3 col = mix(lit, vColor, uUnlit) * uTint * mix(pointFade, 1.0, alphaPt);
   float fog = 1.0 - exp(-uFogDensity * uFogDensity * vFogDepth * vFogDepth);
   fog = clamp(fog, 0.0, 1.0);
-  gl_FragColor = vec4(mix(col, uFogColor * (1.0 - uSoftPoint * uPointMode), fog), 1.0);
+  gl_FragColor = vec4(mix(col, uFogColor * (1.0 - uSoftPoint * uPointMode), fog),
+                      mix(1.0, vAlpha * pointFade, alphaPt));
 }
 `;
 
@@ -480,8 +509,8 @@ class Renderer {
     this.attribs = { pos: 0, normal: 1, color: 2 };
     this.uniforms = {};
     for (const name of ['uProj', 'uView', 'uModel', 'uLightDir', 'uCamPos', 'uFogColor',
-                        'uFogDensity', 'uUnlit', 'uPointMode', 'uSoftPoint', 'uTint',
-                        'uPixelScale', 'uNumLights', 'uLightPosR', 'uLightCol',
+                        'uFogDensity', 'uUnlit', 'uPointMode', 'uSoftPoint', 'uAlphaMode', 'uTint',
+                        'uPixelScale', 'uPointCap', 'uNumLights', 'uLightPosR', 'uLightCol',
                         'uShadowMat', 'uShadowMap', 'uShadowOn', 'uShadowTexel']) {
       this.uniforms[name] = gl.getUniformLocation(this.program, name);
     }
@@ -504,6 +533,7 @@ class Renderer {
     gl.uniform1f(this.uniforms.uUnlit, 0);
     gl.uniform1f(this.uniforms.uPointMode, 0);
     gl.uniform1f(this.uniforms.uSoftPoint, 0);
+    gl.uniform1f(this.uniforms.uAlphaMode, 0);
     gl.uniform1i(this.uniforms.uNumLights, 0);
     gl.uniform1i(this.uniforms.uShadowMap, 0);
     gl.uniform1f(this.uniforms.uShadowOn, 0);
@@ -518,6 +548,10 @@ class Renderer {
     gl.bufferData(gl.ARRAY_BUFFER, this.particleData.byteLength, gl.DYNAMIC_DRAW);
 
     this.identityModel = m4.identity();
+    // RENDER SCALE: the 3D scene renders at this fraction of device
+    // resolution and is upscaled by the canvas — the cheapest fill-rate knob
+    // there is, and the one a 3x phone needs
+    this.renderScale = 1;
 
     // dynamic light scratch buffers (filled by setLights each frame)
     this.lightPosR = new Float32Array(MAX_LIGHTS * 4);
@@ -776,8 +810,12 @@ class Renderer {
     return { vbo, count: data.length / 9, mode: mode !== undefined ? mode : gl.TRIANGLES };
   }
 
+  setRenderScale(k) {
+    this.renderScale = Math.max(0.4, Math.min(1, +k || 1));
+  }
+
   resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2) * this.renderScale;
     const w = Math.floor(this.canvas.clientWidth * dpr);
     const h = Math.floor(this.canvas.clientHeight * dpr);
     if (this.canvas.width !== w || this.canvas.height !== h) {
@@ -904,6 +942,7 @@ class Renderer {
     }
     this._shadowCastThisFrame = false;
     this.pixelScale = this.canvas.height * 1.2;
+    gl.uniform1f(this.uniforms.uPointCap, Math.max(48, 72 * this.canvas.height / 720));
   }
 
   /* lights: array of {x, y, z, r, g, b, radius} — world-space point lights
@@ -1011,29 +1050,54 @@ class Renderer {
     if (soft) gl.uniform1f(this.uniforms.uSoftPoint, 0);
   }
 
-  /* particles: array of {x,y,z,size,r,g,b} — soft additive glow sprites */
+  /* particles: array of {x,y,z,size,r,g,b,kind?,life?,maxLife?}. Two kinds of
+   * sprite in one buffer: alpha-blended SMOKE (kind 'smoke', drawn first so
+   * glow shows through it) and additive glow (everything else). The buffer is
+   * packed smoke-then-glow so each pass is a single range draw. */
   drawParticles(particles) {
     if (!particles.length || this._shadowMode) return;
     const gl = this.gl;
-    const n = Math.min(particles.length, this.maxParticles);
     const d = this.particleData;
-    for (let i = 0; i < n; i++) {
-      const p = particles[i], o = i * 9;
+    const cap = this.maxParticles;
+    let n = 0;
+    const put = (p, size, alpha) => {
+      const o = n * 9;
       d[o] = p.x; d[o + 1] = p.y; d[o + 2] = p.z;
-      d[o + 3] = p.size; d[o + 4] = 1; d[o + 5] = 0;
+      d[o + 3] = size; d[o + 4] = alpha; d[o + 5] = 0;
       d[o + 6] = p.r; d[o + 7] = p.g; d[o + 8] = p.b;
+      n++;
+    };
+    for (let i = 0; i < particles.length && n < cap; i++) {
+      const p = particles[i];
+      if (p.kind !== 'smoke') continue;
+      const k = p.maxLife ? p.life / p.maxLife : 1;
+      put(p, p.size * 3, 0.55 * Math.min(1, k * 1.5));
     }
+    const nSmoke = n;
+    for (let i = 0; i < particles.length && n < cap; i++) {
+      const p = particles[i];
+      if (p.kind !== 'smoke') put(p, p.size, 1);
+    }
+    if (!n) return;
     gl.uniformMatrix4fv(this.uniforms.uModel, false, this.identityModel);
     gl.uniform1f(this.uniforms.uUnlit, 1);
     gl.uniform1f(this.uniforms.uPointMode, 1);
     gl.uniform1f(this.uniforms.uSoftPoint, 1);
     gl.uniform1f(this.uniforms.uPixelScale, this.pixelScale);
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.ONE, gl.ONE);
     gl.depthMask(false);
     this._bindVertexFormat(this.particleVbo);   // same 9-float layout as meshes
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.subarray(0, n * 9));
-    gl.drawArrays(gl.POINTS, 0, n);
+    if (nSmoke) {
+      gl.uniform1f(this.uniforms.uAlphaMode, 1);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.drawArrays(gl.POINTS, 0, nSmoke);
+      gl.uniform1f(this.uniforms.uAlphaMode, 0);
+    }
+    if (n > nSmoke) {
+      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.drawArrays(gl.POINTS, nSmoke, n - nSmoke);
+    }
     gl.disable(gl.BLEND);
     gl.depthMask(true);
     gl.uniform1f(this.uniforms.uPointMode, 0);

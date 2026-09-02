@@ -124,10 +124,20 @@ still moving.
 
 When the last uplink falls, there's no mop-up — the grid knows, every
 hull in the sector wakes up, and an **EXTRACTION GATE** opens across the
-arena. The run ends when your tank (your whole squad, in co-op) is inside
-the gate ring. Get there without ever tripping the alarm beforehand and
-the sector pays a **GHOST EXTRACTION** bonus. Your hull is gone when
-shields hit zero.
+arena. The gate has to be **held**: the warp needs four seconds with your
+tank (your whole squad, in co-op) inside the ring, a charge bar counts them
+up under the radar, and stepping out bleeds it. A sector that is wide
+awake gets those seconds to make its case — the getaway is a last stand,
+not a touch-and-go. Get there without ever tripping the alarm beforehand
+and the sector pays a **GHOST EXTRACTION** bonus (which starts to decay
+after two minutes of sector time: the patient sneak is still the best money
+in the game, it just stops being time-free). Your hull is gone when shields
+hit zero.
+
+**The grid has a clock.** A minute into a sector it starts **sweeping**: a
+fresh blind patrol warps in near a live uplink every 45 seconds. Not a
+converge wave — they arrive scanning, not hunting — just a sector that keeps
+getting thicker the longer you take.
 
 Getting overwhelmed? **SETTINGS → DIFFICULTY** has three campaign presets:
 **RECRUIT** (the default) slows enemy sensors, shortens the alarm and
@@ -215,7 +225,18 @@ fight alike.
 **Movement is a weapon.** Slam into a hostile at boost speed and it
 shatters — a boost-ram costs a scratch of shields (nothing with RAM
 PLATING), it defuses a rusher bearing down on you, and it's the quietest
-kill in the game.
+kill in the game. It is not the *only* answer, though: a bare ram is capped
+below the big hulls. It deletes a drone, a hunter, a sniper or a warden; a
+shellback, a phantom or an elite needs RAM PLATING stacks or a follow-up
+shell, the shield cost scales with what you hit, and ramming a
+**shellback's plate head-on bounces you off it** stunned and twenty shields
+lighter. RAM PLATING is what turns the plate into just another target — and
+it is earned (see medals).
+
+**Traps are the stealth game's other weapon.** A grenade or a mine landing
+on a hull that never saw it coming hits **double**, both scale up with the
+sector, and a survivor of a blast goes to investigate *the blast* rather
+than radioing your exact position from behind the slab you lobbed over.
 
 Sector terrain comes in four flavors so no two runs blur together: the
 classic **scatter** of slabs, long broken **wall corridors** that channel
@@ -245,6 +266,14 @@ arena: a huge hovercruiser that crushes the very slabs you'd hide behind,
 telegraphs a ramming charge, and shields its core behind four destroyable
 turrets. Strip the turrets, then hammer the exposed core — while outrunning
 (boost!) or blocking (cover!) the shockwave rings it slams out.
+
+**The third WARLORD is the end of the campaign.** Clear **sector 15** and
+the run pays a 5,000-point finale, the PHANTOM medal, and a campaign clear
+on your service record — then the gates keep dealing and the run goes on
+into the deep, endless in all but name. Enemy speed and fire rate stop
+climbing past a cap on the way down (a deep sector must never become one you
+cannot disengage from); what keeps climbing is hull HP, so the deep is
+"harder to delete", not "impossible to leave".
 
 From **sector 3** on, some hostiles warp in as **ELITE** variants — bigger,
 faster, harder-hitting hulls that strobe white-hot and wear a ring on the
@@ -295,6 +324,18 @@ with speed and slams shut for the death cam. A landed kill buys a few frames
 of **hit-stop**, and the first beat of your own death plays in slow motion.
 (Solo only: a co-op host that slowed its own clock would slow everyone's.)
 
+Every hull type fires with its **own voice** — a hunter's three-round
+burst, a sniper's whipcrack, a phantom's sub-thump, a shellback's heavy
+cough — so a player heads-down on the floor cones can still read the threat
+by ear. The overheat lockout has its own klaxon instead of borrowing the
+low-shield warning, the menus have a family of UI sounds rather than one
+blip, and the score punctuates the beats it used to miss: a **stinger** on a
+silent kill, a glimpse, the alarm, a broken chain, a ghost extraction and a
+promotion, each quantized to the next eighth so it lands on the grid, plus a
+**lead line** that only comes in over the top of the mix once the grid is
+hunting. A voice limiter folds a chain-pop's dozen identical explosions into
+a few, so stacked detonations stay a mix and not a stall.
+
 The mix is a desk, not a pile of oscillators. Every shot, wreck and blast is
 **placed in the arena** — panned off your hull's facing, rolled off with
 distance, its highs eaten by the air, and sent to a procedurally generated
@@ -303,8 +344,28 @@ the soundtrack under themselves, a limiter keeps stacked explosions from
 clipping, and the engine is four layers — sub, a detuned resonant body,
 tread clatter riding speed, and a turbine whine that only shows up on boost.
 
+The fight leaves more than craters now. Every destroyed hull leaves a
+**wreck** — dark, tilted, smouldering, sinking into the floor at the end of
+its life — and beaten hulls (yours under 30%, theirs under 35%) **trail
+smoke**: alpha-blended puffs that rise and thin, a second particle type next
+to the additive glow that could only ever say "hot". Cannons throw a
+**muzzle flash** sized by the gun's heat, explosion light **flickers** like
+combustion rather than a lamp, and the floor is **panelled** — a hashed tone
+per slab and faint seams, so tread prints and shadows have something to sit
+on. Sparks that fly through the lens fade instead of filling the frame.
+
+The HUD tells you where a hit came from: a red **wedge on the crosshair
+ring**, in the same hull-relative frame as the exposure arc, so a shell from
+behind reads as behind. Under 30% shields the edges of the frame **pulse on a
+heartbeat** that the mix carries too, and a spilled pot is flung off the POT
+label in red rather than silently subtracted. Screens fade in and out, every
+deploy and gate lands with a white flash and a **sector card**, the warp out
+is a beat — the lens pulls in and the arena bleaches — before the panel, and
+the death cam rises into a slow orbit around the wreck. The title screen has
+patrols in it, cones lit, ambling their routes behind the disk label.
+
 None of it costs an asset file: the shadow map, the impulse response, the
-scorch decals and the grade are all generated at runtime.
+scorch decals, the smoke and the grade are all generated at runtime.
 
 ### Daily Ops
 
@@ -332,14 +393,21 @@ ladder. Your build starts sooner and your twentieth run is not your first run
 again. Daily Ops deliberately ignores it: that leaderboard stays a level
 field, exactly like the difficulty preset.
 
-Fourteen **medals** mark one-time feats: a ghost extraction, five silent
+Fifteen **medals** mark one-time feats: a ghost extraction, five silent
 kills in one mission, a ×5 combo, a sector cleared without taking a hit,
-a 3-day daily streak, and more. They pop mid-run with a toast and a
-jingle, and hang on the medal wall in the service record.
+a 3-day daily streak, the campaign itself, and more. They pop mid-run with
+a toast and a jingle, and hang on the medal wall in the service record.
+
+**Medals unlock tech.** Three upgrades are earned rather than dealt: GHOST
+PLATING joins the draft once you have a GHOST extraction, SHOCK DISCHARGE
+once you have chained a ×5, RAM PLATING once you have downed a WARLORD. The
+service record lists them under unlocks, and the draft grows with the wall.
 
 The **SERVICE RECORD** screen tracks the rest of your career: missions,
-kills, zones secured, warlords downed, best combo and best sector — all in your
-browser. Two things are earned:
+kills, zones secured, warlords downed, best combo, best sector, campaigns
+completed and a best sector **per chassis** — all in your browser. It can
+also **export** the whole career as a code you paste into another browser
+(**IMPORT CAREER CODE**), and **reset** it. Two things are earned:
 
 - **MARAUDER chassis** — a fourth loadout (fast, armored, a small cooling
   plant, heavy on mines) unlocked by destroying your first WARLORD.
@@ -363,8 +431,20 @@ scanline overlay, aim assist, and a **colorblind hull palette**
 (deuteranopia-safe enemy colors; the radar also gives every enemy type its
 own blip shape regardless).
 
+Below the presets sit the comfort and hardware rows: **REDUCED MOTION**
+(defaults to the OS preference; zeroes the radial blur, aberration and grain,
+stops the blink animations and caps shake), **RENDER SCALE** (the 3D scene at
+50–100% of device resolution, the cheapest fill-rate knob there is),
+**FIELD OF VIEW**, **HUD SCALE**, **RUMBLE / HAPTICS** and **STICK
+DEADZONE**. **CONTROLS — REBIND KEYS** opens a screen where every in-battle
+action takes a new key (select the row, press the key; the title legend
+follows), and **RESET SETTINGS** puts everything back. SETTINGS is also
+reachable from the pause menu mid-run.
+
 All menus work with keyboard (arrows + Enter, Esc to go back), mouse, touch
-and **gamepad** alike — pick whatever is closest to hand.
+and **gamepad** alike — pick whatever is closest to hand. Every menu button
+is a real button to assistive tech, and alert-tier HUD lines are mirrored to
+a screen-reader live region.
 
 | Control | Action |
 | --- | --- |
@@ -389,7 +469,12 @@ and **gamepad** alike — pick whatever is closest to hand.
 Plug in any standard controller and it just works, menus included:
 left stick drives and steers, `A`/`RT` fires, `B`/`RB` lobs a grenade,
 `X` vents, `LB` drops a mine, `LT` boosts, `Y` toggles the camera,
-`Start` pauses, and the d-pad or stick navigates every menu.
+`Start` pauses, and the d-pad or stick navigates every menu. In play `A` is
+only ever the cannon — the mid-run TECH card is steered with the d-pad and
+installed with **d-pad right**, so a shell fired the moment a draft appears
+can no longer spend the pick. The stick's deadzone is radial (no diagonal
+notch) and adjustable, the pad rumbles on recoil, hits and pickups where the
+browser supports it, and if two pads are plugged in the one being used wins.
 
 ### Touch controls
 
@@ -415,7 +500,7 @@ still works on plain static hosting like GitHub Pages, because there is no
 game server to run.
 
 - One player picks **HOST CO-OP / VERSUS** (or presses `H`) and is given a
-  4-character **room code** — click the code to copy an **invite link**.
+  5-character **room code** — click the code to copy an **invite link**.
 - Everyone else picks **JOIN GAME** (or presses `J`) and types that code, or
   simply opens the invite link (`index.html?join=CODE`) to jump straight into
   the lobby.
@@ -440,12 +525,20 @@ the WARLORD are rendered ~100 ms in the past and blended between the two
 snapshots that bracket the render time, so everything glides at full display
 framerate instead of stepping at the snapshot rate; your own tank rides the
 freshest snapshot, dead-reckoned forward to hide the quantization.
+Snapshots are stamped on the **host's clock**, and the client's render delay
+grows with the jitter it actually measures, so a lumpy connection stutters
+less instead of mapping every late packet straight into a hitch. Input goes
+up at 30 Hz or on change, sequenced, rather than once per render frame. A
+join that cannot get through (symmetric NAT, no TURN) is reported after ten
+seconds instead of sitting on CONNECTING forever; a deployment that has a
+TURN server can hand it to the game by setting `window.PA_ICE_SERVERS`
+before `js/net.js` loads.
 Signaling uses PeerJS's free public broker, so the game stays a pile of static
 files — perfect for GitHub Pages. Best for 2–4 players on reasonable
 connections; the host has zero latency, and joiners feel a little network lag
-on their own tank. (Want dedicated rooms, matchmaking or reconnects? Swap the
-`js/net.js` transport for a hosted realtime backend such as Firebase, Supabase,
-PartyKit or Ably — the rest of the game is unchanged.)
+on their own tank. (Want dedicated rooms, matchmaking, host migration or
+reconnects? Swap the `js/net.js` transport for a hosted realtime backend such
+as Firebase, Supabase, PartyKit or Ably — the rest of the game is unchanged.)
 
 ### Vehicle configuration
 
@@ -511,6 +604,18 @@ the face** rather than parking against it. Nothing you can hold on the
 controls brings the tank to a dead stop against geometry; in a sector where
 patrols are converging on your last known position, standing still is not a
 state the game will put you in without asking.
+
+## Tests & CI
+
+```sh
+npm test          # 20 headless suites on plain Node — no install needed
+npm run e2e       # Playwright end-to-end (needs `npm install`, then
+                  # `npx playwright install chromium`)
+```
+
+GitHub Actions runs the headless suites on every push and the browser
+end-to-end pass across Chromium, Firefox and WebKit (`.github/workflows/ci.yml`).
+See `test/README.md` for what each suite covers.
 
 ## Code layout
 

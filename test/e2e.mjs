@@ -9,7 +9,7 @@ import http from 'http';
 import { createReadStream, existsSync, statSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { chromium } from 'playwright';
+import { chromium, firefox, webkit } from 'playwright';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 8931;
@@ -38,7 +38,9 @@ const ok = (name, cond, extra) => {
   if (!cond) process.exitCode = 1;
 };
 
-const browser = await chromium.launch();
+// PA_BROWSER=chromium|firefox|webkit picks the engine (the CI matrix runs all three)
+const engine = { chromium, firefox, webkit }[process.env.PA_BROWSER || 'chromium'] || chromium;
+const browser = await engine.launch();
 const context = await browser.newContext();
 const page = await context.newPage();
 const errors = [];

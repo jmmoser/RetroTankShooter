@@ -11,6 +11,27 @@
  *  static files with no accounts.
  */
 
+/* One choke point for every localStorage write. Safari private mode and a
+ * full quota throw on setItem, and every module used to swallow that
+ * silently — a whole career could evaporate without a word. The first failure
+ * is reported once through onFail (main.js toasts it). */
+const Store = (() => {
+  let failed = false;
+  const api = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) {
+      try { localStorage.setItem(k, v); return true; } catch (e) {
+        if (!failed) { failed = true; if (api.onFail) api.onFail(e); }
+        return false;
+      }
+    },
+    remove(k) { try { localStorage.removeItem(k); } catch (e) {} },
+    failed: () => failed,
+    onFail: null,
+  };
+  return api;
+})();
+
 const Settings = (() => {
   // quality: 0 = LOW (no MSAA on the glow scene pass), 1 = HIGH
   // difficulty: 0 = RECRUIT (default), 1 = STANDARD, 2 = VETERAN (campaign
@@ -20,24 +41,62 @@ const Settings = (() => {
   // boundaries, awareness rings, scorch, tread prints, beacon pillars) is all
   // drawn on the ground plane, and a hull-height first-person eye cannot see
   // any of it. `C` still flips to the cockpit view, and the choice sticks.
-  const DEFAULTS = { volume: 7, music: 6, shake: 10, glow: true, shadows: true, quality: 1, crt: true, aimAssist: true, colorblind: false, fps: false, difficulty: 0, coach: true, chase: true };
+  // reducedMotion: zeroes the radial blur, aberration, grain and the blink
+  //   animations and caps shake — defaults to the OS preference
+  // renderScale: 5..10 = 50%..100% of device resolution for the 3D scene
+  // fov: -2..+2 steps around the base field of view
+  // hudScale: 6..14 = 60%..140% HUD size
+  // rumble: gamepad vibration; deadzone: 0..4 = 10%..34% stick deadzone
+  let prefersReduced = false;
+  try { prefersReduced = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
+  const DEFAULTS = {
+    volume: 7, music: 6, shake: 10, glow: true, shadows: true, quality: 1, crt: true,
+    aimAssist: true, colorblind: false, fps: false, difficulty: 0, coach: true, chase: true,
+    reducedMotion: prefersReduced, renderScale: 10, fov: 0, hudScale: 10, rumble: true, deadzone: 1,
+  };
+  // numeric keys are clamped on load — a hand-edited `difficulty: 7` used to
+  // render "undefined" in the menu and reach the sim
+  const RANGES = {
+    volume: [0, 10], music: [0, 10], shake: [0, 10], quality: [0, 1], difficulty: [0, 2],
+    renderScale: [5, 10], fov: [-2, 2], hudScale: [6, 14], deadzone: [0, 4],
+  };
+  const VERSION = 2;   // bump when a key's meaning changes; migrate() upgrades
   const s = Object.assign({}, DEFAULTS);
+
+  function migrate(raw) {
+    const v = typeof raw.v === 'number' ? raw.v : 1;
+    // v1 -> v2: nothing to rename yet; the version field itself is the change
+    if (v < 2) raw.v = 2;
+    return raw;
+  }
+  function clamp(k, v) {
+    const r = RANGES[k];
+    if (!r || typeof v !== 'number') return v;
+    return Math.max(r[0], Math.min(r[1], Math.round(v)));
+  }
   try {
-    const raw = JSON.parse(localStorage.getItem('pa_settings') || '{}');
-    for (const k in DEFAULTS) if (k in raw && typeof raw[k] === typeof DEFAULTS[k]) s[k] = raw[k];
+    const raw = migrate(JSON.parse(Store.get('pa_settings') || '{}'));
+    for (const k in DEFAULTS) if (k in raw && typeof raw[k] === typeof DEFAULTS[k]) s[k] = clamp(k, raw[k]);
   } catch (e) {}
 
   function save() {
-    try { localStorage.setItem('pa_settings', JSON.stringify(s)); } catch (e) {}
+    Store.set('pa_settings', JSON.stringify(Object.assign({ v: VERSION }, s)));
   }
 
   const api = {
     get: (k) => s[k],
     set(k, v) {
-      s[k] = v;
+      s[k] = clamp(k, v);
       save();
-      if (api.onChange) api.onChange(k, v);
+      if (api.onChange) api.onChange(k, s[k]);
     },
+    /* Back to factory defaults (the reduced-motion default re-reads the OS). */
+    reset() {
+      for (const k in DEFAULTS) s[k] = DEFAULTS[k];
+      save();
+      if (api.onChange) api.onChange(null, null);
+    },
+    range: (k) => RANGES[k] || null,
     onChange: null,   // (key, value) — main.js applies live effects here
   };
   return api;
@@ -69,25 +128,42 @@ const MEDALS = [
   { id: 'veteran',     name: 'VETERAN',        how: 'FLY 25 MISSIONS' },
   { id: 'flagday',     name: 'ZONE CONTROL',   how: 'SECURE 100 CAREER ZONES' },
   { id: 'centurion',   name: 'CENTURION',      how: '500 CAREER KILLS' },
+  { id: 'campaign',    name: 'PHANTOM',        how: 'CLEAR SECTOR 15 — COMPLETE THE CAMPAIGN' },
 ];
 
 const Progress = (() => {
   // coachDone: the field coach has walked this pilot through the loop once
-  const ZERO = { games: 0, kills: 0, flags: 0, warlords: 0, bestSector: 1, bestCombo: 1, xp: 0, coachDone: 0 };
+  // campaigns: sector-15 clears; chassisBest: deepest sector per loadout name
+  const ZERO = { games: 0, kills: 0, flags: 0, warlords: 0, bestSector: 1, bestCombo: 1, xp: 0, coachDone: 0, campaigns: 0 };
+  // sane ceilings: a hand-edited 1e12 used to brick the rank ladder display
+  const CEIL = { games: 1e6, kills: 1e7, flags: 1e7, warlords: 1e6, bestSector: 999, bestCombo: 5, xp: 1e9, coachDone: 1, campaigns: 1e6 };
   const p = Object.assign({}, ZERO);
+  let chassisBest = {};
   try {
-    const raw = JSON.parse(localStorage.getItem('pa_stats') || '{}');
-    for (const k in ZERO) if (typeof raw[k] === 'number') p[k] = raw[k];
+    const raw = JSON.parse(Store.get('pa_stats') || '{}');
+    for (const k in ZERO) {
+      if (typeof raw[k] === 'number' && Number.isFinite(raw[k])) p[k] = Math.max(0, Math.min(CEIL[k], raw[k]));
+    }
+    if (raw.chassisBest && typeof raw.chassisBest === 'object') {
+      for (const k in raw.chassisBest) {
+        const v = raw.chassisBest[k];
+        if (typeof k === 'string' && k.length <= 16 && typeof v === 'number' && Number.isFinite(v)) {
+          chassisBest[k] = Math.max(1, Math.min(999, v | 0));
+        }
+      }
+    }
   } catch (e) {}
 
   function save() {
-    try { localStorage.setItem('pa_stats', JSON.stringify(p)); } catch (e) {}
+    Store.set('pa_stats', JSON.stringify(Object.assign({ v: 2, chassisBest }, p)));
   }
 
   /* Fold a finished run into the career record and convert its score to XP.
    * rs: game.runStats, level: sector reached, score: final score.
+   * opts: { loadout, campaignWon } — per-chassis records and campaign clears.
    * Returns the XP gained (floor of 35 so even a doomed sortie advances). */
-  function recordRun(rs, level, score) {
+  function recordRun(rs, level, score, opts) {
+    opts = opts || {};
     p.games++;
     if (rs) {
       p.kills += rs.kills || 0;
@@ -96,11 +172,55 @@ const Progress = (() => {
       p.bestCombo = Math.max(p.bestCombo, rs.bestMult || 1);
     }
     p.bestSector = Math.max(p.bestSector, level || 1);
+    if (opts.campaignWon) p.campaigns++;
+    if (typeof opts.loadout === 'string' && opts.loadout) {
+      chassisBest[opts.loadout] = Math.max(chassisBest[opts.loadout] || 1, level || 1);
+    }
     const xpGained = Math.max(35, Math.round((score || 0) / 10) + 25);
     p.xp += xpGained;
     save();
     return xpGained;
   }
+  function chassisRecord(name) { return chassisBest[name] || 0; }
+
+  // ---- export / import / reset ----------------------------------------
+  // Everything the game remembers lives in a handful of localStorage keys.
+  // A player who switches browsers, or clears site data, deserves to carry
+  // their career with them — as a code they can paste, no accounts needed.
+  const CAREER_KEYS = ['pa_stats', 'pa_daily', 'pa_streak', 'pa_medals', 'pa_high'];
+  const ALL_KEYS = CAREER_KEYS.concat(['pa_settings', 'pa_muted', 'pa_binds']);
+  const CODE_PREFIX = 'PA1.';
+
+  function exportCode() {
+    const o = {};
+    for (const k of ALL_KEYS) { const v = Store.get(k); if (typeof v === 'string') o[k] = v; }
+    let json = JSON.stringify(o);
+    let b64 = '';
+    try { b64 = btoa(unescape(encodeURIComponent(json))); } catch (e) { return ''; }
+    return CODE_PREFIX + b64;
+  }
+
+  /* Returns true when the code was valid and written. The caller reloads —
+   * every module reads storage once at boot. */
+  function importCode(code) {
+    if (typeof code !== 'string') return false;
+    code = code.trim();
+    if (code.indexOf(CODE_PREFIX) !== 0) return false;
+    let o = null;
+    try { o = JSON.parse(decodeURIComponent(escape(atob(code.slice(CODE_PREFIX.length))))); } catch (e) { return false; }
+    if (!o || typeof o !== 'object') return false;
+    let wrote = 0;
+    for (const k of ALL_KEYS) {
+      const v = o[k];
+      if (typeof v !== 'string' || v.length > 20000) continue;
+      // every value is JSON or a short literal; refuse anything that is not
+      if (k !== 'pa_high' && k !== 'pa_muted') { try { JSON.parse(v); } catch (e) { continue; } }
+      if (Store.set(k, v)) wrote++;
+    }
+    return wrote > 0;
+  }
+
+  function resetCareer() { for (const k of CAREER_KEYS) Store.remove(k); }
 
   /* Current rank plus everything the UI needs to draw the progress bar:
    * base/nextAt are the XP thresholds bracketing the current rank. */
@@ -170,7 +290,7 @@ const Progress = (() => {
    * right day's record instead of a spurious 0. */
   function dailyBest(day) {
     try {
-      const raw = JSON.parse(localStorage.getItem('pa_daily') || 'null');
+      const raw = JSON.parse(Store.get('pa_daily') || 'null');
       if (raw && raw.date === (day || todayKey())) return raw;
     } catch (e) {}
     return null;
@@ -182,12 +302,10 @@ const Progress = (() => {
   function recordDaily(score, sector, day) {
     day = day || todayKey();
     let raw = null;
-    try { raw = JSON.parse(localStorage.getItem('pa_daily') || 'null'); } catch (e) {}
+    try { raw = JSON.parse(Store.get('pa_daily') || 'null'); } catch (e) {}
     if (raw && raw.date === day && raw.score >= score) return false;
     if (raw && raw.date > day) return false;   // stale run from a previous day
-    try {
-      localStorage.setItem('pa_daily', JSON.stringify({ date: day, score, sector }));
-    } catch (e) {}
+    Store.set('pa_daily', JSON.stringify({ date: day, score, sector }));
     return true;
   }
 
@@ -196,7 +314,7 @@ const Progress = (() => {
 
   function loadStreak() {
     try {
-      const raw = JSON.parse(localStorage.getItem('pa_streak') || 'null');
+      const raw = JSON.parse(Store.get('pa_streak') || 'null');
       if (raw && typeof raw.streak === 'number') {
         // a malformed `last` would lexicographically outrank every real date
         // and permanently short-circuit recordDailyPlayed — sanitize it
@@ -219,7 +337,7 @@ const Progress = (() => {
     s.streak = s.last === dayBefore(day) ? s.streak + 1 : 1;
     s.best = Math.max(s.best, s.streak);
     s.last = day;
-    try { localStorage.setItem('pa_streak', JSON.stringify(s)); } catch (e) {}
+    Store.set('pa_streak', JSON.stringify(s));
     return s;
   }
 
@@ -232,9 +350,10 @@ const Progress = (() => {
   }
 
   return {
-    get: () => p, recordRun, rank, marauderUnlocked, checkpoints,
+    get: () => p, recordRun, rank, marauderUnlocked, checkpoints, chassisRecord,
     coachDone, setCoachDone, startingTech,
     todayKey, dailyBest, recordDaily, recordDailyPlayed, dailyStreak,
+    exportCode, importCode, resetCareer,
   };
 })();
 
@@ -243,13 +362,13 @@ const Progress = (() => {
 const Medals = (() => {
   let earned = {};
   try {
-    const raw = JSON.parse(localStorage.getItem('pa_medals') || '[]');
-    if (Array.isArray(raw)) for (const id of raw) earned[id] = true;
+    const raw = JSON.parse(Store.get('pa_medals') || '[]');
+    if (Array.isArray(raw)) for (const id of raw) if (typeof id === 'string') earned[id] = true;
   } catch (e) {}
   const recent = [];
 
   function save() {
-    try { localStorage.setItem('pa_medals', JSON.stringify(Object.keys(earned))); } catch (e) {}
+    Store.set('pa_medals', JSON.stringify(Object.keys(earned)));
   }
 
   return {

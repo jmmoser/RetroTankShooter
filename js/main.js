@@ -19,64 +19,16 @@
     throw err;
   }
 
-  // A reclaimed GPU (long mobile PWA sessions, driver resets) turns every gl
-  // call into a silent no-op — the loop would keep running over a frozen
-  // black canvas with no way back. Reload instead: the service worker serves
-  // everything from cache, so recovery is instant even offline.
-  glCanvas.addEventListener('webglcontextlost', (e) => {
-    e.preventDefault();
-    location.reload();
-  });
-
   const hud = new HUD(hudCanvas);
   const game = new Game(hud);
+  hud.live = document.getElementById('sr-live');
 
   // ---- meshes -------------------------------------------------------------
-  const M = {
-    ground: renderer.createMesh(Geometry.ground(ARENA_HALF + 60)),
-    grid: renderer.createMesh(Geometry.gridLines(ARENA_HALF, 8), renderer.gl.LINES),
-    // the whole boundary as one static mesh — was ~176 draw calls per frame
-    arenaWall: renderer.createMesh(Geometry.arenaWall(ARENA_HALF)),
-    block: renderer.createMesh(Geometry.block([1, 1, 1])),
-    pyramid: renderer.createMesh(Geometry.pyramidMesh([1, 1, 1])),
-    flag: renderer.createMesh(Geometry.flag()),
-    tankDrone: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullEnemy)),
-    tankHunter: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullHunter)),
-    tankSniper: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullSniper)),
-    tankPhantom: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullPhantom)),
-    tankRusher: renderer.createMesh(Geometry.tankSolid([1.0, 0.28, 0.5])),
-    tankShellback: renderer.createMesh(Geometry.tankSolid([0.62, 0.68, 0.76])),
-    tankWarden: renderer.createMesh(Geometry.tankSolid([0.95, 0.74, 0.22])),
-    tankPlayer: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullPlayer)),
-    shotPlayer: renderer.createMesh(Geometry.shot(Geometry.C.shotPlayer)),
-    shotEnemy: renderer.createMesh(Geometry.shot(Geometry.C.shotEnemy)),
-    shotNade: renderer.createMesh(Geometry.shot(Geometry.C.shotNade)),
-    shard: renderer.createMesh(Geometry.shard()),
-    depot: renderer.createMesh(Geometry.depot()),
-    powerup: renderer.createMesh(Geometry.powerup()),
-    mine: renderer.createMesh(Geometry.mine()),
-    beacon: renderer.createMesh(Geometry.beacon()),
-    decalDisc: renderer.createMesh(Geometry.decalDisc()),
-    decalQuad: renderer.createMesh(Geometry.decalQuad()),
-    bossBody: renderer.createMesh(Geometry.bossBody()),
-    bossTurret: renderer.createMesh(Geometry.bossTurret()),
-    bossCore: renderer.createMesh(Geometry.bossCore()),
-    ring: renderer.createMesh(Geometry.ring(), renderer.gl.LINES),
-    gaze: renderer.createMesh(Geometry.gazeCone()),
-    gazeEdge: renderer.createMesh(Geometry.gazeEdge()),
-    gazeCurtain: renderer.createMesh(Geometry.gazeCurtain()),
-    // ominous backdrop, camera-anchored so it sits at infinity
-    sky: renderer.createMesh(Geometry.skyDome(660)),
-    mountains: renderer.createMesh(Geometry.mountains(600)),
-    stars: renderer.createMesh(Geometry.stars(640, 110), renderer.gl.POINTS),
-    eclipse: renderer.createMesh(Geometry.eclipse(630)),
-  };
-  const TANK_MESH = {
-    drone: M.tankDrone, hunter: M.tankHunter, sniper: M.tankSniper,
-    phantom: M.tankPhantom, rusher: M.tankRusher,
-    shellback: M.tankShellback, warden: M.tankWarden,
-  };
-
+  // Built by a function, not a literal: a restored WebGL context (below) has
+  // to rebuild every buffer, and the maps are filled in place so every
+  // reference to M.* and TANK_MESH.* stays valid across the rebuild.
+  const M = {};
+  const TANK_MESH = {};
   // deuteranopia-safe hull palette, baked as a second mesh set and swapped
   // live by the COLORBLIND HULLS setting
   const CB_HULLS = {
@@ -89,7 +41,81 @@
     warden: [1.0, 0.85, 0.30],
   };
   const TANK_MESH_CB = {};
-  for (const k in CB_HULLS) TANK_MESH_CB[k] = renderer.createMesh(Geometry.tankSolid(CB_HULLS[k]));
+
+  function buildMeshes() {
+    Object.assign(M, {
+      ground: renderer.createMesh(Geometry.ground(ARENA_HALF + 60)),
+      grid: renderer.createMesh(Geometry.gridLines(ARENA_HALF, 8), renderer.gl.LINES),
+      // the whole boundary as one static mesh — was ~176 draw calls per frame
+      arenaWall: renderer.createMesh(Geometry.arenaWall(ARENA_HALF)),
+      block: renderer.createMesh(Geometry.block([1, 1, 1])),
+      pyramid: renderer.createMesh(Geometry.pyramidMesh([1, 1, 1])),
+      flag: renderer.createMesh(Geometry.flag()),
+      tankDrone: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullEnemy)),
+      tankHunter: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullHunter)),
+      tankSniper: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullSniper)),
+      tankPhantom: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullPhantom)),
+      tankRusher: renderer.createMesh(Geometry.tankSolid([1.0, 0.28, 0.5])),
+      tankShellback: renderer.createMesh(Geometry.tankSolid([0.62, 0.68, 0.76])),
+      tankWarden: renderer.createMesh(Geometry.tankSolid([0.95, 0.74, 0.22])),
+      tankPlayer: renderer.createMesh(Geometry.tankSolid(Geometry.C.hullPlayer)),
+      shotPlayer: renderer.createMesh(Geometry.shot(Geometry.C.shotPlayer)),
+      shotEnemy: renderer.createMesh(Geometry.shot(Geometry.C.shotEnemy)),
+      shotNade: renderer.createMesh(Geometry.shot(Geometry.C.shotNade)),
+      shard: renderer.createMesh(Geometry.shard()),
+      depot: renderer.createMesh(Geometry.depot()),
+      powerup: renderer.createMesh(Geometry.powerup()),
+      mine: renderer.createMesh(Geometry.mine()),
+      beacon: renderer.createMesh(Geometry.beacon()),
+      decalDisc: renderer.createMesh(Geometry.decalDisc()),
+      decalQuad: renderer.createMesh(Geometry.decalQuad()),
+      bossBody: renderer.createMesh(Geometry.bossBody()),
+      bossTurret: renderer.createMesh(Geometry.bossTurret()),
+      bossCore: renderer.createMesh(Geometry.bossCore()),
+      ring: renderer.createMesh(Geometry.ring(), renderer.gl.LINES),
+      gaze: renderer.createMesh(Geometry.gazeCone()),
+      gazeEdge: renderer.createMesh(Geometry.gazeEdge()),
+      gazeCurtain: renderer.createMesh(Geometry.gazeCurtain()),
+      // ominous backdrop, camera-anchored so it sits at infinity
+      sky: renderer.createMesh(Geometry.skyDome(660)),
+      mountains: renderer.createMesh(Geometry.mountains(600)),
+      stars: renderer.createMesh(Geometry.stars(640, 110), renderer.gl.POINTS),
+      eclipse: renderer.createMesh(Geometry.eclipse(630)),
+    });
+    Object.assign(TANK_MESH, {
+      drone: M.tankDrone, hunter: M.tankHunter, sniper: M.tankSniper,
+      phantom: M.tankPhantom, rusher: M.tankRusher,
+      shellback: M.tankShellback, warden: M.tankWarden,
+    });
+    for (const k in CB_HULLS) TANK_MESH_CB[k] = renderer.createMesh(Geometry.tankSolid(CB_HULLS[k]));
+  }
+  buildMeshes();
+
+  // A reclaimed GPU (long mobile PWA sessions, driver resets) turns every gl
+  // call into a silent no-op. Sit out the loss, and when the browser hands
+  // the context back rebuild every GPU resource in place — the run, its XP
+  // and a co-op session all survive. Only if the restore never comes does it
+  // fall back to a reload (the service worker serves that from cache).
+  let glLost = false, glLostTimer = null;
+  glCanvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    glLost = true;
+    glLostTimer = setTimeout(() => location.reload(), 8000);
+  });
+  glCanvas.addEventListener('webglcontextrestored', () => {
+    clearTimeout(glLostTimer);
+    try {
+      renderer = new Renderer(glCanvas);
+      buildMeshes();
+      applySettings();
+      renderer.resize();
+      glLost = false;
+      hud.message('DISPLAY RECOVERED', '#4fd6bb', 1.6, 'chatter');
+    } catch (err) {
+      location.reload();
+    }
+  });
+
   function tankMeshFor(type) {
     const set = Settings.get('colorblind') ? TANK_MESH_CB : TANK_MESH;
     return set[type] || TANK_MESH.drone;
@@ -102,6 +128,8 @@
   // flips to first person for anyone who wants the 1990 shot.
   let chaseCam = Settings.get('chase');
 
+  function reducedMotion() { return !!Settings.get('reducedMotion'); }
+
   function applySettings() {
     AudioSys.setVolume(Settings.get('volume') / 10);
     AudioSys.setMusicVolume(Settings.get('music') / 10);
@@ -110,10 +138,18 @@
     renderer.setGlow(Settings.get('glow'));
     renderer.setShadows(Settings.get('shadows'));
     renderer.setMsaa(Settings.get('quality') >= 1);
+    renderer.setRenderScale(Settings.get('renderScale') / 10);
+    hud.scale = Settings.get('hudScale') / 10;
+    document.body.classList.toggle('reduced-motion', reducedMotion());
     chaseCam = Settings.get('chase');   // the SETTINGS row and `C` share one value
   }
   Settings.onChange = () => { applySettings(); renderSettingVals(); };
   applySettings();
+  // storage that refuses to write (private mode, full quota) says so once,
+  // instead of a career quietly failing to save
+  if (typeof Store !== 'undefined') {
+    Store.onFail = () => hud.message('STORAGE UNAVAILABLE — PROGRESS WILL NOT SAVE', '#ff4a3c', 4, 'alert');
+  }
 
   // ---- ui state -------------------------------------------------------------
   // title | setup | lobby | join | playing | levelclear | gameover | paused
@@ -138,10 +174,28 @@
     brief: document.getElementById('screen-brief'),
     records: document.getElementById('screen-records'),
     vsover: document.getElementById('screen-vsover'),
+    controls: document.getElementById('screen-controls'),
   };
 
+  /* Screens arrive and leave rather than pop: the new one plays its CSS
+   * entrance, the old one fades for 140 ms with its pointer events off. */
+  let shownScreen = 'title';
   function showScreen(name) {
-    for (const k in screens) screens[k].classList.toggle('hidden', k !== name);
+    const prev = shownScreen;
+    shownScreen = name;
+    for (const k in screens) {
+      const el = screens[k];
+      if (k === name) { el.classList.remove('leaving'); el.classList.remove('hidden'); continue; }
+      if (k === prev && prev !== name && !el.classList.contains('hidden') && !reducedMotion()) {
+        el.classList.add('leaving');
+        setTimeout(() => {
+          if (shownScreen !== k) { el.classList.add('hidden'); el.classList.remove('leaving'); }
+        }, 150);
+      } else {
+        el.classList.add('hidden');
+        el.classList.remove('leaving');
+      }
+    }
     if (name && menus[name]) menus[name].reset();
   }
 
@@ -158,7 +212,9 @@
       if (focused === el) return;
       focused = el;
       screenEl.querySelectorAll('.mbtn').forEach((b) => b.classList.toggle('focus', b === el));
-      if (!silent && el) AudioSys.play('select');
+      // a scrolling menu keeps the focused row in view
+      if (el && el.scrollIntoView) { try { el.scrollIntoView({ block: 'nearest' }); } catch (e) {} }
+      if (!silent && el) AudioSys.play('hover');
     }
     function move(dir) {
       const list = visible();
@@ -191,10 +247,11 @@
     clear: makeMenu(screens.clear, 'bt-continue'),
     over: makeMenu(screens.over, 'bt-retry'),
     pause: makeMenu(screens.pause, 'bt-resume'),
-    settings: makeMenu(screens.settings, 'st-volume'),
+    settings: makeMenu(screens.settings, 'st-difficulty'),
     brief: makeMenu(screens.brief, 'bt-brief-back'),
     records: makeMenu(screens.records, 'bt-records-back'),
     vsover: makeMenu(screens.vsover, 'bt-vs-again'),
+    controls: makeMenu(screens.controls, 'bt-controls-back'),
     // the TECH draft overlay lives outside the screens map: it can float
     // over live gameplay in co-op, so showScreen must never touch it
     draft: makeMenu(document.getElementById('screen-draft'), null),
@@ -208,11 +265,22 @@
     if (Input.consume('Enter') || Input.consume('NumpadEnter') || Input.consume('Space')) m.activate();
   }
 
-  function bind(id, fn) {
+  function bind(id, fn, sound) {
     const el = document.getElementById(id);
-    el.addEventListener('click', () => { AudioSys.resume(); AudioSys.play('select'); fn(); });
+    el.addEventListener('click', () => { AudioSys.resume(); AudioSys.play(sound || 'select'); fn(); });
     return el;
   }
+
+  // the menus are divs; give keyboard and assistive tech a button to find
+  document.querySelectorAll('.mbtn, .loadout, .ll').forEach((el) => {
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+    el.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && document.activeElement === el && !Input.capturing()) {
+        e.preventDefault(); el.click();
+      }
+    });
+  });
 
   function updateTitleHigh() {
     const daily = Progress.dailyBest();
@@ -392,7 +460,8 @@
     // clients don't run the sim, so no per-run stats — but the synced score
     // still pays out XP: everyone's career moves every run
     const xpGained = Progress.recordRun(Net.role === 'client' ? null : game.runStats,
-      game.level, game.score);
+      game.level, game.score,
+      { loadout: game.player ? game.player.loadout : null, campaignWon: !!game.campaignWon });
     checkCareerMedals();
     const rankAfter = Progress.rank().name;
     return {
@@ -429,7 +498,9 @@
     if (res.rankUp) {
       html += `<br><span class="gold">&#9733; PROMOTED — ${res.rankUp} &#9733;</span>`;
       earned = true;
+      AudioSys.stinger('promote');
     }
+    if (game.campaignWon) html += '<br><span class="gold">&#9733; CAMPAIGN COMPLETE &#9733;</span>';
     if (typeof Medals !== 'undefined') {
       for (const id of Medals.drainRecent()) {
         const def = MEDALS.find((m) => m.id === id);
@@ -879,6 +950,8 @@
     const bossNext = next % BOSS_EVERY === 0;
     document.getElementById('clear-stats').innerHTML =
       `SECTOR ${game.level} SECURE<br>` +
+      (game.campaignWon && game.level === CAMPAIGN_END
+        ? '<span class="gold">&#9733; CAMPAIGN COMPLETE — THE DEEP IS OPEN &#9733;</span><br>' : '') +
       (game.ghostRun && !game.bossLevel ? '<span class="gold">&#9733; GHOST EXTRACTION — NEVER DETECTED &#9733;</span><br>' : '') +
       `BONUS <span class="gold">+${game.levelBonus}</span><br>` +
       `SCORE ${game.score}` +
@@ -911,7 +984,7 @@
     showScreen(null);
     hud.message('SECTOR ' + game.level, game.bossLevel ? '#ff4a3c' : '#4fd6bb', 2.5);
     if (!game.bossLevel) AudioSys.play('sectorStart'); // boss sectors get the alarm instead
-    if (Net.role === 'host') { Net.broadcastLevel(game); netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = []; }
+    if (Net.role === 'host') { Net.broadcastLevel(game); netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = []; netState.wr = []; }
   }
 
   // ---- pause / abort -----------------------------------------------------------
@@ -939,6 +1012,7 @@
   function pauseGame() {
     uiMode = 'paused';
     resetAbort();
+    settingsReturn = 'title';
     showScreen('pause');
     // drop any hit-stop still owed: it should buy a beat of weight on impact,
     // not hand the player half a second of slow motion after they unpause
@@ -972,7 +1046,7 @@
         // rAF stops in hidden tabs, so this is the last packet the host gets
         // until we're back — zero it, or the host keeps applying whatever we
         // were holding and the tank drives/fires unmanned the whole time
-        Net.sendInput({ turn: 0, drive: 0, fire: false, nade: false, boost: false, mine: false, vent: false });
+        Net.sendInput({ turn: 0, drive: 0, fire: false, nade: false, boost: false, mine: false, vent: false }, true);
       }
     } else {
       stopHiddenSim();
@@ -1093,7 +1167,9 @@
     const m = menus.draft;
     if (Input.consume('ArrowUp')) m.move(-1);
     if (Input.consume('ArrowDown')) m.move(1);
-    if (Input.consume('Enter') || Input.consume('NumpadEnter')) {
+    // pad players: A is the cannon in play and no longer confirms; d-pad ►
+    // installs the focused card instead (a pad-only edge, never the arrow key)
+    if (Input.consume('Enter') || Input.consume('NumpadEnter') || Input.consume('PadRight')) {
       if (performance.now() - draftOpenedAt > 800) m.activate();
     }
   }
@@ -1113,14 +1189,29 @@
     }
   }
 
+  /* The warp out is a beat, not a cut: ~0.9 s of the arena pulling in and
+   * bleaching to white before the panel, so an extraction feels like leaving
+   * somewhere. The host broadcasts the clear immediately (clients keep their
+   * snapshot-driven flow); only the local presentation waits. */
+  let extractT = 0;
   function enterLevelClear() {
-    uiMode = 'levelclear';
-    showClearStats();
-    showScreen('clear');
     if (Net.role === 'host') {
       hostFlushState();
       Net.broadcastScreen({ s: 'clear', level: game.level, levelBonus: game.levelBonus, score: game.score, ghost: game.ghostRun ? 1 : 0 });
     }
+    if (game.ghostRun && !game.bossLevel) AudioSys.stinger('ghost');
+    closeDraft();
+    uiMode = 'extracting';
+    extractT = reducedMotion() ? 0.3 : 0.95;
+    film.warp = 0;
+    AudioSys.play('warp');
+    showScreen(null);
+  }
+  function finishLevelClear() {
+    uiMode = 'levelclear';
+    film.flashWhite = 0.55;
+    showClearStats();
+    showScreen('clear');
   }
 
   function doGameOver() {
@@ -1218,11 +1309,34 @@
   Net.cb.onPick = (peerId, id) => { game.applyUpgrade(peerId, id); };
 
   // ---- title demo scene -----------------------------------------------------
+  // The attract shot has patrols in it: blind hulls ambling their routes with
+  // their sensor cones lit, so the title screen is already teaching the game
+  // it is about to sell you.
   const demoGame = new Game(new HUD(document.createElement('canvas')));
-  demoGame.player = { x: 0, z: 0, alive: false };
+  demoGame.player = { x: 0, z: 0, alive: false, sig: 0.3 };
   demoGame._genObstacles(30);
   demoGame._genFlags(8);
+  demoGame.level = 2;
+  demoGame._genEnemies();
+  demoGame.level = 1;
   let demoT = 0;
+
+  /* Draw the attract-mode patrols: hulls plus the same live cone the arena
+   * draws in play, against a quiet imaginary signature. */
+  function drawDemoPatrols(src) {
+    const now = performance.now();
+    for (const e of src.enemies) {
+      const sc = e.type === 'rusher' ? 0.82 : e.type === 'shellback' ? 1.22 : 1;
+      renderer.draw(tankMeshFor(e.type), m4.trs(e.x, 0, e.z, e.angle, sc, sc, sc, MTX));
+      const reach = senseRange(e.type, 0.3);
+      const gp = 0.062 + 0.014 * Math.sin(now / 420 + e.x);
+      renderer.draw(M.gaze, m4.trs(e.x, 0.22, e.z, e.angle, reach, 1, reach, MTX),
+        { tint: [0.34 * gp, 0.88 * gp, 0.76 * gp], unlit: true, additive: true });
+      const ep = 0.46 + 0.08 * Math.sin(now / 420 + e.x);
+      renderer.draw(M.gazeEdge, m4.trs(e.x, 0.26, e.z, e.angle, reach, 1, reach, MTX),
+        { tint: [0.3 * ep, 0.95 * ep, 0.8 * ep], unlit: true, additive: true });
+    }
+  }
 
   // ---- camera ---------------------------------------------------------------
   // A camera rig rather than a hard mount: recoil and impacts shove it and a
@@ -1231,6 +1345,8 @@
   // heavy machine being hit), and the FOV breathes with speed so boosting
   // feels fast rather than merely being fast.
   const BASE_FOV = 1.22;
+  // FIELD OF VIEW setting: ±2 steps of ~5° around the base
+  function baseFov() { return BASE_FOV + (Settings.get('fov') || 0) * 0.09; }
   const cam = { x: 0, y: 2.3, z: 0, yaw: 0, pitch: 0, roll: 0, fov: BASE_FOV };
   const rig = {
     fov: BASE_FOV,
@@ -1253,9 +1369,11 @@
 
   function inMenu() {
     return uiMode === 'title' || uiMode === 'setup' || uiMode === 'lobby' || uiMode === 'join' ||
-      uiMode === 'settings' || uiMode === 'records' || uiMode === 'brief';   // reachable only from the
-      // title screen — keep the demo battlefield (not a stale, shake-jittering
-      // camera on the last run's corpse) behind those panels too
+      uiMode === 'records' || uiMode === 'brief' ||
+      // SETTINGS and CONTROLS are reachable from the pause menu too, where the
+      // live (frozen) arena stays behind them; from the title they sit over
+      // the demo battlefield like everything else
+      ((uiMode === 'settings' || uiMode === 'controls') && settingsReturn !== 'paused');
   }
 
   function updateCamera(dt) {
@@ -1268,13 +1386,15 @@
       // a slow handheld drift keeps the attract shot alive instead of dead-still
       cam.pitch = -0.30 + vnoise(demoT * 2.2, 3) * 0.006;
       cam.roll = vnoise(demoT * 1.7, 9) * 0.008;
-      cam.fov = BASE_FOV;
+      cam.fov = baseFov();
       rig.kx = rig.kz = rig.vx = rig.vz = 0;
+      rig.deathT = 0;
       return;
     }
     const p = game.player;
     if (!p) return;
     const alive = p.alive;
+    if (alive) rig.deathT = 0;
     const ax = Input.axis();
     const speed01 = p.maxSpeed ? Math.min(1, Math.abs(p.speed || 0) / p.maxSpeed) : 0;
     const boosting = !!p.boosting;
@@ -1290,7 +1410,9 @@
     rig.kz = Math.max(-1.4, Math.min(1.4, rig.kz + rig.vz * dt));
 
     // trauma: squared so light taps stay subtle and heavy hits really land
-    const trauma = Math.min(1, game.shake) * (Settings.get('shake') / 10);
+    // (REDUCED MOTION caps it hard — the shove and the fov breath survive,
+    // the rattle does not)
+    const trauma = Math.min(1, game.shake) * (Settings.get('shake') / 10) * (reducedMotion() ? 0.3 : 1);
     const amt = trauma * trauma;
     const t = performance.now() / 1000;
     const sx = vnoise(t * 26, 1) * amt * 0.9 + rig.kx;
@@ -1307,12 +1429,25 @@
 
     // FOV breathes: wide under boost, wider still at speed, and pulls in for
     // the death cam so the last two seconds read as a close-up
-    let fovTarget = BASE_FOV + speed01 * 0.06 + (boosting ? 0.17 : 0);
-    if (!alive) fovTarget = BASE_FOV - 0.16;
+    let fovTarget = baseFov() + speed01 * 0.06 + (boosting ? 0.17 : 0);
+    if (!alive) fovTarget = baseFov() - 0.16;
+    // the warp out pulls the lens in hard
+    if (uiMode === 'extracting') fovTarget = baseFov() - 0.3;
     rig.fov += (fovTarget - rig.fov) * Math.min(1, dt * (boosting ? 7 : 3.5));
     cam.fov = rig.fov;
 
-    if (chaseCam || !alive) {
+    if (!alive) {
+      // death cam: from the chase seat into a slow rising orbit around the
+      // wreck, so the last two seconds read as a shot, not a parked camera
+      rig.deathT = (rig.deathT || 0) + dt;
+      const th = p.angle + rig.deathT * 0.55;
+      const back = 12 + rig.deathT * 1.6, up = 5.5 + rig.deathT * 2.4;
+      cam.x = p.x + Math.sin(th) * back + sx;
+      cam.z = p.z + Math.cos(th) * back + sz;
+      cam.y = up + sy;
+      cam.yaw = th + syaw;
+      cam.pitch = -0.24 - rig.deathT * 0.07 + spitch;
+    } else if (chaseCam) {
       // the chase rig trails further back the faster you go, and leads the
       // camera along the direction of travel rather than the hull's facing
       const back = 11 + speed01 * 2.6;
@@ -1346,7 +1481,7 @@
   // pushes it red and grainy, an active hunt warms the whole grade, and the
   // death cam drains the colour out of the arena. These are all smoothed —
   // a grade that snaps between states reads as a bug, not as drama.
-  const film = { boost: 0, alarm: 0, dead: 0, heat: 0 };
+  const film = { boost: 0, alarm: 0, dead: 0, heat: 0, low: 0, pause: 0, warp: 0, flashWhite: 0 };
 
   function updateFilm(dt) {
     const k = (cur, target, rate) => cur + (target - cur) * Math.min(1, dt * rate);
@@ -1360,26 +1495,94 @@
     // cannon heat bleeds into the image: the redline is visible on screen
     const heat01 = p && p.maxHeat ? Math.min(1, (p.heat || 0) / p.maxHeat) : 0;
     film.heat = k(film.heat, heat01 * heat01, 5);
+    // shields under 30%: the frame's edges pulse red on the heartbeat, and
+    // the mix carries the beat — the only "you are about to die" that does
+    // not require reading a bar in the corner
+    const lowT = p && p.alive && p.maxShields && game.mode === 'playing'
+      ? Math.max(0, Math.min(1, 1 - p.shields / (p.maxShields * 0.3))) : 0;
+    film.low = k(film.low, lowT, 4);
+    AudioSys.setHeartbeat(uiMode === 'playing' ? film.low : 0);
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 1000 * Math.PI * 2 * (1 + film.low * 0.7));
+    const low = film.low * (0.4 + 0.6 * pulse);
+    // the paused arena drains and dims behind the menu
+    const pausedNow = uiMode === 'paused' ||
+      ((uiMode === 'settings' || uiMode === 'controls') && settingsReturn === 'paused');
+    film.pause = k(film.pause, pausedNow ? 1 : 0, 6);
+    // warp: the extraction pull-in and the deploy flash
+    if (uiMode === 'extracting') film.warp = Math.min(1, film.warp + dt / 0.8);
+    else film.warp = Math.max(0, film.warp - dt * 2.2);
+    film.flashWhite = Math.max(0, film.flashWhite - dt * 1.6);
+    const rm = reducedMotion();
 
-    const a = film.alarm, b = film.boost, d = film.dead, h = film.heat;
+    const a = film.alarm, b = film.boost, d = film.dead, h = film.heat, pz = film.pause, w = film.warp;
+    const fw = film.flashWhite + w * w * 0.9;
     renderer.setPostFx({
-      exposure: 1.06 + a * 0.04 + b * 0.05 - hurt * 0.05 - d * 0.22,
+      exposure: 1.06 + a * 0.04 + b * 0.05 - hurt * 0.05 - d * 0.22 - pz * 0.3 + w * 0.5,
       // a hunt warms the arena, damage pushes it red, death bleaches it. The
       // hurt terms stay restrained on purpose: the HUD paints its own red
       // vignette over the top, and doubling them blinds the player at the
       // exact moment they most need to see where the shot came from.
       grade: [
-        1 + a * 0.10 + hurt * 0.16 + h * 0.06,
-        1 - a * 0.02 - hurt * 0.13 - d * 0.10,
-        1 - a * 0.07 - hurt * 0.11 - d * 0.05,
+        1 + a * 0.10 + hurt * 0.16 + h * 0.06 + low * 0.10,
+        1 - a * 0.02 - hurt * 0.13 - d * 0.10 - low * 0.06,
+        1 - a * 0.07 - hurt * 0.11 - d * 0.05 - low * 0.06,
       ],
-      flash: [hurt * 0.06, 0, hurt * 0.01],
-      saturation: 1.08 + a * 0.10 - d * 0.85,
-      vignette: 0.42 + hurt * 0.22 + b * 0.18 + d * 0.75,
-      aberration: 0.0016 + hurt * 0.0040 + b * 0.0035 + h * 0.0012,
-      radial: b * 0.9 + hurt * 0.20,
-      grain: 0.035 + hurt * 0.035 + d * 0.07,
+      flash: [hurt * 0.06 + fw, fw, hurt * 0.01 + fw],
+      saturation: 1.08 + a * 0.10 - d * 0.85 - pz * 0.7 - w * 0.6,
+      vignette: 0.42 + hurt * 0.22 + b * 0.18 + d * 0.75 + low * 0.28 + pz * 0.2,
+      aberration: rm ? 0 : 0.0016 + hurt * 0.0040 + b * 0.0035 + h * 0.0012 + w * 0.004,
+      radial: rm ? 0 : b * 0.9 + hurt * 0.20 + w * 1.2,
+      grain: rm ? 0 : 0.035 + hurt * 0.035 + d * 0.07,
     });
+  }
+
+  /* The warp-in card: the sector's name, big, for a beat on every deploy
+   * and every gate — with the mutator or the WARLORD warning underneath. */
+  const sectorCard = document.getElementById('sector-card');
+  let lastWarpKey = '';
+  function warpIn() {
+    film.flashWhite = 0.6;
+    if (game.versus) {
+      showCard('VERSUS', 'FIRST TO ' + (game.killTarget || 10), false);
+      return;
+    }
+    let sub = 'SECURE THE UPLINKS, THEN EXTRACT';
+    if (game.bossLevel) sub = 'WARLORD DETECTED — DESTROY IT';
+    else if (game.mutator) {
+      const m = MUTATORS.find((x) => x.id === game.mutator);
+      if (m) sub = m.name + ' — ' + m.desc.toUpperCase();
+    }
+    if (game.level === CAMPAIGN_END) sub = 'THE THIRD WARLORD — END OF THE CAMPAIGN';
+    showCard('SECTOR ' + game.level, sub, !!game.bossLevel);
+  }
+  function showCard(name, sub, red) {
+    document.getElementById('sector-card-name').textContent = name;
+    document.getElementById('sector-card-sub').textContent = sub;
+    sectorCard.classList.toggle('red', !!red);
+    // restart the CSS animation
+    sectorCard.classList.add('hidden');
+    void sectorCard.offsetWidth;
+    sectorCard.classList.remove('hidden');
+    clearTimeout(showCard._t);
+    showCard._t = setTimeout(() => sectorCard.classList.add('hidden'), 1700);
+  }
+
+  /* Musical punctuation for beats the score cannot otherwise mark. Watched
+   * as edges on the sim's state every frame, so game.js needs no hooks. */
+  const sting = { alarm: false, sus: false, silent: 0, mult: 1 };
+  function watchStingers() {
+    if (uiMode !== 'playing' || game.mode !== 'playing' || game.versus) return;
+    const alarm = game.alarmT > 0 && game.alarmT < 1e8;
+    if (alarm && !sting.alarm) AudioSys.stinger('alarm');
+    sting.alarm = alarm;
+    const sus = !!game.suspicion && !alarm;
+    if (sus && !sting.sus) AudioSys.stinger('eyes');
+    sting.sus = sus;
+    const silent = game.runStats ? game.runStats.silentKills : 0;
+    if (silent > sting.silent) AudioSys.stinger('silent');
+    sting.silent = silent;
+    if (sting.mult > 1 && game.mult === 1 && game.comboT <= 0) AudioSys.stinger('break');
+    sting.mult = game.mult;
   }
 
   // ---- dynamic lights ---------------------------------------------------------
@@ -1394,9 +1597,11 @@
 
   function collectLights(src) {
     const lights = [];
+    const now = performance.now() / 1000;
     for (const f of (src.flashes || [])) {
       const k = f.life / f.max;
-      const s = k * (0.9 + f.p * 0.13);
+      // a fire flickers: noise on the decay reads as combustion, not a lamp
+      const s = k * (0.9 + f.p * 0.13) * (0.82 + 0.18 * vnoise(now * 40 + f.x, 7));
       lights.push({ x: f.x, y: f.y, z: f.z, radius: 7 + f.p * 1.5,
         r: f.c[0] * s, g: f.c[1] * s, b: f.c[2] * s });
     }
@@ -1435,7 +1640,22 @@
   // z-fights the dome, smearing dark patches across the corona.
   // scratch matrices reused across draws — draw() uploads the uniform
   // immediately, so per-frame trs/multiply calls don't need fresh storage
-  const MTX = m4.identity(), MTX2 = m4.identity(), MTX3 = m4.identity();
+  const MTX = m4.identity(), MTX2 = m4.identity(), MTX3 = m4.identity(),
+        MTX4 = m4.identity(), MTX5 = m4.identity();
+
+  /* Model matrix for a wreck: sunk, yawed, and tilted on two axes. In its
+   * last seconds it sinks into the floor rather than blinking out. */
+  function wreckModel(w, out) {
+    const k = w.life / w.max;
+    const sink = k < 0.12 ? (1 - k / 0.12) * 2.6 : 0;
+    const sc = (w.elite ? 1.18 : 1) *
+      (w.type === 'rusher' ? 0.82 : w.type === 'shellback' ? 1.22 : 1);
+    m4.multiply(m4.rotationX(w.pitch, MTX3), m4.rotationZ(w.roll, MTX4), MTX5);
+    return m4.multiply(m4.trs(w.x, -sink, w.z, w.angle, sc, sc, sc, MTX2), MTX5, out);
+  }
+  function wreckMesh(w) {
+    return w.type === 'player' ? M.tankPlayer : tankMeshFor(w.type);
+  }
 
   function drawSky() {
     const t = performance.now() / 1000;
@@ -1681,6 +1901,15 @@
       }
     }
 
+    // wrecks: burned-out hulls that stay on the field. Hot embers for the
+    // first seconds, cooling to dead metal
+    for (const w of game.wrecks || []) {
+      const k = w.life / w.max;
+      const heat = Math.max(0, (k - 0.75) / 0.25);
+      renderer.draw(wreckMesh(w), wreckModel(w, MTX),
+        { tint: [0.14 + heat * 0.55, 0.13 + heat * 0.2, 0.13 + heat * 0.08] });
+    }
+
     // proximity mines: dim while arming, blinking hot once live
     for (const m of game.mines) {
       const armed = (m.arm || 0) <= 0;
@@ -1788,6 +2017,10 @@
         m4.trs(d.x, d.y, d.z, d.yaw, d.scale, d.scale, d.scale, MTX2),
         m4.rotationX(d.tumble, MTX3), MTX));
     }
+    for (const w of (src.wrecks || [])) {
+      if (!near(w.x, w.z)) continue;
+      renderer.draw(wreckMesh(w), wreckModel(w, MTX));
+    }
   }
 
   // ---- settings screen -----------------------------------------------------
@@ -1804,6 +2037,12 @@
     { key: 'coach', bool: true },
     { key: 'chase', bool: true },
     { key: 'colorblind', bool: true },
+    { key: 'reducedMotion', bool: true },
+    { key: 'renderScale', min: 5, max: 10, fmt: (v) => (v * 10) + '%' },
+    { key: 'fov', min: -2, max: 2, fmt: (v) => (v === 0 ? 'DEFAULT' : (v > 0 ? '+' : '') + v) },
+    { key: 'hudScale', min: 6, max: 14, fmt: (v) => (v * 10) + '%' },
+    { key: 'rumble', bool: true },
+    { key: 'deadzone', min: 0, max: 4, labels: ['10%', '18%', '26%', '34%', '42%'] },
     { key: 'fps', bool: true },
   ];
 
@@ -1812,7 +2051,10 @@
       const el = document.getElementById('stv-' + d.key);
       if (!el) continue;
       const v = Settings.get(d.key);
-      el.textContent = d.bool ? (v ? 'ON' : 'OFF') : d.labels ? d.labels[v] : v + '/' + d.max;
+      el.textContent = d.bool ? (v ? 'ON' : 'OFF')
+        : d.fmt ? d.fmt(v)
+        : d.labels ? d.labels[v - (d.min || 0)]
+        : v + '/' + d.max;
     }
   }
   renderSettingVals();
@@ -1820,16 +2062,87 @@
   function adjustSetting(key, dir, wrap) {
     const d = SETTING_DEFS.find((x) => x.key === key);
     if (!d) return;
+    const min = d.min || 0;
     if (d.bool) {
-      Settings.set(key, !Settings.get(key));
+      const on = !Settings.get(key);
+      Settings.set(key, on);
+      AudioSys.play(on ? 'toggleOn' : 'toggleOff');
     } else {
       let v = Settings.get(key) + dir;
-      if (wrap && v > d.max) v = 0;
-      Settings.set(key, Math.max(0, Math.min(d.max, v)));
+      if (wrap && v > d.max) v = min;
+      Settings.set(key, Math.max(min, Math.min(d.max, v)));
+      AudioSys.play('tick');
     }
-    AudioSys.play('select');
     if (key === 'volume') AudioSys.play('fire');   // audible volume preview
+    if (key === 'rumble' && Settings.get('rumble')) Input.rumble(0.6, 0.6, 180);
   }
+
+  // where SETTINGS goes back to: the title, or the pause menu it came from
+  let settingsReturn = 'title';
+  function openSettings(from) {
+    settingsReturn = from || 'title';
+    uiMode = 'settings';
+    renderSettingVals();
+    showScreen('settings');
+  }
+  function closeSettings() {
+    if (settingsReturn === 'paused') { uiMode = 'paused'; resetAbort(); showScreen('pause'); }
+    else { uiMode = 'title'; showScreen('title'); }
+  }
+
+  // ---- controls screen (key rebinding) --------------------------------------
+  const controlsList = document.getElementById('controls-list');
+  const controlsSub = document.getElementById('controls-sub');
+  let bindRows = {};
+  function buildControls() {
+    const b = Input.binds();
+    controlsList.innerHTML = '';
+    bindRows = {};
+    for (const a of Input.actions) {
+      const el = document.createElement('div');
+      el.className = 'mbtn bind-row';
+      el.id = 'bind-' + a;
+      el.innerHTML = `<span>${Input.actionLabel(a)}</span><span class="bind-keys">${b[a].map(Input.labelFor).join(' / ')}</span>`;
+      el.addEventListener('click', () => { AudioSys.resume(); AudioSys.play('select'); listenFor(a, el); });
+      controlsList.appendChild(el);
+      bindRows[a] = el;
+    }
+    controlsSub.textContent = 'SELECT AN ACTION, THEN PRESS ITS NEW KEY';
+    refreshKeyHelp();
+  }
+  function listenFor(action, el) {
+    for (const k in bindRows) bindRows[k].classList.remove('listening');
+    el.classList.add('listening');
+    el.querySelector('.bind-keys').textContent = 'PRESS A KEY — ESC CANCELS';
+    controlsSub.textContent = 'LISTENING…';
+    Input.captureNext((code) => {
+      if (code) { Input.rebind(action, code); AudioSys.play('confirm'); }
+      else AudioSys.play('back');
+      buildControls();
+    });
+  }
+  function openControls() {
+    uiMode = 'controls';
+    buildControls();
+    showScreen('controls');
+  }
+  function closeControls() {
+    Input.captureNext(null);
+    openSettings(settingsReturn);
+  }
+  /* The title's key legend follows the bindings. */
+  function refreshKeyHelp() {
+    const b = Input.binds();
+    const k = (a) => Input.labelFor(b[a][0]);
+    const el = document.querySelector('.title-help .help-kb');
+    if (!el) return;
+    el.innerHTML =
+      '&uarr;&darr; &nbsp;SELECT &nbsp;&middot;&nbsp; ENTER &nbsp;CONFIRM &nbsp;&middot;&nbsp; M &nbsp;SOUND &nbsp;&middot;&nbsp; GAMEPAD READY<br>' +
+      `IN BATTLE: &nbsp;${k('forward')} ${k('back')} &nbsp;DRIVE &nbsp;&nbsp; ${k('left')} ${k('right')} &nbsp;STEER &nbsp;&nbsp; ` +
+      `${k('fire')} &nbsp;FIRE &nbsp;&nbsp; ${k('vent')} &nbsp;VENT &nbsp;&nbsp; ${k('nade')} &nbsp;GRENADE &nbsp;&nbsp; ${k('mine')} &nbsp;MINE &nbsp;&nbsp; ` +
+      `${k('boost')} &nbsp;BOOST &nbsp;&nbsp; ${k('back')}&nbsp;AT&nbsp;SPEED &nbsp;DRIFT &nbsp;&nbsp; ${k('cam')} &nbsp;CAMERA`;
+  }
+  refreshKeyHelp();
 
   for (const d of SETTING_DEFS) {
     const row = document.getElementById('st-' + d.key);
@@ -1879,10 +2192,22 @@
       ['DAILY BEST TODAY', daily ? daily.score : '—'],
       ['DAILY STREAK', streak > 0 ? streak + ' DAY' + (streak > 1 ? 'S' : '') : '—'],
     ];
+    if (st.campaigns > 0) rows.push(['CAMPAIGNS COMPLETE', st.campaigns]);
+    for (const lo of LOADOUTS) {
+      const best = Progress.chassisRecord(lo.name);
+      if (best > 0) rows.push([lo.name + ' BEST SECTOR', best]);
+    }
     const unlocks = [
       ['MARAUDER CHASSIS', Progress.marauderUnlocked() ? 'UNLOCKED' : 'DESTROY A WARLORD', Progress.marauderUnlocked()],
       ['CHECKPOINT STARTS', cps.length > 1 ? 'SECTOR ' + cps[cps.length - 1] : 'REACH SECTOR 6', cps.length > 1],
     ];
+    // medal-gated tech: the draft grows with the medal wall
+    for (const u of UPGRADES) {
+      if (!u.medal) continue;
+      const m = MEDALS.find((x) => x.id === u.medal);
+      const has = Medals.has(u.medal);
+      unlocks.push([u.name + ' (TECH)', has ? 'UNLOCKED' : (m ? m.how : u.medal), has]);
+    }
     const medalWall =
       `<div class="medal-head">MEDALS ${Medals.count()}/${MEDALS.length}</div>` +
       '<div class="medal-grid">' +
@@ -1939,8 +2264,18 @@
         if (Input.consume('ArrowLeft') || Input.consume('KeyA')) adjustFocusedSetting(-1);
         if (Input.consume('ArrowRight') || Input.consume('KeyD')) adjustFocusedSetting(1);
         menuKeys('settings');
-        if (Input.consume('Escape')) { uiMode = 'title'; showScreen('title'); }
+        if (Input.consume('Escape')) closeSettings();
         break;
+
+      case 'controls':
+        if (!Input.capturing()) {
+          menuKeys('controls');
+          if (Input.consume('Escape')) closeControls();
+        }
+        break;
+
+      case 'extracting':
+        break;   // timed in frameBody (it needs dt)
 
       case 'brief':
         menuKeys('brief');
@@ -2001,10 +2336,52 @@
   bind('bt-daily', startDaily);
   bind('bt-host', enterLobbyAsHost);
   bind('bt-join', enterJoin);
-  bind('bt-settings', () => { uiMode = 'settings'; renderSettingVals(); showScreen('settings'); });
+  bind('bt-settings', () => openSettings('title'));
+  bind('bt-pause-settings', () => openSettings('paused'));
+  bind('bt-controls', openControls);
+  bind('bt-controls-back', closeControls, 'back');
+  bind('bt-controls-reset', () => { Input.resetBinds(); buildControls(); });
+  bind('bt-settings-reset', () => {
+    Settings.reset();
+    Input.resetBinds();
+    renderSettingVals();
+    refreshKeyHelp();
+    hud.message('SETTINGS RESET', '#4fd6bb', 1.4, 'chatter');
+  });
+  // career export / import / reset: the whole career as a pasteable code
+  const btExport = bind('bt-export', () => {
+    const code = Progress.exportCode();
+    if (!code) { btExport.textContent = 'EXPORT FAILED'; return; }
+    const done = () => { btExport.textContent = 'COPIED — PASTE IT INTO IMPORT ELSEWHERE'; };
+    const fail = () => { try { window.prompt('YOUR CAREER CODE — COPY IT:', code); } catch (e) {} };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(done, fail);
+    else fail();
+  });
+  const btImport = bind('bt-import', () => {
+    let code = '';
+    try { code = window.prompt('PASTE YOUR CAREER CODE:') || ''; } catch (e) {}
+    if (!code) return;
+    if (Progress.importCode(code)) {
+      btImport.textContent = 'IMPORTED — RESTARTING';
+      setTimeout(() => location.reload(), 400);
+    } else {
+      btImport.textContent = 'INVALID CODE';
+      AudioSys.play('comboBreak');
+    }
+  });
+  const btResetCareer = bind('bt-records-reset', () => {
+    if (!btResetCareer.classList.contains('armed')) {
+      btResetCareer.classList.add('armed');
+      btResetCareer.textContent = 'CONFIRM — ERASE THE WHOLE CAREER?';
+      return;
+    }
+    Progress.resetCareer();
+    if (typeof Store !== 'undefined') Store.remove('pa_high');
+    location.reload();
+  });
   bind('bt-records', () => { uiMode = 'records'; fillRecords(); showScreen('records'); });
   bind('bt-brief', () => openBriefing());
-  bind('bt-brief-back', () => { uiMode = 'title'; showScreen('title'); });
+  bind('bt-brief-back', () => { uiMode = 'title'; showScreen('title'); }, 'back');
   bind('bt-brief-coach', () => {
     // arming the coach is the only way it comes back once it has retired —
     // and it needs the setting on too, or the next run would silently ignore it
@@ -2012,9 +2389,9 @@
     Settings.set('coach', true);
     renderBriefCoach();
   });
-  bind('bt-settings-back', () => { uiMode = 'title'; showScreen('title'); });
-  bind('bt-records-back', () => { uiMode = 'title'; showScreen('title'); });
-  bind('bt-setup-back', () => { uiMode = 'title'; showScreen('title'); });
+  bind('bt-settings-back', closeSettings, 'back');
+  bind('bt-records-back', () => { uiMode = 'title'; showScreen('title'); }, 'back');
+  bind('bt-setup-back', () => { uiMode = 'title'; showScreen('title'); }, 'back');
   bind('bt-launch', startRun);
   bind('bt-join-back', leaveToTitle);
   bind('bt-join-connect', submitJoin);
@@ -2039,7 +2416,7 @@
   // a host can just send the copied invite link.
   try {
     const codeParam = new URLSearchParams(location.search).get('join');
-    if (codeParam && /^[a-z0-9]{4}$/i.test(codeParam)) {
+    if (codeParam && /^[a-z0-9]{4,6}$/i.test(codeParam)) {
       enterJoin();
       joinInput.value = codeParam.toUpperCase();
       submitJoin();
@@ -2103,6 +2480,12 @@
     game.shake = Math.max(0, game.shake - dt * 3);
     game._updateParticles(dt);
     game._updateDebris(dt);
+    game._updateWrecks(dt);
+    // damage smoke off the snapshot's flags (hp is not on the wire)
+    for (const e of game.enemies) if (e.damaged) game._damageSmoke(e, dt, 1.7);
+    for (const pl of game.players) {
+      if (pl.alive && pl.maxShields && pl.shields <= pl.maxShields * 0.3) game._damageSmoke(pl, dt, 2.0);
+    }
     // decals are local-only cosmetics: a client grows its own set off the
     // interpolated tank positions and the host's mirrored bursts
     game._updateDecals(dt);
@@ -2112,16 +2495,17 @@
   }
 
   // host: throttle snapshots to ~30 Hz, but never drop transient sounds/bursts
-  const netState = { timer: 0, snd: [], bu: [], de: [] };
+  const netState = { timer: 0, snd: [], bu: [], de: [], wr: [] };
   function hostNetTick(dt) {
     if (game.frameSounds.length) for (const s of game.frameSounds) netState.snd.push(s);
     if (game.frameBursts.length) for (const b of game.frameBursts) netState.bu.push(b);
     if (game.frameDebris.length) for (const d of game.frameDebris) netState.de.push(d);
+    if (game.frameWrecks.length) for (const w of game.frameWrecks) netState.wr.push(w);
     netState.timer += dt;
     if (netState.timer >= 1 / 30) {
       netState.timer = 0;
-      Net.broadcastState(game, netState.snd, netState.bu, netState.de);
-      netState.snd = []; netState.bu = []; netState.de = [];
+      Net.broadcastState(game, netState.snd, netState.bu, netState.de, netState.wr);
+      netState.snd = []; netState.bu = []; netState.de = []; netState.wr = [];
     }
   }
 
@@ -2131,9 +2515,9 @@
    * hostNetTick, which already drained this frame's game.frame* buffers into
    * netState — draining them again here would double-send them. */
   function hostFlushState() {
-    Net.broadcastState(game, netState.snd, netState.bu, netState.de);
+    Net.broadcastState(game, netState.snd, netState.bu, netState.de, netState.wr);
     netState.timer = 0;
-    netState.snd = []; netState.bu = []; netState.de = [];
+    netState.snd = []; netState.bu = []; netState.de = []; netState.wr = [];
   }
 
   /* One authoritative sim step (solo & host): input, update, net tick and
@@ -2209,8 +2593,38 @@
   const fpsEl = document.getElementById('fps');
   let fpsFrames = 0, fpsWindowStart = performance.now();
 
+  // A throw inside the frame used to kill the rAF chain silently: the loop
+  // never re-armed and the game froze without a word. Now the next frame is
+  // already queued before the body runs, the fault is recorded for the next
+  // boot, and a toast offers a clean restart.
+  const simToast = document.getElementById('sim-toast');
+  simToast.addEventListener('click', () => location.reload());
+  let faults = 0;
+  function reportFault(err) {
+    faults++;
+    try {
+      if (typeof Store !== 'undefined') {
+        Store.set('pa_lastError', JSON.stringify({ t: Date.now(), v: GAME_VERSION,
+          m: String(err && err.message || err).slice(0, 300), s: String(err && err.stack || '').slice(0, 1500) }));
+      }
+    } catch (e) {}
+    if (faults <= 3) simToast.classList.remove('hidden');
+  }
+  window.addEventListener('error', (e) => { if (e && e.error) reportFault(e.error); });
+  window.addEventListener('unhandledrejection', (e) => { reportFault(e && e.reason); });
+
   function frame(now) {
     requestAnimationFrame(frame);
+    try {
+      frameBody(now);
+    } catch (err) {
+      reportFault(err);
+      lastT = now;
+    }
+  }
+
+  let prevFireCd = 0;
+  function frameBody(now) {
     let dt = (now - lastT) / 1000;
     lastT = now;
     dt = Math.min(dt, 0.05);
@@ -2228,10 +2642,16 @@
     }
 
     Input.pollGamepad();
+    document.body.classList.toggle('pad-ui', Input.padConnected());
+    hud.glowOK = !Input.touchUI().mode;
     // gate matches the HUD's draw condition exactly: no invisible-but-live
     // controls during the death sequence or transitions
     Input.setPlayfieldActive(uiMode === 'playing' && game.mode === 'playing');
     handleScreens();
+    if (uiMode === 'extracting') {
+      extractT -= dt;
+      if (extractT <= 0) finishLevelClear();
+    }
 
     // before the sim runs: sounds emitted this step are placed against a
     // listener that is current, not one frame stale
@@ -2244,9 +2664,28 @@
         // smooth remote motion between the host's 30 Hz snapshots
         if (game.mode === 'playing' || game.mode === 'dying') Net.clientInterpolate(game);
       } else {
-        stepSim(dt * simScale(dt));
+        // sub-stepped at 60 Hz: a 20 fps phone and a 144 Hz desktop used to
+        // integrate the same second with 4x different step sizes, so drift,
+        // grip and the detect meters all played differently. Big frames now
+        // run several fixed-size steps; small ones run one.
+        let rem = dt * simScale(dt);
+        while (rem > 1e-6) {
+          const st = Math.min(rem, 1 / 60);
+          rem -= st;
+          stepSim(st);
+        }
       }
+      // the warp-in card + flash on every deploy and every gate
+      if (game.mode === 'playing') {
+        const key = (game.runSeq || 0) + ':' + game.level;
+        if (key !== lastWarpKey) { lastWarpKey = key; warpIn(); }
+      }
+      // recoil in the hands: a pad buzz on every shell the local tank fires
+      const lp = game.player;
+      if (lp && lp.alive && lp.fireCd > prevFireCd + 0.05) Input.rumble(0.12, 0.35, 50);
+      prevFireCd = lp ? lp.fireCd : 0;
     }
+    watchStingers();
 
     // real dt on purpose: hit-stop and the death-cam slow-mo must not stretch
     // the countdown on the upgrade card
@@ -2262,21 +2701,32 @@
     // sun pass first: the scene pass samples the map it fills in
     const menu = inMenu();
     const scene = menu ? demoGame : game;
-    if (renderer.beginShadow(cam)) {
-      drawCasters(scene);
-      renderer.endShadow();
-    }
-
-    renderer.beginFrame(cam);
-
     if (menu) {
-      renderer.setLights([]);   // no stale battle lights under the menus
-      drawArena(demoGame);
-      for (const f of demoGame.flags) f.spin += dt * 2.2;
-    } else {
-      drawGame();
+      // the attract patrols amble their routes under the title
+      demoGame._updateEnemies(dt);
+      demoGame._updateTreads(dt);
+      demoGame._updateDecals(dt);
+      demoGame._updateParticles(dt);
     }
-    renderer.endFrame();
+    if (!glLost) {
+      if (renderer.beginShadow(cam)) {
+        drawCasters(scene);
+        renderer.endShadow();
+      }
+
+      renderer.beginFrame(cam);
+
+      if (menu) {
+        renderer.setLights([]);   // no stale battle lights under the menus
+        drawArena(demoGame);
+        drawDemoPatrols(demoGame);
+        renderer.drawParticles(demoGame.particles);
+        for (const f of demoGame.flags) f.spin += dt * 2.2;
+      } else {
+        drawGame();
+      }
+      renderer.endFrame();
+    }
 
     const showHud = (uiMode === 'playing' && game.mode === 'playing');
     hud.render(showHud ? game : null, dt);

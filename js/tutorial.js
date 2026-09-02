@@ -66,8 +66,8 @@ const COACH_STEPS = [
   {
     id: 'extract',
     title: 'EXTRACT',
-    hint: 'THE GATE IS OPEN AND THE SECTOR IS AWAKE — BOOST FOR IT',
-    touch: 'THE GATE IS OPEN AND THE SECTOR IS AWAKE — BOOST FOR IT',
+    hint: 'THE GATE IS OPEN AND THE SECTOR IS AWAKE — BOOST FOR IT, THEN HOLD THE RING',
+    touch: 'THE GATE IS OPEN AND THE SECTOR IS AWAKE — BOOST FOR IT, THEN HOLD THE RING',
     done: () => false,   // the sector clear ends this one
   },
 ];
@@ -89,7 +89,9 @@ const COACH_TIPS = [
   },
   {
     id: 'alarm',
-    when: (g) => (g.alarmT || 0) > 0 && !g.exit,
+    // never on a WARLORD sector: the alarm is pinned there, and "break line
+    // of sight and the hunt stands down" would be advice for the impossible
+    when: (g) => (g.alarmT || 0) > 0 && !g.exit && !g.bossLevel,
     text: 'ALARM UP — BREAK LINE OF SIGHT AND RUN COLD AND THE HUNT STANDS DOWN',
     color: '#ff4a3c',
     tier: 'alert',
@@ -133,7 +135,9 @@ class Coach {
   /* Called from startLevel: per-sector counters reset, progress does not. */
   resetLevel() {
     this._lx = null; this._lz = null;
-    this.tipsFired = {};
+    // tipsFired deliberately survives the sector: "each fires at most once
+    // per run" is the promise above, and resetting here replayed THAT POT IS
+    // UNBANKED and the alarm lesson on every level
     this._tipCd = 0;
   }
 

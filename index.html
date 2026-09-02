@@ -19,6 +19,8 @@
   <canvas id="hud"></canvas>
   <div id="crt"></div>
   <div id="fps" class="hidden"></div>
+  <!-- screen-reader mirror of alert-tier HUD lines -->
+  <div id="sr-live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
   <!-- TITLE SCREEN -->
   <div id="screen-title" class="screen">
@@ -58,6 +60,10 @@
 
   <!-- new service worker took over: one tap serves the fresh files -->
   <div id="update-toast" class="update-toast hidden">UPDATE INSTALLED &mdash; TAP TO RESTART</div>
+  <!-- the sim threw: the loop is re-armed, this says so and offers a clean restart -->
+  <div id="sim-toast" class="update-toast sim-toast hidden">SIM FAULT &mdash; TAP TO RESTART</div>
+  <!-- warp card: the sector name, big, for a beat on every deploy / warp -->
+  <div id="sector-card" class="sector-card hidden"><div id="sector-card-name"></div><div id="sector-card-sub"></div></div>
 
   <!-- MULTIPLAYER LOBBY -->
   <div id="screen-lobby" class="screen hidden">
@@ -192,7 +198,7 @@
   <div id="screen-settings" class="screen hidden">
     <div class="panel small">
       <div class="panel-head">SETTINGS</div>
-      <div class="menu">
+      <div class="menu scroll">
         <div class="mbtn setting" id="st-difficulty">DIFFICULTY<span class="st-val" id="stv-difficulty"></span></div>
         <div class="mbtn setting" id="st-volume">SFX VOLUME<span class="st-val" id="stv-volume"></span></div>
         <div class="mbtn setting" id="st-music">MUSIC VOLUME<span class="st-val" id="stv-music"></span></div>
@@ -205,10 +211,32 @@
         <div class="mbtn setting" id="st-coach">FIELD COACH<span class="st-val" id="stv-coach"></span></div>
         <div class="mbtn setting" id="st-chase">CHASE CAMERA<span class="st-val" id="stv-chase"></span></div>
         <div class="mbtn setting" id="st-colorblind">COLORBLIND HULLS<span class="st-val" id="stv-colorblind"></span></div>
+        <div class="mbtn setting" id="st-reducedMotion">REDUCED MOTION<span class="st-val" id="stv-reducedMotion"></span></div>
+        <div class="mbtn setting" id="st-renderScale">RENDER SCALE<span class="st-val" id="stv-renderScale"></span></div>
+        <div class="mbtn setting" id="st-fov">FIELD OF VIEW<span class="st-val" id="stv-fov"></span></div>
+        <div class="mbtn setting" id="st-hudScale">HUD SCALE<span class="st-val" id="stv-hudScale"></span></div>
+        <div class="mbtn setting" id="st-rumble">RUMBLE / HAPTICS<span class="st-val" id="stv-rumble"></span></div>
+        <div class="mbtn setting" id="st-deadzone">STICK DEADZONE<span class="st-val" id="stv-deadzone"></span></div>
         <div class="mbtn setting" id="st-fps">FPS COUNTER<span class="st-val" id="stv-fps"></span></div>
+        <div class="mbtn ghost" id="bt-controls">CONTROLS &mdash; REBIND KEYS</div>
+        <div class="mbtn ghost danger" id="bt-settings-reset">RESET SETTINGS</div>
         <div class="mbtn ghost" id="bt-settings-back">BACK<span class="mkey">ESC</span></div>
       </div>
       <div class="menu-hint"><span class="help-kb">&larr; &rarr; &nbsp;ADJUST &nbsp;&middot;&nbsp; ENTER &nbsp;CYCLE</span><span class="help-touch">TAP TO CYCLE</span></div>
+    </div>
+  </div>
+
+  <!-- CONTROLS — rebind the in-battle keys -->
+  <div id="screen-controls" class="screen hidden">
+    <div class="panel small">
+      <div class="panel-head">CONTROLS</div>
+      <div class="panel-sub" id="controls-sub">SELECT AN ACTION, THEN PRESS ITS NEW KEY</div>
+      <div id="controls-list" class="menu scroll"></div>
+      <div class="menu">
+        <div class="mbtn ghost" id="bt-controls-reset">RESET TO DEFAULTS</div>
+        <div class="mbtn ghost" id="bt-controls-back">BACK<span class="mkey">ESC</span></div>
+      </div>
+      <div class="menu-hint help-kb">GAMEPAD: &nbsp;STICK DRIVE &nbsp;&middot;&nbsp; A/RT FIRE &nbsp;&middot;&nbsp; B/RB NADE &nbsp;&middot;&nbsp; X VENT &nbsp;&middot;&nbsp; LB MINE &nbsp;&middot;&nbsp; LT BOOST &nbsp;&middot;&nbsp; Y CAM</div>
     </div>
   </div>
 
@@ -298,6 +326,9 @@
       <div class="panel-head">SERVICE RECORD</div>
       <div id="records-list" class="records-list"></div>
       <div class="menu">
+        <div class="mbtn ghost" id="bt-export">EXPORT CAREER CODE</div>
+        <div class="mbtn ghost" id="bt-import">IMPORT CAREER CODE</div>
+        <div class="mbtn ghost danger" id="bt-records-reset">RESET CAREER</div>
         <div class="mbtn ghost" id="bt-records-back">BACK<span class="mkey">ESC</span></div>
       </div>
     </div>
@@ -310,7 +341,7 @@
       <div class="panel-sub">CHOOSE — OR KEEP FIGHTING</div>
       <div id="draft-choices" class="menu draft-menu"></div>
       <div class="draft-timer-track"><div id="draft-timer" class="draft-timer-fill"></div></div>
-      <div class="menu-hint"><span class="help-kb">1 2 3 &nbsp;OR&nbsp; &uarr;&darr; + ENTER</span><span class="help-touch">TAP TO INSTALL</span><span class="draft-auto-note">AUTO-INSTALLS</span></div>
+      <div class="menu-hint"><span class="help-kb">1 2 3 &nbsp;OR&nbsp; &uarr;&darr; + ENTER &nbsp;&middot;&nbsp; PAD &uarr;&darr; + &rarr;</span><span class="help-touch">TAP TO INSTALL</span><span class="draft-auto-note">AUTO-INSTALLS</span></div>
     </div>
   </div>
 
@@ -320,6 +351,7 @@
       <div class="panel-head">PAUSED</div>
       <div class="menu">
         <div class="mbtn" id="bt-resume">RESUME<span class="mkey">P</span></div>
+        <div class="mbtn ghost" id="bt-pause-settings">SETTINGS</div>
         <div class="mbtn ghost danger" id="bt-abort">ABORT MISSION<span class="mkey">Q</span></div>
       </div>
     </div>
