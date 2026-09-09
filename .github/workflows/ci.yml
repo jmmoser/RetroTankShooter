@@ -35,6 +35,6 @@ jobs:
           node-version: 20
       - run: npm install --no-audit --no-fund
       - run: npx playwright install --with-deps ${{ matrix.browser }}
-      - run: node test/e2e.mjs
+      - run: xvfb-run -a node test/e2e.mjs
         env:
           PA_BROWSER: ${{ matrix.browser }}

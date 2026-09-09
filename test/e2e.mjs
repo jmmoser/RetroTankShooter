@@ -36,18 +36,23 @@ await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
 
 const results = [];
 const ok = (name, cond, extra) => {
-  results.push(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`);
+  const result = `${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`;
+  results.push(result);
+  console.log(result);
   if (!cond) process.exitCode = 1;
 };
 
 // PA_BROWSER=chromium|firefox|webkit picks the engine (the CI matrix runs all three)
 const engine = { chromium, firefox, webkit }[process.env.PA_BROWSER || 'chromium'] || chromium;
-const browser = await engine.launch();
+const browser = await engine.launch({ headless: !process.env.CI });
 const context = await browser.newContext();
 const page = await context.newPage();
 const errors = [];
-page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+page.on('pageerror', (e) => { errors.push('pageerror: ' + e.message); console.log('PAGE ERROR: ' + e.message); });
+page.on('console', (m) => { if (m.type() === 'error') {
+  const message = 'console: ' + m.text() + ' [' + m.location().url + ']';
+  errors.push(message); console.log(message);
+} });
 
 await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'load' });
 await page.waitForTimeout(1500);
@@ -136,8 +141,8 @@ await portal.route('https://sdk.crazygames.com/crazygames-sdk-v3.js', (route) =>
   `,
 }));
 const portalPage = await portal.newPage();
-portalPage.on('pageerror', (e) => errors.push('portal: ' + e.message));
-await portalPage.goto(`http://127.0.0.1:${PORT}/dist/crazygames/`);
+portalPage.on('pageerror', (e) => { errors.push('portal: ' + e.message); console.log('PORTAL ERROR: ' + e.message); });
+await portalPage.goto(`http://127.0.0.1:${PORT}/dist/crazygames/index.html`);
 await portalPage.waitForFunction(() => window.__PA && window.__PA.getMode() === 'playing');
 ok('portal edition starts directly in gameplay', true);
 ok('portal edition does not register a service worker', await portalPage.evaluate(
@@ -170,6 +175,5 @@ await portal.close();
 const fatal = errors.filter((e) => !e.includes('favicon'));
 ok('no page/console errors', fatal.length === 0, fatal.slice(0, 5).join(' | '));
 
-console.log(results.join('\n'));
 await browser.close();
 server.close();
