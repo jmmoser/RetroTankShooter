@@ -15,6 +15,11 @@ jobs:
         with:
           node-version: 20
       - run: node test/run.js
+      - run: python3 scripts/package-portal.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phantom-arena-crazygames
+          path: dist/phantom-arena-crazygames.zip
 
   e2e:
     name: browser end-to-end (${{ matrix.browser }})

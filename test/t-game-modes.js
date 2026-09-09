@@ -74,6 +74,9 @@ check('campaign: three sectors clear through warp gates', () => {
   const g = new Game(hud);
   g.newRun([{ id: 'solo', loadoutIndex: 1 }], 'solo', {});
   for (let lvl = 0; lvl < 3; lvl++) {
+    // This checks sector transitions, not survival while standing still.
+    // Random patrols could kill the pilot before extraction finished.
+    g.enemies.length = 0;
     for (const f of g.flags) f.taken = true;
     g._openExtraction();
     g.player.x = g.exit.x; g.player.z = g.exit.z;

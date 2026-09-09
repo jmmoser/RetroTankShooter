@@ -13,6 +13,8 @@ context — `helpers.js` loads the needed `js/` files into a vm per process).
 
 | Suite | Covers |
 | --- | --- |
+| `t-platform.js` | SDK-free ordinary build, init failure/timeout, gameplay events, first-session grace, ad deduplication, callback failures, platform muting, and public invite links |
+| `t-challenge.js` | untrusted date/score validation, version mismatch, payload round-trip, native sharing, cancellation, and clipboard fallback |
 | `t-audio.js` | `AudioSys` against a fake `AudioContext`: the Safari `interrupted` resume, the per-key voice cap, per-hull fire voices, stingers and the paced heartbeat |
 | `t-balance.js` | the ram cap and the shellback plate, trap damage scaling, the held extraction gate, the grid sweep clock, capped enemy scaling, the contact-lost stand-down, medal-gated tech, the campaign finale, once-per-run field promotion and coach tips, the zero-uplink guard, mine restock, TWIN CANNON heat |
 | `t-game-combat.js` | splash/chain-kill array safety, line-of-sight (segment-vs-AABB), piercing shells, combat soak |

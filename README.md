@@ -31,6 +31,12 @@ for peer-to-peer connections; nothing else needs to be hosted.
 
 ## Play
 
+For the separate solo CrazyGames edition, upload build, measured launch plan,
+and monetization limitations, see [Commercial launch](docs/commercial-launch.md).
+`python3 scripts/package-portal.py` creates that edition without changing this
+ordinary offline build. Daily result links now open a same-day challenge with a
+score to beat; expired or different-build invitations are explained on arrival.
+
 Open `index.html` in any modern browser, or serve the folder statically:
 
 ```sh

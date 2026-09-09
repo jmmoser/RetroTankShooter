@@ -1,11 +1,12 @@
 {
   "name": "phantom-arena",
-  "version": "36.0.0",
+  "version": "37.0.0",
   "private": true,
   "description": "PHANTOM ARENA — retro tank stealth roguelite. No build step; these scripts only run the tests.",
   "scripts": {
     "test": "node test/run.js",
     "e2e": "node test/e2e.mjs",
+    "package:portal": "python3 scripts/package-portal.py",
     "serve": "npx http-server . -p 8080 -c-1"
   },
   "devDependencies": {

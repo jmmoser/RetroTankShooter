@@ -9,11 +9,13 @@ import http from 'http';
 import { createReadStream, existsSync, statSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execFileSync } from 'child_process';
 import { chromium, firefox, webkit } from 'playwright';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 8931;
 const VERSION = /GAME_VERSION\s*=\s*'([^']+)'/.exec(readFileSync(path.join(ROOT, 'js/version.js'), 'utf8'))[1];
+execFileSync('python3', [path.join(ROOT, 'scripts/package-portal.py')]);
 
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
@@ -101,6 +103,69 @@ const titleVisible = await page.evaluate(() => {
 });
 ok('offline reload still renders title', titleVisible);
 await context.setOffline(false);
+
+// Challenge links preserve the current UTC arena and explain old builds.
+const today = new Date().toISOString().slice(0, 10);
+await page.goto(`http://127.0.0.1:${PORT}/?daily=${today}&score=1234&v=${VERSION}`);
+await page.waitForSelector('#bt-challenge:not(.hidden)');
+ok('shared score is visible on arrival', (await page.textContent('#challenge-note')).includes('1234'));
+await page.click('#bt-challenge');
+await page.waitForFunction(() => window.__PA.getMode() === 'playing');
+ok('challenge launches same daily arena with fixed loadout', await page.evaluate(
+  (day) => window.__PA.game.dailySeed === day && window.__PA.game.player.loadout === 'VANGUARD', today));
+await page.goto(`http://127.0.0.1:${PORT}/?daily=2020-01-01&score=1234&v=${VERSION}`);
+await page.waitForSelector('#bt-challenge:not(.hidden)');
+ok('expired challenge explains that today is a new arena', (await page.textContent('#challenge-note')).includes('ENDED'));
+
+// Test the real packaged edition. Only the external SDK is replaced; all
+// game code, screen transitions, audio, and input run in the actual browser.
+const portal = await browser.newContext();
+await portal.route('https://sdk.crazygames.com/crazygames-sdk-v3.js', (route) => route.fulfill({
+  contentType: 'application/javascript', body: `
+    window.sdkEvents = [];
+    window.CrazyGames = { SDK: {
+      environment: 'local', init: async () => {},
+      game: {
+        settings: { muteAudio: false }, addSettingsChangeListener: () => {},
+        gameplayStart: () => sdkEvents.push('start'), gameplayStop: () => sdkEvents.push('stop'),
+        loadingStart: () => {}, loadingStop: () => {},
+        inviteLink: () => 'https://www.crazygames.com/game/phantom-arena'
+      },
+      ad: { requestAd: (kind, callbacks) => { sdkEvents.push(kind); window.adCallbacks = callbacks; } }
+    }};
+  `,
+}));
+const portalPage = await portal.newPage();
+portalPage.on('pageerror', (e) => errors.push('portal: ' + e.message));
+await portalPage.goto(`http://127.0.0.1:${PORT}/dist/crazygames/`);
+await portalPage.waitForFunction(() => window.__PA && window.__PA.getMode() === 'playing');
+ok('portal edition starts directly in gameplay', true);
+ok('portal edition does not register a service worker', await portalPage.evaluate(
+  () => navigator.serviceWorker.getRegistrations().then((r) => r.length === 0)));
+await portalPage.evaluate(() => {
+  GamePlatform.tick(181, true);
+  window.__PA.game.mode = 'dying'; window.__PA.game.deathTimer = 0;
+});
+await portalPage.waitForFunction(() => window.__PA.getMode() === 'gameover');
+await portalPage.click('#bt-retry');
+ok('retry waits for the ad callback and blocks game interaction', await portalPage.evaluate(
+  () => GamePlatform.isBusy() && document.getElementById('game-wrap').inert && window.__PA.getMode() === 'gameover'));
+await portalPage.keyboard.press('Escape');
+ok('keyboard cannot bypass ad break', await portalPage.evaluate(() => window.__PA.getMode() === 'gameover'));
+await portalPage.evaluate(() => { window.adCallbacks.adStarted(); window.adCallbacks.adFinished(); });
+await portalPage.waitForFunction(() => window.__PA.getMode() === 'playing');
+ok('ad completion resumes one new run', await portalPage.evaluate(
+  () => !GamePlatform.isBusy() && !document.getElementById('game-wrap').inert && sdkEvents.filter(e => e === 'midgame').length === 1));
+// Exercise no-fill through the DOM path as well, after another eligible interval.
+await portalPage.evaluate(() => {
+  GamePlatform.tick(181, true); window.__PA.game.mode = 'dying'; window.__PA.game.deathTimer = 0;
+});
+await portalPage.waitForFunction(() => window.__PA.getMode() === 'gameover');
+await portalPage.click('#bt-retry');
+await portalPage.evaluate(() => window.adCallbacks.adError({ code: 'unfilled' }));
+await portalPage.waitForFunction(() => window.__PA.getMode() === 'playing');
+ok('no-fill ad still restarts game', true);
+await portal.close();
 
 const fatal = errors.filter((e) => !e.includes('favicon'));
 ok('no page/console errors', fatal.length === 0, fatal.slice(0, 5).join(' | '));

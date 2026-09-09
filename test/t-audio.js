@@ -3,6 +3,7 @@
 const { loadScripts, check, assert } = require('./helpers');
 
 let created = 0;
+const connections = [];
 function param(v) {
   return {
     value: v || 0,
@@ -12,7 +13,7 @@ function param(v) {
 }
 function node(extra) {
   created++;
-  return Object.assign({ connect() {}, disconnect() {}, start() {}, stop() {} }, extra || {});
+  return Object.assign({ connect(to) { connections.push([this, to]); }, disconnect() {}, start() {}, stop() {} }, extra || {});
 }
 class FakeAC {
   constructor() {
@@ -36,10 +37,25 @@ global.Settings = { get: () => 7 };
 
 loadScripts(['audio.js'], 'global.AudioSys = AudioSys;');
 
-check('resume() boots the context and resumes it', () => {
+check('resume() boots the context with platform mute already enforced', () => {
+  AudioSys.setPlatformMuted(true);
   AudioSys.resume();
   const ctx = FakeAC.last;
   assert(ctx && ctx.state === 'running', 'context running after the first gesture');
+  const finalGate = connections.find(([, to]) => to === ctx.destination)[0];
+  assert(finalGate.gain.value === 0, 'all audio passes through the muted final gate');
+  AudioSys.setPlatformMuted(false);
+});
+
+check('platform mute cannot be overridden by user settings or resume', () => {
+  const finalGate = connections.find(([, to]) => to === FakeAC.last.destination)[0];
+  const userMuted = AudioSys.isMuted();
+  AudioSys.setPlatformMuted(true);
+  AudioSys.toggleMuted(); AudioSys.setVolume(1); AudioSys.setMusicVolume(1); AudioSys.resume();
+  assert(finalGate.gain.value === 0, 'user controls cannot bypass the platform gate');
+  AudioSys.toggleMuted(); AudioSys.setPlatformMuted(false);
+  assert(finalGate.gain.value === 1, 'audio gate restored');
+  assert(AudioSys.isMuted() === userMuted, 'player mute preference is preserved');
 });
 
 check('Safari: an interrupted context is resumed on the next gesture', () => {
