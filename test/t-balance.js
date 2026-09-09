@@ -86,7 +86,9 @@ check('the extraction gate must be HELD for EXIT_CHARGE seconds', () => {
   assert(g.mode === 'playing', 'one second in the ring must not clear the sector');
   assert(g.exit.charge > 0.9 && g.exit.charge < 1.1, 'charge tracks time held, = ' + g.exit.charge);
   // step out: the charge bleeds
-  p.x = g.exit.x + 40;
+  // Step toward arena center. +40 can cross the right wall, which clamps
+  // the pilot back into a randomly placed extraction ring.
+  p.x = g.exit.x + (g.exit.x > 0 ? -40 : 40);
   for (let i = 0; i < 30; i++) g.update(1 / 60);
   assert(g.exit.charge < 0.5, 'leaving the ring bleeds the charge, = ' + g.exit.charge);
   p.x = g.exit.x;

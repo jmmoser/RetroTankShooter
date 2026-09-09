@@ -11,6 +11,7 @@ const ASSETS = [
   'js/version.js', 'js/settings.js', 'js/audio.js', 'js/input.js', 'js/geometry.js',
   'js/renderer.js', 'js/hud.js', 'js/tutorial.js', 'js/game.js', 'js/net.js', 'js/main.js',
   'js/vendor/peerjs.min.js',
+  'js/platform.js', 'js/challenge.js',
 ];
 
 self.addEventListener('install', (e) => {

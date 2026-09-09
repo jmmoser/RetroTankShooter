@@ -28,6 +28,8 @@ const AudioSys = (() => {
   let reverbReturn = null;
   let musicDuck = null;    // sidechain gain the soundtrack rides through
   let muted = false;
+  let platformMuted = false;
+  let output = null;       // final gate includes music AND reverb tails
 
   // where the ears are: world position + hull facing, fed by the main loop
   const ear = { x: 0, z: 0, rx: 1, rz: 0, on: false };
@@ -87,7 +89,10 @@ const AudioSys = (() => {
     limiter.ratio.value = 12;
     limiter.attack.value = 0.003;
     limiter.release.value = 0.18;
-    limiter.connect(ctx.destination);
+    output = ctx.createGain();
+    output.gain.value = platformMuted ? 0 : 1;
+    limiter.connect(output);
+    output.connect(ctx.destination);
 
     master = ctx.createGain();
     master.gain.value = gainValue();
@@ -235,6 +240,10 @@ const AudioSys = (() => {
   }
   function toggleMuted() { setMuted(!muted); return muted; }
   function isMuted() { return muted; }
+  function setPlatformMuted(value) {
+    platformMuted = !!value;
+    if (output) output.gain.value = platformMuted ? 0 : 1;
+  }
 
   // -- helpers -------------------------------------------------------------
   function env(gainNode, t0, peak, attack, decay) {
@@ -833,7 +842,7 @@ const AudioSys = (() => {
   }
 
   return {
-    resume, play, setEngine, stopEngine, toggleMuted, isMuted, setVolume,
+    resume, play, setEngine, stopEngine, toggleMuted, isMuted, setVolume, setPlatformMuted,
     setMusicVolume, setMusicMood, setMusicIntensity, stinger, setHeartbeat,
     setListener, clearListener,
     // diagnostics for the headless suite

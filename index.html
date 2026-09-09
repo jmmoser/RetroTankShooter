@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>PHANTOM ARENA — Retro Tank Shooter</title>
+<meta name="description" content="Hunt unseen in a free 3D tank stealth roguelite. Ambush patrols, hack uplinks, and escape the alarm. Play daily challenges in your browser.">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -36,6 +37,8 @@
       </div>
     </div>
     <div id="title-menu" class="menu">
+      <div id="challenge-note" class="menu-hint hidden"></div>
+      <div class="mbtn hidden" id="bt-challenge">PLAY DAILY CHALLENGE</div>
       <div class="mbtn" id="bt-deploy">DEPLOY<span class="mkey">ENTER</span></div>
       <div class="mbtn" id="bt-daily">DAILY OPS<span class="mkey">D</span></div>
       <div class="mbtn" id="bt-host">HOST CO-OP / VERSUS<span class="mkey">H</span></div>
@@ -175,6 +178,7 @@
         <div class="mbtn" id="bt-retry">RETRY MISSION<span class="mkey">ENTER</span></div>
         <div class="mbtn" id="bt-again">RELAUNCH SQUAD<span class="mkey">ENTER</span></div>
         <div class="mbtn hidden" id="bt-share">COPY RESULT</div>
+        <textarea id="share-fallback" class="hidden" aria-label="Result to copy" readonly></textarea>
         <div class="mbtn ghost" id="bt-loadout">CHANGE LOADOUT</div>
         <div class="mbtn ghost" id="bt-title">TITLE SCREEN</div>
       </div>
@@ -367,6 +371,8 @@
 <script src="js/renderer.js"></script>
 <script src="js/hud.js"></script>
 <script src="js/tutorial.js"></script>
+<script src="js/platform.js"></script>
+<script src="js/challenge.js"></script>
 <script src="js/game.js"></script>
 <script src="js/net.js"></script>
 <script src="js/main.js"></script>

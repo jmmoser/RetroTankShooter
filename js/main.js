@@ -5,7 +5,20 @@
  *  - host additionally streams snapshots to clients (see net.js).
  *  - client runs no simulation: it streams input up and renders host snapshots.
  */
-(() => {
+(async () => {
+  await GamePlatform.init();
+  GamePlatform.onMute = (muted) => AudioSys.setPlatformMuted(muted);
+  const platformStatus = document.createElement('div');
+  platformStatus.className = 'platform-status hidden';
+  platformStatus.setAttribute('role', 'status');
+  platformStatus.textContent = 'ADVERTISEMENT — YOUR NEXT SECTOR IS READY';
+  document.body.appendChild(platformStatus);
+  GamePlatform.onBusy = (busy) => {
+    document.getElementById('game-wrap').inert = busy;
+    platformStatus.classList.toggle('hidden', !busy);
+    Input.setPlayfieldActive(false);
+    Input.clearFrame();
+  };
   const glCanvas = document.getElementById('gl');
   const hudCanvas = document.getElementById('hud');
 
@@ -159,6 +172,7 @@
   let lobbyLoadout = 1;   // co-op loadout
   let startSector = 1;    // checkpoint start (setup screen)
   let runRecorded = true; // guards Progress.recordRun against double counting
+  let incomingChallenge = null;
   let highScore = 0;
   try { highScore = parseInt(localStorage.getItem('pa_high') || '0', 10) || 0; } catch (e) {}
 
@@ -181,6 +195,7 @@
    * entrance, the old one fades for 140 ms with its pointer events off. */
   let shownScreen = 'title';
   function showScreen(name) {
+    GamePlatform.setPlaying(uiMode === 'playing' && game.mode === 'playing');
     const prev = shownScreen;
     shownScreen = name;
     for (const k in screens) {
@@ -267,7 +282,10 @@
 
   function bind(id, fn, sound) {
     const el = document.getElementById(id);
-    el.addEventListener('click', () => { AudioSys.resume(); AudioSys.play(sound || 'select'); fn(); });
+    el.addEventListener('click', () => {
+      if (GamePlatform.isBusy()) return;
+      AudioSys.resume(); AudioSys.play(sound || 'select'); fn();
+    });
     return el;
   }
 
@@ -309,6 +327,9 @@
     recordBeaten = false;
     const daily = game.dailySeed ? Progress.dailyBest() : null;
     recordRef = game.versus ? 0 : (game.dailySeed ? (daily ? daily.score : 0) : highScore);
+    if (game.dailySeed && incomingChallenge && incomingChallenge.day === game.dailySeed) {
+      recordRef = Math.max(recordRef, incomingChallenge.score);
+    }
     hud.recordScore = recordRef;
     if (typeof Medals !== 'undefined') Medals.drainRecent(); // stale earns from an aborted run
   }
@@ -626,31 +647,38 @@
     const extras = buildOverExtras(res);
     earned = earned || extras.earned;
     html += extras.html;
+    if (game.dailySeed && incomingChallenge && incomingChallenge.day === game.dailySeed && incomingChallenge.score > 0) {
+      html += '<br><span class="gold">' + (game.score > incomingChallenge.score
+        ? 'CHALLENGE BEATEN'
+        : (incomingChallenge.score - game.score + 1) + ' POINTS TO BEAT THE SHARED SCORE') + '</span>';
+    }
     // let the gameOver sting finish before celebrating the gold-text lines
     if (earned) playUnlockSoon();
     document.getElementById('over-stats').innerHTML = html;
-    document.getElementById('bt-share').classList.toggle('hidden', !game.dailySeed);
-    shareBtn.textContent = 'COPY RESULT';
+    document.getElementById('bt-share').classList.toggle('hidden', Net.role !== 'solo');
+    document.getElementById('share-fallback').classList.add('hidden');
+    shareBtn.textContent = game.dailySeed ? 'CHALLENGE A FRIEND' : 'SHARE RESULT';
     configureOverButtons();
     showScreen('over');
   }
 
-  // Wordle-style share card for the daily run.
+  // Native share sheet on mobile, clipboard elsewhere, selectable text last.
   const shareBtn = document.getElementById('bt-share');
-  shareBtn.addEventListener('click', () => {
+  shareBtn.addEventListener('click', async () => {
+    if (GamePlatform.isBusy()) return;
     AudioSys.resume();
-    const lines = [
-      'PHANTOM ARENA — DAILY OPS ' + (game.dailySeed || Progress.todayKey()),
-      'SCORE ' + game.score + ' · SECTOR ' + game.level,
-    ];
-    const streak = Progress.dailyStreak();
-    if (streak > 1) lines.push('STREAK ' + streak + ' DAYS');
-    if (/^https?:$/.test(location.protocol)) lines.push(location.origin + location.pathname);
-    const done = () => { shareBtn.textContent = 'COPIED — SEND IT'; AudioSys.play('select'); };
-    const fail = () => { shareBtn.textContent = 'COPY FAILED'; };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(lines.join('\n')).then(done, fail);
-    } else fail();
+    const params = game.dailySeed ? Challenge.params(game.dailySeed, game.score, GAME_VERSION) : {};
+    const payload = Challenge.payload({ day: game.dailySeed, score: game.score, sector: game.level,
+      streak: game.dailySeed ? Progress.dailyStreak() : 0 }, GamePlatform.shareURL(params));
+    const result = await Challenge.share(payload, navigator);
+    if (result === 'cancelled') return;
+    shareBtn.textContent = result === 'shared' ? 'RESULT SHARED' : result === 'copied' ? 'COPIED — SEND IT' : 'SELECT AND COPY BELOW';
+    if (result === 'failed') {
+      const field = document.getElementById('share-fallback');
+      field.value = payload.text + (payload.url ? '\n' + payload.url : '');
+      field.classList.remove('hidden');
+      field.focus(); field.select();
+    } else AudioSys.play('select');
   });
 
   // ---- multiplayer: lobby ----------------------------------------------------
@@ -979,6 +1007,10 @@
 
   function advanceLevel(gateId) {
     if (uiMode !== 'levelclear' || Net.role === 'client') return;
+    GamePlatform.breakBefore(() => advanceLevelNow(gateId), Net.role === 'solo' && !game.dailySeed);
+  }
+
+  function advanceLevelNow(gateId) {
     game.nextLevel(gateId || 'standard');
     uiMode = 'playing';
     showScreen(null);
@@ -2231,8 +2263,8 @@
 
     switch (uiMode) {
       case 'title':
-        if (Input.consume('KeyH')) { enterLobbyAsHost(); break; }
-        if (Input.consume('KeyJ')) { enterJoin(); break; }
+        if (Input.consume('KeyH') && !GamePlatform.enabled) { enterLobbyAsHost(); break; }
+        if (Input.consume('KeyJ') && !GamePlatform.enabled) { enterJoin(); break; }
         if (Input.consume('KeyD')) { startDaily(); break; }
         if (Input.consume('KeyB')) { openBriefing(); break; }
         menuKeys('title');
@@ -2334,6 +2366,7 @@
   // ---- menu button wiring ------------------------------------------------------
   bind('bt-deploy', goSetup);
   bind('bt-daily', startDaily);
+  bind('bt-challenge', startDaily);
   bind('bt-host', enterLobbyAsHost);
   bind('bt-join', enterJoin);
   bind('bt-settings', () => openSettings('title'));
@@ -2398,7 +2431,11 @@
   bind('bt-lobby-leave', leaveToTitle);
   bind('bt-lobby-launch', () => { if (Net.role === 'host') startHostRun(); });
   bind('bt-continue', advanceLevel);
-  bind('bt-retry', () => { if (game.dailySeed) startDaily(); else startRun(); });
+  bind('bt-retry', () => {
+    if (uiMode !== 'gameover') return;
+    GamePlatform.breakBefore(() => { if (game.dailySeed) startDaily(); else startRun(); },
+      Net.role === 'solo' && !game.dailySeed);
+  });
   bind('bt-again', () => { if (Net.role === 'host') startHostRun(); });
   bind('bt-vs-again', () => { if (Net.role === 'host') startHostRun(); });
   bind('bt-vs-leave', leaveToTitle);
@@ -2415,7 +2452,18 @@
   // Deep link: index.html?join=CODE goes straight into the co-op join flow, so
   // a host can just send the copied invite link.
   try {
-    const codeParam = new URLSearchParams(location.search).get('join');
+    const params = new URLSearchParams(GamePlatform.inviteParams() || location.search);
+    incomingChallenge = Challenge.parse(params, Progress.todayKey(), GAME_VERSION);
+    if (incomingChallenge) {
+      const c = incomingChallenge;
+      const note = document.getElementById('challenge-note');
+      note.textContent = !c.current ? 'THIS DAILY HAS ENDED — TRY TODAY’S OPS'
+        : !c.sameVersion ? 'GAME UPDATED — SET A NEW DAILY SCORE'
+        : c.score > 0 ? 'FRIEND’S SCORE TO BEAT: ' + c.score : 'SAME ARENA. SAME TANK. YOUR TURN.';
+      note.classList.remove('hidden');
+      document.getElementById('bt-challenge').classList.remove('hidden');
+    }
+    const codeParam = !GamePlatform.enabled && params.get('join');
     if (codeParam && /^[a-z0-9]{4,6}$/i.test(codeParam)) {
       enterJoin();
       joinInput.value = codeParam.toUpperCase();
@@ -2628,6 +2676,8 @@
     let dt = (now - lastT) / 1000;
     lastT = now;
     dt = Math.min(dt, 0.05);
+    if (GamePlatform.isBusy()) { Input.clearFrame(); return; }
+    GamePlatform.tick(dt, uiMode === 'playing' && game.mode === 'playing');
 
     if (Settings.get('fps')) {
       fpsFrames++;
@@ -2736,6 +2786,14 @@
 
   window.addEventListener('resize', () => { renderer.resize(); hud.resize(); });
   requestAnimationFrame(frame);
+  GamePlatform.ready();
+  if (GamePlatform.enabled) {
+    // Start in play on portals. Multiplayer needs a separate platform room
+    // integration; retain it in the ordinary build, expose solo here.
+    document.getElementById('bt-host').classList.add('hidden');
+    document.getElementById('bt-join').classList.add('hidden');
+    if (incomingChallenge) startDaily(); else startRun();
+  }
 
   // Build stamp on the title screen. GAME_VERSION (js/version.js) is served
   // from the same cache snapshot as the rest of the page, so it names the
@@ -2747,7 +2805,7 @@
   // re-check whenever the tab regains focus (plus hourly, for long-lived
   // tabs), and once a new worker takes over offer a one-tap restart — the
   // running page keeps the files it booted with until then.
-  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+  if (!GamePlatform.enabled && 'serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
       .then((reg) => {
         const recheck = () => { reg.update().catch(() => {}); };

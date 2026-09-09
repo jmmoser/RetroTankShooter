@@ -13,6 +13,8 @@ context — `helpers.js` loads the needed `js/` files into a vm per process).
 
 | Suite | Covers |
 | --- | --- |
+| `t-platform.js` | SDK-free ordinary build, init failure/timeout, gameplay events, first-session grace, ad deduplication, callback failures, platform muting, and public invite links |
+| `t-challenge.js` | untrusted date/score validation, version mismatch, payload round-trip, native sharing, cancellation, and clipboard fallback |
 | `t-audio.js` | `AudioSys` against a fake `AudioContext`: the Safari `interrupted` resume, the per-key voice cap, per-hull fire voices, stingers and the paced heartbeat |
 | `t-balance.js` | the ram cap and the shellback plate, trap damage scaling, the held extraction gate, the grid sweep clock, capped enemy scaling, the contact-lost stand-down, medal-gated tech, the campaign finale, once-per-run field promotion and coach tips, the zero-uplink guard, mine restock, TWIN CANNON heat |
 | `t-game-combat.js` | splash/chain-kill array safety, line-of-sight (segment-vs-AABB), piercing shells, combat soak |
@@ -29,11 +31,17 @@ context — `helpers.js` loads the needed `js/` files into a vm per process).
 ## Browser end-to-end
 
 `e2e.mjs` drives the real game in a headless browser (Chromium by default;
-`PA_BROWSER=firefox` or `webkit` picks another engine — CI runs all three): boot + build tag,
+`PA_BROWSER=firefox` or `webkit` picks another engine — CI runs all three with
+Xvfb and headed browsers so Firefox can create a WebGL context): boot + build tag,
 service-worker install and cache naming, gameplay (deploy → drive → fire →
 grenades/mines), zero WebGL/console errors, the keyup-in-text-field stuck-key
 regression, and an offline reload against the SW cache. It serves the repo
-itself on `127.0.0.1:8931` for the duration of the run.
+itself on `127.0.0.1:8931` for the duration of the run. The portal package and
+challenge/ad flows are also exercised on all three engines with a mocked SDK.
+Service-worker install and offline automation run on Chromium only, matching
+[Playwright's supported service-worker surface](https://playwright.dev/docs/service-workers).
+Firefox and Safari PWA/offline behavior still needs real-browser validation;
+their skipped automation must not be reported as an offline pass.
 
 Requires Playwright with a Chromium browser installed:
 
