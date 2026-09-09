@@ -60,11 +60,17 @@ await page.waitForTimeout(1500);
 const build = await page.textContent('#build-tag');
 ok(`build tag shows ${VERSION}`, build && build.includes(VERSION), build);
 
-await page.waitForFunction(
-  (v) => caches.keys().then((k) => k.includes('phantom-arena-' + v)), VERSION, { timeout: 10000 },
-).catch(() => {});
-const cacheKeys = await page.evaluate(() => caches.keys());
-ok(`SW cache phantom-arena-${VERSION} present`, cacheKeys.includes('phantom-arena-' + VERSION), JSON.stringify(cacheKeys));
+// Playwright supports service-worker automation on Chromium only:
+// https://playwright.dev/docs/service-workers
+// Real Safari/Firefox PWA behavior still needs device/browser validation.
+if (engine === chromium) {
+  await page.waitForFunction(
+    (v) => caches.keys().then((k) => k.includes('phantom-arena-' + v)), VERSION, { timeout: 10000 },
+  );
+  await page.waitForFunction(() => !!navigator.serviceWorker.controller);
+  const cacheKeys = await page.evaluate(() => caches.keys());
+  ok(`SW cache phantom-arena-${VERSION} present`, cacheKeys.includes('phantom-arena-' + VERSION), JSON.stringify(cacheKeys));
+} else console.log('SKIP service-worker/offline automation: supported on Chromium only');
 
 // gameplay: deploy -> launch, then drive and fire for a while
 await page.click('#bt-deploy');
@@ -99,15 +105,19 @@ const drive = await page.evaluate(() => Input.axis().drive);
 ok('keyup inside text field clears held key', drive === 0, 'drive=' + drive);
 
 // offline reload must still boot from the SW cache
-await context.setOffline(true);
-await page.reload({ waitUntil: 'load' }).catch(() => {});
-await page.waitForTimeout(1200);
-const titleVisible = await page.evaluate(() => {
-  const el = document.getElementById('screen-title');
-  return !!el && !el.classList.contains('hidden');
-});
-ok('offline reload still renders title', titleVisible);
-await context.setOffline(false);
+if (engine === chromium) {
+  await context.setOffline(true);
+  // A failed navigation must fail this test; swallowing it could leave the
+  // old title visible and falsely report a successful offline boot.
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => !!window.__PA);
+  const titleVisible = await page.evaluate(() => {
+    const el = document.getElementById('screen-title');
+    return !!el && !el.classList.contains('hidden');
+  });
+  ok('offline reload still renders title', titleVisible);
+  await context.setOffline(false);
+}
 
 // Challenge links preserve the current UTC arena and explain old builds.
 const today = new Date().toISOString().slice(0, 10);

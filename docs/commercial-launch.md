@@ -51,6 +51,11 @@ The integration follows the [SDK initialization](https://docs.crazygames.com/sdk
 Real ad fill and approval must be verified in the publisher preview; a mocked
 SDK test cannot establish either.
 
+CI exercises gameplay, challenge arrivals, and the packaged ad flow in Chromium,
+Firefox, and WebKit. Service-worker/offline automation is scoped to Chromium;
+real Safari/Firefox PWA validation and publisher-preview ad validation remain
+release checks, not results claimed by this PR.
+
 ## Build and submission
 
 ```sh
