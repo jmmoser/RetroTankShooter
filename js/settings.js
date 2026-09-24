@@ -41,8 +41,8 @@ const Settings = (() => {
   // boundaries, awareness rings, scorch, tread prints, beacon pillars) is all
   // drawn on the ground plane, and a hull-height first-person eye cannot see
   // any of it. `C` still flips to the cockpit view, and the choice sticks.
-  // reducedMotion: zeroes the radial blur, aberration, grain and the blink
-  //   animations and caps shake — defaults to the OS preference
+  // reducedMotion: stops the blink animations and caps shake — defaults to
+  //   the OS preference
   // renderScale: 5..10 = 50%..100% of device resolution for the 3D scene
   // fov: -2..+2 steps around the base field of view
   // hudScale: 6..14 = 60%..140% HUD size
@@ -50,7 +50,7 @@ const Settings = (() => {
   let prefersReduced = false;
   try { prefersReduced = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
   const DEFAULTS = {
-    volume: 7, music: 6, shake: 10, glow: true, shadows: true, quality: 1, crt: true,
+    volume: 7, music: 6, shake: 10, glow: true, shadows: true, quality: 1, crt: false,
     aimAssist: true, colorblind: false, fps: false, difficulty: 0, coach: true, chase: true,
     reducedMotion: prefersReduced, renderScale: 10, fov: 0, hudScale: 10, rumble: true, deadzone: 1,
   };

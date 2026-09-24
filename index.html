@@ -25,16 +25,9 @@
 
   <!-- TITLE SCREEN -->
   <div id="screen-title" class="screen">
-    <div class="disk-label">
-      <div class="disk-title">PHANTOM</div>
-      <div class="disk-sub">A R E N A</div>
-      <div class="disk-row">
-        <div class="disk-compat">FOR WEB &amp; 100%<br>COMPATIBLES</div>
-        <div class="disk-badge-wrap">
-          <div class="disk-badge"><div class="badge-square"></div></div>
-          <div class="disk-ring">RETRO TANK SHOOTER</div>
-        </div>
-      </div>
+    <div class="wordmark">
+      <div class="wm-title">PHANTOM ARENA</div>
+      <div class="wm-sub">STEALTH TANK HUNTER</div>
     </div>
     <div id="title-menu" class="menu">
       <div id="challenge-note" class="menu-hint hidden"></div>
@@ -48,14 +41,8 @@
       <div class="mbtn ghost" id="bt-settings">SETTINGS</div>
     </div>
     <div class="title-help">
-      <span class="help-kb">
-        &uarr;&darr; &nbsp;SELECT &nbsp;&middot;&nbsp; ENTER &nbsp;CONFIRM &nbsp;&middot;&nbsp; M &nbsp;SOUND &nbsp;&middot;&nbsp; GAMEPAD READY<br>
-        IN BATTLE: &nbsp;W S &nbsp;DRIVE &nbsp;&nbsp; A D &nbsp;STEER &nbsp;&nbsp; SPACE &nbsp;FIRE &nbsp;&nbsp; R &nbsp;VENT &nbsp;&nbsp; X &nbsp;GRENADE &nbsp;&nbsp; V &nbsp;MINE &nbsp;&nbsp; SHIFT &nbsp;BOOST &nbsp;&nbsp; S&nbsp;AT&nbsp;SPEED &nbsp;DRIFT &nbsp;&nbsp; C &nbsp;CAMERA
-      </span>
-      <span class="help-touch">
-        LEFT THUMB &nbsp;DRIVE &nbsp;&middot;&nbsp; RIGHT THUMB &nbsp;FIRE<br>
-        ON-SCREEN: &nbsp;NADE &nbsp;&middot;&nbsp; MINE &nbsp;&middot;&nbsp; VENT &nbsp;&middot;&nbsp; BOOST &nbsp;&middot;&nbsp; CAM &nbsp;&middot;&nbsp; PAUSE
-      </span>
+      <span class="help-kb">&uarr;&darr; &nbsp;SELECT &nbsp;&middot;&nbsp; ENTER &nbsp;CONFIRM &nbsp;&middot;&nbsp; CONTROLS IN BRIEFING</span>
+      <span class="help-touch">CONTROLS IN BRIEFING</span>
     </div>
     <div id="title-high" class="title-high"></div>
     <div id="build-tag" class="build-tag"></div>
@@ -250,57 +237,38 @@
       <div class="panel-head">MISSION BRIEFING</div>
       <div class="brief-body">
         <div class="brief-sec">
-          <div class="brief-h">YOU ARE INVISIBLE UNTIL THEY FIND YOU</div>
-          <p>Every patrol runs a sensor. Inside its cone, with line of sight, a
-             detection meter fills — the closer and louder you are, the faster.
-             Halfway it breaks off to <b>INVESTIGATE</b>; full and it <b>ALERTS</b>,
-             radios its pack and raises the sector <b>ALARM</b>. Break line of
-             sight, run cold, and the hunt stands down.</p>
+          <div class="brief-h">THEY CAN'T SEE YOU YET</div>
+          <p>Each patrol has a vision cone and a hearing ring, both drawn on
+             the ground. Inside them, with line of sight, its detection meter
+             fills. Halfway, it comes to look. Full, it alerts its pack and the
+             sector <b>ALARM</b> goes up. Break line of sight and stay quiet
+             and the alarm times out.</p>
         </div>
         <div class="brief-sec">
-          <div class="brief-h">SIGNATURE IS THE WHOLE GAME</div>
-          <p>Speed is noise, a hot cannon is a beacon, boost is a flare — all of
-             it feeds the <b>SIGNATURE</b> bar, and signature is literally how far
-             every sensor on the map reaches. The cones drawn on the floor are
-             live: throttle down and watch them shrink. Speed is armor in a
-             fight and noise on the prowl. Choose which tank to be.</p>
-          <p>Two shapes are drawn under every patrol and you have to respect
-             both. The <b>wedge</b> is what it is looking at. The <b>ring</b> at
-             its feet is what it can <i>hear</i> — inside that, facing stops
-             mattering and it notices you whichever way it is pointed. Both
-             shrink when you do.</p>
+          <div class="brief-h">STAY QUIET</div>
+          <p>Speed, a hot cannon and boost all raise your <b>SIGNATURE</b>, and
+             signature is how far enemy sensors reach. Slow down and the cones
+             on the ground shrink.</p>
         </div>
         <div class="brief-sec">
-          <div class="brief-h">KILL THEM BEFORE THEY KNOW</div>
-          <p>A shell that lands on a hull which never saw you is an
-             <b>AMBUSH</b> — triple damage, so one cold shot deletes a patrol from
-             across the map. A hull that dies without ever alerting pays a
-             <b>SILENT KILL</b> bonus, and a boost-ram is the quietest kill in the
-             game. A survivor sounds the alarm, so commit.</p>
+          <div class="brief-h">STRIKE FIRST</div>
+          <p>A shell that hits a hull that hasn't seen you does triple damage.
+             A kill that never alerted pays extra. A boost-ram is the quietest
+             kill. Anything that survives a hit raises the alarm.</p>
         </div>
         <div class="brief-sec">
-          <div class="brief-h">THE HEAT CANNON</div>
-          <p>There is no ammo — there is <b>HEAT</b>. Past the redline ticks the gun
-             fires faster and harder; past the top it locks up. Tap <b>R</b> to vent:
-             a marker sweeps the bar and a second tap inside the band is a
-             <b>PERFECT VENT</b> — instant clear plus supercharged shells. Heat is
-             signature, so venting is also how you go dark.</p>
+          <div class="brief-h">THE CANNON RUNS ON HEAT</div>
+          <p>No ammo, just <b>HEAT</b>. Near the top the gun fires faster and
+             harder; at the top it locks up. Tap <b>R</b> to vent, and tap again
+             inside the band for a <b>PERFECT VENT</b>. Venting also makes you
+             quieter.</p>
         </div>
         <div class="brief-sec">
-          <div class="brief-h">UPLINKS, THEN THE GATE</div>
-          <p>Clip a zone ring <i>once</i> — a drive-by is enough — and the hack runs
-             itself while you are already gone. It pulses, and the noise pulls
-             patrols in. When the last uplink falls the whole sector wakes up
-             and an <b>EXTRACTION GATE</b> opens: the getaway is the finale. Reach it
-             having never tripped the alarm for a <b>GHOST EXTRACTION</b>.</p>
-        </div>
-        <div class="brief-sec">
-          <div class="brief-h">STYLE PAYS, GREED DECIDES</div>
-          <p>The combo runs on <b>variety</b> — repeat one kill method and the chain
-             cools; mix cannon, ram, grenade, mine and shockwave and it climbs to
-             ×5, which also multiplies your <b>TECH</b> income. Kill score does not
-             bank: it rides an at-risk <b>POT</b> that spills 30% every time you take
-             a hit and cashes out when you secure a zone.</p>
+          <div class="brief-h">HACK, THEN LEAVE</div>
+          <p>Drive through an uplink ring once to start its hack. It finishes
+             on its own, but it makes noise. When the last one falls the whole
+             sector wakes up and an <b>EXTRACTION GATE</b> opens. Hold it to
+             leave. Never trip the alarm for a <b>GHOST EXTRACTION</b> bonus.</p>
         </div>
         <div class="brief-sec">
           <div class="brief-h">CONTROLS</div>

@@ -14,8 +14,8 @@
  *  - an HDR-ish glow pipeline: scene renders into an offscreen target, a
  *    bright-pass extracts hot pixels, they get gaussian-blurred at half res,
  *    and the composite pass adds the bloom back over an ACES-tonemapped,
- *    graded image with FXAA, chromatic aberration, radial speed blur, film
- *    grain and a vignette.
+ *    graded image with FXAA and a light vignette. No lens fringing, speed
+ *    blur or film grain: the flat-shaded look wants hard, clean edges.
  * Every stage degrades gracefully: if FBOs fail (or GLOW FX is off in
  * settings) everything renders straight to the canvas like before, and if the
  * shadow target fails the sun just stops casting.
@@ -359,7 +359,8 @@ varying vec2 vUV;
 void main() {
   vec3 c = texture2D(uTex, vUV).rgb;
   float luma = dot(c, vec3(0.299, 0.587, 0.114));
-  float k = smoothstep(0.32, 0.75, luma);
+  // only genuinely hot pixels glow — a low threshold bloomed the whole scene
+  float k = smoothstep(0.55, 0.9, luma);
   gl_FragColor = vec4(c * k, 1.0);
 }
 `;
@@ -382,22 +383,17 @@ void main() {
 }
 `;
 
-/* Composite — the whole "film" half of the look lives here:
- *   FXAA -> radial speed blur -> chromatic aberration -> bloom add ->
- *   exposure -> ACES tonemap -> grade/flash -> vignette -> grain
- * Every effect is driven by a uniform the game animates (setPostFx), so
- * boosting, taking a hit and dying all read differently on screen. */
+/* Composite:
+ *   FXAA -> bloom add -> exposure -> ACES tonemap -> grade/flash -> vignette
+ * The grade, flash and vignette are uniforms the game animates (setPostFx),
+ * so taking a hit, the alarm and dying still read differently on screen. */
 const COMPOSITE_FS = `
 precision mediump float;
 uniform sampler2D uScene;
 uniform sampler2D uBloom;
 uniform vec2 uTexel;
 uniform float uBloomStrength;
-uniform float uTime;
 uniform float uExposure;
-uniform float uAberration;
-uniform float uRadial;
-uniform float uGrain;
 uniform float uVignette;
 uniform float uSaturation;
 uniform vec3 uGrade;
@@ -440,32 +436,11 @@ vec3 aces(vec3 x) {
   return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
-float hash(vec2 p) {
-  return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
-}
-
 void main() {
   vec2 fromCenter = vUV - 0.5;
   float r2 = dot(fromCenter, fromCenter);
 
-  // radial speed blur: the frame smears toward the edges under boost
   vec3 scene = fxaa(uScene, vUV, uTexel);
-  if (uRadial > 0.001) {
-    vec3 sm = scene;
-    for (int i = 1; i <= 5; i++) {
-      float k = float(i) * 0.2 * uRadial * 0.09;
-      sm += texture2D(uScene, vUV - fromCenter * k).rgb;
-    }
-    scene = mix(scene, sm / 6.0, clamp(uRadial, 0.0, 1.0) * smoothstep(0.02, 0.25, r2));
-  }
-
-  // chromatic aberration: lens fringing that grows toward the corners
-  if (uAberration > 0.001) {
-    vec2 off = fromCenter * uAberration * (0.35 + r2 * 2.4);
-    scene.r = texture2D(uScene, vUV + off).r;
-    scene.b = texture2D(uScene, vUV - off).b;
-  }
-
   vec3 bloom = texture2D(uBloom, vUV).rgb;
   vec3 col = (scene + bloom * uBloomStrength) * uExposure;
   col = aces(col);
@@ -478,13 +453,6 @@ void main() {
 
   // vignette
   col *= 1.0 - r2 * uVignette;
-
-  // film grain, animated per frame and rolled off in the highlights so it
-  // lives in the shadows where real grain lives
-  if (uGrain > 0.001) {
-    float n = hash(vUV * vec2(1024.0, 768.0) + fract(uTime) * 91.7) - 0.5;
-    col += n * uGrain * (1.0 - luma * 0.7);
-  }
 
   gl_FragColor = vec4(max(col, 0.0), 1.0);
 }
@@ -561,17 +529,13 @@ class Renderer {
     this.glowEnabled = true;    // user setting (setGlow)
     this.msaaEnabled = true;    // user setting (setMsaa): RENDER QUALITY HIGH
     this.glowSupported = true;  // flipped false if FBO setup fails
-    this.bloomStrength = 1.15;
-    /* Film-grade knobs the game animates every frame (see setPostFx). These
-     * are the defaults — a clean, slightly contrasty image with a hint of
-     * grain and lens fringing, i.e. what the game looks like at rest. */
+    this.bloomStrength = 0.55;
+    /* Grade knobs the game animates every frame (see setPostFx). These are
+     * the defaults — a clean image, i.e. what the game looks like at rest. */
     this.fx = {
-      exposure: 1.06,
-      aberration: 0.0016,
-      radial: 0,
-      grain: 0.035,
-      vignette: 0.42,
-      saturation: 1.08,
+      exposure: 1.0,
+      vignette: 0.3,
+      saturation: 1.0,
       grade: [1, 1, 1],
       flash: [0, 0, 0],
     };
@@ -647,8 +611,8 @@ class Renderer {
     this.brightProg = this._buildPostLikeProgram(QUAD_VS, BRIGHT_FS, ['uTex']);
     this.blurProg = this._buildPostLikeProgram(QUAD_VS, BLUR_FS, ['uTex', 'uDir']);
     this.compositeProg = this._buildPostLikeProgram(QUAD_VS, COMPOSITE_FS,
-      ['uScene', 'uBloom', 'uTexel', 'uBloomStrength', 'uTime', 'uExposure',
-       'uAberration', 'uRadial', 'uGrain', 'uVignette', 'uSaturation',
+      ['uScene', 'uBloom', 'uTexel', 'uBloomStrength', 'uExposure',
+       'uVignette', 'uSaturation',
        'uGrade', 'uFlash']);
 
     this.sceneFbo = null;   // allocated lazily in _resizePost
@@ -792,9 +756,6 @@ class Renderer {
     if (!o) return;
     const fx = this.fx;
     if (o.exposure !== undefined) fx.exposure = o.exposure;
-    if (o.aberration !== undefined) fx.aberration = o.aberration;
-    if (o.radial !== undefined) fx.radial = o.radial;
-    if (o.grain !== undefined) fx.grain = o.grain;
     if (o.vignette !== undefined) fx.vignette = o.vignette;
     if (o.saturation !== undefined) fx.saturation = o.saturation;
     if (o.grade) fx.grade = o.grade;
@@ -1179,11 +1140,7 @@ class Renderer {
     gl.uniform1i(u.uBloom, 1);
     gl.uniform2f(u.uTexel, 1 / this.canvas.width, 1 / this.canvas.height);
     gl.uniform1f(u.uBloomStrength, this.bloomStrength);
-    gl.uniform1f(u.uTime, (performance.now() % 10000) / 1000);
     gl.uniform1f(u.uExposure, fx.exposure);
-    gl.uniform1f(u.uAberration, fx.aberration);
-    gl.uniform1f(u.uRadial, fx.radial);
-    gl.uniform1f(u.uGrain, fx.grain);
     gl.uniform1f(u.uVignette, fx.vignette);
     gl.uniform1f(u.uSaturation, fx.saturation);
     gl.uniform3fv(u.uGrade, fx.grade);

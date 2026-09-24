@@ -440,8 +440,7 @@
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message('SECTOR ' + game.level + (game.bossLevel ? ' — DESTROY THE WARLORD' : ' — SECURE THE UPLINKS, THEN EXTRACT'),
-      game.bossLevel ? '#ff4a3c' : '#4fd6bb', 3, game.bossLevel ? 'alert' : 'info');
+    // no objective toast: the warp-in card says it, once
   }
 
   // Daily ops: one seeded arena per UTC day, standard-issue VANGUARD for a
@@ -908,8 +907,6 @@
     uiMode = 'playing';
     showScreen(null);
     AudioSys.play('deploy');
-    hud.message(versus ? 'VERSUS — FIRST TO 10 KILLS' : 'SECTOR 1 — SECURE THE UPLINKS, THEN EXTRACT',
-      versus ? '#ffd24a' : '#4fd6bb', 3);
     Net.broadcastLevel(game);               // ship the arena to clients
     netState.timer = 0; netState.snd = []; netState.bu = []; netState.de = [];
   }
@@ -1241,7 +1238,7 @@
   }
   function finishLevelClear() {
     uiMode = 'levelclear';
-    film.flashWhite = 0.55;
+    film.flashWhite = 0.2;
     showClearStats();
     showScreen('clear');
   }
@@ -1291,14 +1288,12 @@
       hud.message('SECTOR ' + game.level + ' — WARLORD DETECTED', '#ff4a3c', 3.5, 'alert');
       AudioSys.play('alarm');
     } else {
-      hud.message('SECTOR ' + game.level, '#4fd6bb', 2.5);
       AudioSys.play('sectorStart');
       // mirror the host's sector-start banners
       if (game.mutator) {
         const m = MUTATORS.find((x) => x.id === game.mutator);
         if (m) hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3, 'chatter');
       }
-      // (no bounty toast — the HUD carries it live under the radar)
     }
   };
   Net.cb.onState = (msg) => { if (Net.role === 'client') Net.applyState(game, msg); };
@@ -1509,11 +1504,10 @@
   }
 
   // ---- film grade -------------------------------------------------------------
-  // The post stack is animated, not static: boost smears the frame, damage
-  // pushes it red and grainy, an active hunt warms the whole grade, and the
-  // death cam drains the colour out of the arena. These are all smoothed —
-  // a grade that snaps between states reads as a bug, not as drama.
-  const film = { boost: 0, alarm: 0, dead: 0, heat: 0, low: 0, pause: 0, warp: 0, flashWhite: 0 };
+  // The grade is animated, not static: damage pushes it red, an active hunt
+  // warms it, and the death cam drains the colour out of the arena. These are
+  // all smoothed — a grade that snaps between states reads as a bug.
+  const film = { alarm: 0, dead: 0, heat: 0, low: 0, pause: 0, warp: 0, flashWhite: 0 };
 
   function updateFilm(dt) {
     const k = (cur, target, rate) => cur + (target - cur) * Math.min(1, dt * rate);
@@ -1521,7 +1515,6 @@
       (game.mode === 'playing' || game.mode === 'dying');
     const p = playing ? game.player : null;
     const hurt = Math.min(1, hud.flash || 0);
-    film.boost = k(film.boost, p && p.alive && p.boosting ? 1 : 0, p && p.boosting ? 9 : 4);
     film.alarm = k(film.alarm, playing && game.alarmT > 0 ? 1 : 0, 1.2);
     film.dead = k(film.dead, playing && game.mode === 'dying' ? 1 : 0, 3);
     // cannon heat bleeds into the image: the redline is visible on screen
@@ -1543,13 +1536,12 @@
     // warp: the extraction pull-in and the deploy flash
     if (uiMode === 'extracting') film.warp = Math.min(1, film.warp + dt / 0.8);
     else film.warp = Math.max(0, film.warp - dt * 2.2);
-    film.flashWhite = Math.max(0, film.flashWhite - dt * 1.6);
-    const rm = reducedMotion();
+    film.flashWhite = Math.max(0, film.flashWhite - dt * 2.5);
 
-    const a = film.alarm, b = film.boost, d = film.dead, h = film.heat, pz = film.pause, w = film.warp;
+    const a = film.alarm, d = film.dead, h = film.heat, pz = film.pause, w = film.warp;
     const fw = film.flashWhite + w * w * 0.9;
     renderer.setPostFx({
-      exposure: 1.06 + a * 0.04 + b * 0.05 - hurt * 0.05 - d * 0.22 - pz * 0.3 + w * 0.5,
+      exposure: 1 + a * 0.03 - hurt * 0.05 - d * 0.22 - pz * 0.3 + w * 0.5,
       // a hunt warms the arena, damage pushes it red, death bleaches it. The
       // hurt terms stay restrained on purpose: the HUD paints its own red
       // vignette over the top, and doubling them blinds the player at the
@@ -1560,11 +1552,8 @@
         1 - a * 0.07 - hurt * 0.11 - d * 0.05 - low * 0.06,
       ],
       flash: [hurt * 0.06 + fw, fw, hurt * 0.01 + fw],
-      saturation: 1.08 + a * 0.10 - d * 0.85 - pz * 0.7 - w * 0.6,
-      vignette: 0.42 + hurt * 0.22 + b * 0.18 + d * 0.75 + low * 0.28 + pz * 0.2,
-      aberration: rm ? 0 : 0.0016 + hurt * 0.0040 + b * 0.0035 + h * 0.0012 + w * 0.004,
-      radial: rm ? 0 : b * 0.9 + hurt * 0.20 + w * 1.2,
-      grain: rm ? 0 : 0.035 + hurt * 0.035 + d * 0.07,
+      saturation: 1 + a * 0.06 - d * 0.85 - pz * 0.7 - w * 0.6,
+      vignette: 0.3 + hurt * 0.2 + d * 0.75 + low * 0.28 + pz * 0.2,
     });
   }
 
@@ -1573,17 +1562,15 @@
   const sectorCard = document.getElementById('sector-card');
   let lastWarpKey = '';
   function warpIn() {
-    film.flashWhite = 0.6;
+    film.flashWhite = 0.2;   // a blink, not a whiteout
     if (game.versus) {
       showCard('VERSUS', 'FIRST TO ' + (game.killTarget || 10), false);
       return;
     }
-    let sub = 'SECURE THE UPLINKS, THEN EXTRACT';
-    if (game.bossLevel) sub = 'WARLORD DETECTED — DESTROY IT';
-    else if (game.mutator) {
-      const m = MUTATORS.find((x) => x.id === game.mutator);
-      if (m) sub = m.name + ' — ' + m.desc.toUpperCase();
-    }
+    // the card is the one place the objective is said. A WARLORD or a
+    // mutator sector already announces itself through the sim's own alert,
+    // so the card doesn't repeat it underneath.
+    let sub = game.bossLevel || game.mutator ? '' : 'SECURE THE UPLINKS, THEN EXTRACT';
     if (game.level === CAMPAIGN_END) sub = 'THE THIRD WARLORD — END OF THE CAMPAIGN';
     showCard('SECTOR ' + game.level, sub, !!game.bossLevel);
   }
@@ -2140,7 +2127,6 @@
       bindRows[a] = el;
     }
     controlsSub.textContent = 'SELECT AN ACTION, THEN PRESS ITS NEW KEY';
-    refreshKeyHelp();
   }
   function listenFor(action, el) {
     for (const k in bindRows) bindRows[k].classList.remove('listening');
@@ -2162,19 +2148,6 @@
     Input.captureNext(null);
     openSettings(settingsReturn);
   }
-  /* The title's key legend follows the bindings. */
-  function refreshKeyHelp() {
-    const b = Input.binds();
-    const k = (a) => Input.labelFor(b[a][0]);
-    const el = document.querySelector('.title-help .help-kb');
-    if (!el) return;
-    el.innerHTML =
-      '&uarr;&darr; &nbsp;SELECT &nbsp;&middot;&nbsp; ENTER &nbsp;CONFIRM &nbsp;&middot;&nbsp; M &nbsp;SOUND &nbsp;&middot;&nbsp; GAMEPAD READY<br>' +
-      `IN BATTLE: &nbsp;${k('forward')} ${k('back')} &nbsp;DRIVE &nbsp;&nbsp; ${k('left')} ${k('right')} &nbsp;STEER &nbsp;&nbsp; ` +
-      `${k('fire')} &nbsp;FIRE &nbsp;&nbsp; ${k('vent')} &nbsp;VENT &nbsp;&nbsp; ${k('nade')} &nbsp;GRENADE &nbsp;&nbsp; ${k('mine')} &nbsp;MINE &nbsp;&nbsp; ` +
-      `${k('boost')} &nbsp;BOOST &nbsp;&nbsp; ${k('back')}&nbsp;AT&nbsp;SPEED &nbsp;DRIFT &nbsp;&nbsp; ${k('cam')} &nbsp;CAMERA`;
-  }
-  refreshKeyHelp();
 
   for (const d of SETTING_DEFS) {
     const row = document.getElementById('st-' + d.key);
@@ -2378,7 +2351,6 @@
     Settings.reset();
     Input.resetBinds();
     renderSettingVals();
-    refreshKeyHelp();
     hud.message('SETTINGS RESET', '#4fd6bb', 1.4, 'chatter');
   });
   // career export / import / reset: the whole career as a pasteable code
