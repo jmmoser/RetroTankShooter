@@ -266,7 +266,6 @@ const Net = (() => {
       vs: game.versus ? 1 : 0,
       kt: game.killTarget,
       mut: game.mutator || null,
-      bounty: game.bounty ? { name: game.bounty.name, n: game.bounty.n } : null,
     });
   }
 
@@ -324,8 +323,6 @@ const Net = (() => {
       sus: game.suspicion ? 1 : 0,
       ex: game.exit ? { x: game.exit.x, z: game.exit.z, c: Math.round((game.exit.charge || 0) * 100) / 100 } : null,
       cb: game.combo, ct: game.comboT, mu: game.mult, cw: game.comboWin,
-      pt: game.pot || 0,
-      by: game.bounty ? { p: game.bounty.prog, d: game.bounty.paid ? 1 : 0 } : undefined,
       // WARLORD boss: turret offsets are rebuilt client-side by index
       bo: (game.boss && !game.boss.dead) ? {
         x: game.boss.x, z: game.boss.z, a: game.boss.angle,
@@ -521,9 +518,7 @@ const Net = (() => {
     game.suspicion = false;
     game.exit = null;
     game.combo = 0; game.comboT = 0; game.mult = 1;
-    game.pot = 0;
     game.mutator = msg.mut || null;
-    game.bounty = msg.bounty ? { name: msg.bounty.name, n: msg.bounty.n, prog: 0, paid: false } : null;
     game.mode = 'playing';
   }
 
@@ -611,11 +606,6 @@ const Net = (() => {
     game.comboT = msg.ct || 0;
     game.mult = msg.mu || 1;
     game.comboWin = msg.cw || 4;
-    game.pot = msg.pt || 0;
-    if (msg.by && game.bounty) {
-      game.bounty.prog = msg.by.p || 0;
-      game.bounty.paid = !!msg.by.d;
-    }
 
     game.boss = (msg.bo && Array.isArray(msg.bo.tu)) ? {
       x: msg.bo.x, z: msg.bo.z, angle: msg.bo.a,

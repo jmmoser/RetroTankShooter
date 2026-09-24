@@ -183,9 +183,9 @@ check('FIELD PROMOTION pays out on every run, not once per page load', () => {
 
 check('coach callouts fire once per RUN — a new sector does not replay them', () => {
   const c = new Coach();
-  c.tipsFired.pot = true;
+  c.tipsFired.overheat = true;
   c.resetLevel();
-  assert(c.tipsFired.pot, 'resetLevel must not wipe fired tips');
+  assert(c.tipsFired.overheat, 'resetLevel must not wipe fired tips');
 });
 
 check('a sector that failed to place any uplink opens its gate instead of trapping the run', () => {

@@ -31,8 +31,6 @@ class HUD {
     this.recordScore = 0; // the score being chased (high score / daily best);
                           // main.js arms it per run, score goes gold past it
     this.hits = [];       // recent hit directions {x, z, t}: wedges on the crosshair ring
-    this.spillT = 0;      // pot-spill flash timer
-    this.spillAmt = 0;
     this.scale = 1;       // HUD SCALE setting (main.js sets it)
     this.glowOK = true;   // canvas shadowBlur is expensive on phones; main.js flips it
     this.live = null;     // aria-live mirror for alert-tier messages (main.js wires it)
@@ -43,12 +41,6 @@ class HUD {
   hitFrom(x, z) {
     this.hits.push({ x, z, t: 0 });
     if (this.hits.length > 6) this.hits.shift();
-  }
-
-  /* Part of the pot just spilled: flash the label and fling the number. */
-  spill(amount) {
-    this.spillT = 0.9;
-    this.spillAmt = amount | 0;
   }
 
   resize() {
@@ -70,7 +62,7 @@ class HUD {
    *   'alert'   — the fight or the run just changed. Big, lit, up top.
    *   'info'    — the default. You did the thing; here is the result.
    *   'chatter' — routine, or already shown somewhere permanent (the combo
-   *               multiplier, the bounty line, the grenade pips). Small, and
+   *               multiplier, the grenade pips). Small, and
    *               tucked over the bars it refers to instead of over the
    *               battlefield.
    */
@@ -113,7 +105,6 @@ class HUD {
     const W = this.canvas.width, H = this.canvas.height;
     const s = Math.min(W, H) / 720 * (this.scale || 1); // ui scale
     ctx.textBaseline = 'middle';
-    this.spillT = Math.max(0, this.spillT - dt);
 
     this.flash = Math.max(0, this.flash - dt * 1.8);
     this.pickupFlash = Math.max(0, this.pickupFlash - dt * 1.5);
@@ -349,7 +340,7 @@ class HUD {
     if (game.exit && (game.exit.charge || 0) > 0 && typeof EXIT_CHARGE !== 'undefined') {
       const k = Math.max(0, Math.min(1, game.exit.charge / EXIT_CHARGE));
       const bw = 200 * s, bh = 7 * s;
-      const bx = W / 2 - bw / 2, by = topY + 42 * s;   // under the status line, in the bounty's slot
+      const bx = W / 2 - bw / 2, by = topY + 42 * s;
       ctx.font = font(10, true);
       ctx.fillStyle = '#d8f4ff';
       ctx.fillText('WARP CHARGING — HOLD THE RING', W / 2, by - 8 * s);
@@ -359,16 +350,6 @@ class HUD {
       ctx.fillStyle = '#d8f4ff';
       ctx.fillRect(bx + s, by + s, (bw - 2 * s) * k, bh - 2 * s);
       return;
-    }
-
-    // sector bounty, live under the dish
-    if (game.bounty) {
-      const b = game.bounty;
-      ctx.font = font(10, true);
-      ctx.fillStyle = b.paid ? '#3cff78' : '#e8c75a';
-      ctx.fillText(
-        b.paid ? '✓ BOUNTY PAID' : 'BOUNTY: ' + b.name + '  ' + b.prog + '/' + b.n,
-        W / 2, topY + 30 * s);
     }
   }
 
@@ -884,9 +865,10 @@ class HUD {
       ctx.fillRect(bx + 2 * s, by + 2 * s, (bw - 4 * s) * sh01, bh - 4 * s);
     }
 
-    // boost gauge just above the shields bar
-    if (p.maxBoost) {
-      const bo01 = Math.max(0, Math.min(1, p.boost / p.maxBoost));
+    // boost gauge just above the shields bar — only while it's in use or
+    // refilling; a full, idle tank of boost is nothing to read
+    const bo01 = p.maxBoost ? Math.max(0, Math.min(1, p.boost / p.maxBoost)) : 1;
+    if (p.maxBoost && (p.boosting || bo01 < 0.999)) {
       const gy = by - 32 * s, gh = 6 * s;
       ctx.font = font(11, true);
       ctx.fillStyle = 'rgba(111,199,232,0.9)';
@@ -1001,25 +983,6 @@ class HUD {
     }
     ctx.fillText('SCORE ' + String(game.score).padStart(7, '0'), W - pad, H - pad - 64 * s);
     ctx.shadowBlur = 0;
-    // the unbanked pot: kill score riding on the line until a zone banks it
-    const spill = this.spillT > 0;
-    if (!game.versus && ((game.pot || 0) > 0 || spill)) {
-      const pp = 1 + 0.05 * Math.sin(performance.now() / 140);
-      ctx.font = `bold ${Math.round(13 * s * pp)}px "Courier New", monospace`;
-      ctx.fillStyle = spill && Math.sin(performance.now() / 60) > 0 ? '#ff6a5a' : '#ffd24a';
-      ctx.fillText('POT +' + (game.pot || 0), W - pad, H - pad - 102 * s);
-      ctx.font = font(16, true);
-    }
-    if (spill && this.spillAmt > 0) {
-      // the spilled slice flies up and away from the label, reddening
-      const k = 1 - this.spillT / 0.9;
-      ctx.globalAlpha = 1 - k;
-      ctx.font = font(15, true);
-      ctx.fillStyle = '#ff6a5a';
-      ctx.fillText('−' + this.spillAmt + ' SPILLED', W - pad - 110 * s - 50 * s * k, H - pad - (102 + 14 * k) * s);
-      ctx.globalAlpha = 1;
-      ctx.font = font(16, true);
-    }
     if (onRecord) {
       ctx.font = font(10, true);
       ctx.fillStyle = '#ffd24a';

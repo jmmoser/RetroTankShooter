@@ -4,7 +4,6 @@
   --teal: #2fa08c;
   --teal-bright: #4fd6bb;
   --teal-dark: #143f37;
-  --ink: #0a1410;
   --paper: #d8d8d0;
   /* copied into custom properties so js/input.js can read the notch insets */
   --sa-t: env(safe-area-inset-top, 0px);
@@ -60,6 +59,9 @@ html, body {
   position: absolute; inset: 0;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
+  /* a tall stack on a short window scrolls instead of clipping off the top */
+  justify-content: safe center;
+  overflow-y: auto;
   gap: 26px;
   z-index: 10;
   color: var(--teal-bright);
@@ -145,76 +147,19 @@ body.touch-ui .mbtn { padding: 10px 20px; }
   touch-action: manipulation;
 }
 
-/* ---------- disk-label homage title card ---------- */
-.disk-label {
-  position: relative;
-  width: min(440px, 86vw);
-  padding: 30px 26px 22px;
-  background: linear-gradient(160deg, #35a892 0%, #2c9480 55%, #258271 100%);
-  border: 2px solid rgba(10, 30, 25, 0.55);
-  border-radius: 4px;
-  box-shadow: 0 0 40px rgba(47, 160, 140, 0.35), inset 0 0 60px rgba(0, 0, 0, 0.18);
-  color: var(--ink);
-}
-.disk-title {
-  font-size: clamp(40px, 9vw, 58px);
+/* ---------- title wordmark ---------- */
+.wordmark { line-height: 1.1; }
+.wm-title {
+  font-size: clamp(30px, 7vw, 52px);
   font-weight: bold;
-  letter-spacing: 0.18em;
-  color: var(--ink);
-  /* horizontal slice effect, like striped retro lettering */
-  background: repeating-linear-gradient(
-    to bottom,
-    #0a1410 0, #0a1410 5px,
-    transparent 5px, transparent 8px
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  letter-spacing: 0.22em;
+  color: var(--teal-bright);
 }
-.disk-sub {
-  margin-top: 2px;
-  font-size: clamp(18px, 4vw, 24px);
-  font-weight: bold;
-  letter-spacing: 0.55em;
-  color: var(--ink);
-}
-.disk-row {
-  margin-top: 34px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 20px;
-}
-.disk-badge-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-}
-.disk-badge {
-  width: 52px; height: 52px;
-  background: var(--ink);
-  display: flex; align-items: center; justify-content: center;
-}
-.badge-square {
-  width: 0; height: 0;
-  border-left: 26px solid #efefe6;
-  border-top: 13px solid transparent;
-  border-bottom: 13px solid transparent;
-}
-.disk-compat {
-  font-size: 11px;
-  font-weight: bold;
-  letter-spacing: 1px;
-  text-align: left;
-  line-height: 1.5;
-  color: var(--ink);
-}
-.disk-ring {
-  font-size: 9px;
-  letter-spacing: 3px;
-  white-space: nowrap;
-  color: rgba(10, 20, 16, 0.75);
+.wm-sub {
+  margin-top: 8px;
+  font-size: 12px;
+  letter-spacing: 0.5em;
+  color: rgba(79, 214, 187, 0.6);
 }
 
 /* ---------- panels ---------- */
@@ -586,12 +531,7 @@ body.touch-ui .mbtn { padding: 10px 20px; }
 /* ---------- short landscape phones: compact the menus to fit, no scrolling ---------- */
 @media (max-height: 500px) {
   .screen { gap: 10px; }
-  .disk-label { padding: 12px 22px 10px; }
-  .disk-title { font-size: clamp(24px, 8vh, 40px); }
-  .disk-sub { font-size: clamp(13px, 4vh, 18px); }
-  .disk-row { margin-top: 10px; }
-  .disk-badge { width: 38px; height: 38px; }
-  .badge-square { border-left-width: 19px; border-top-width: 10px; border-bottom-width: 10px; }
+  .wm-title { font-size: clamp(22px, 7vh, 36px); }
   .menu { gap: 8px; width: min(300px, 82vw); }
   .mbtn { min-height: 40px; padding: 8px 20px; font-size: 13px; }
   .panel { padding: 14px 18px 12px; gap: 10px; }

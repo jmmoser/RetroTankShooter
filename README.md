@@ -1,662 +1,155 @@
-# PHANTOM ARENA — Retro Tank Stealth
+# Phantom Arena
 
-A browser-based homage to the flat-shaded 3D tank games of the early
-1990s — rebuilt as a **stealth-hunter roguelite**. This time *you* are the
-phantom: the sector is quiet, its patrols are blind, and every hull out
-there is a stalk-and-kill problem. Run slow and cold and you're a rumor;
-fire the **heat cannon** and its report carries, the hot barrel is a
-beacon, and the grid starts hunting. Hack uplink zones (noisily), spend
-the tech you earn on **3-choice upgrade drafts**, and when the last uplink
-falls the whole sector wakes up and the run ends at a far-side
-**extraction gate** — the getaway is the finale. Between sectors you pick
-your route through **warp gates**; mutated high-risk sectors pay signing
-bonuses. Silent kills pay half again the score, a **boost-ram is the
-assassin's quiet execution**, and everything you earn rides an unbanked
-**pot** until you cash it out. Bouncy walls, kamikaze rushers, armored
-shellbacks, shield-warden packs, long-eyed snipers and tanks that shatter
-into tumbling polygon shards.
+A stealth tank game in the style of the flat-shaded 3D arena shooters of the
+early 90s. Enemy patrols can't see you until they get a look at you. Sneak
+up, kill them before they raise the alarm, hack the sector's uplinks and get
+out through the extraction gate.
 
-Built with **plain WebGL, Canvas 2D and Web Audio** — no build step, no
-assets, no CDNs. Every hull and slab casts a **real-time shadow** across the
-arena floor, the fight leaves **scorch craters and tread prints** behind it,
-and the whole frame runs through a film pipeline — bloom, ACES tonemapping,
-chromatic aberration, radial speed blur under boost and a grade that warms
-when the grid starts hunting and floods red when you take a hit. Even the **synthwave soundtrack is synthesized live** by a
-tiny sequencer: a brooding loop under the menus, a driving groove in combat
-that opens up as the sector alert and your combo climb, and a harder mix
-while a WARLORD is on the field. Single-player makes no network requests at
-all. Optional
-**online co-op** uses one small bundled library (PeerJS, in `js/vendor/`)
-for peer-to-peer connections; nothing else needs to be hosted.
+It runs in the browser with plain WebGL, Canvas 2D and Web Audio: no build
+step, no asset files, and single-player makes no network requests. Online
+co-op uses one bundled library (PeerJS, in `js/vendor/`).
 
 ## Play
 
-For the separate solo CrazyGames edition, upload build, measured launch plan,
-and monetization limitations, see [Commercial launch](docs/commercial-launch.md).
-`python3 scripts/package-portal.py` creates that edition without changing this
-ordinary offline build. Daily result links now open a same-day challenge with a
-score to beat; expired or different-build invitations are explained on arrival.
-
-Open `index.html` in any modern browser, or serve the folder statically:
+Open `index.html`, or serve the folder:
 
 ```sh
 npx http-server .        # or: python3 -m http.server
 ```
 
-It also works hosted on GitHub Pages (Settings → Pages → deploy from branch).
-When served over http(s) a small service worker caches everything, so the
-game is **installable as a PWA and fully playable offline** (co-op excepted).
+Served over http(s), a service worker caches everything, so the game installs
+as a PWA and single-player works offline. It also runs from GitHub Pages.
+
+A separate CrazyGames build is described in
+[docs/commercial-launch.md](docs/commercial-launch.md) and packaged with
+`python3 scripts/package-portal.py`.
 
 ## How to play
 
-**Nothing here is taught by a manual.** Your first sortie runs a **FIELD
-COACH**: it walks you through the loop inside a live sector — roll out, run
-cold, take a hull that never saw you, spike an uplink, extract — one prompt
-at a time, gated on you actually doing it, and it never pauses the fight or
-blocks a thing. Do something out of order and it skips that lesson instead of
-teaching it late. It retires after your first cleared sector. **BRIEFING** on
-the title screen (`B`) is the manual proper, re-readable whenever, and it can
-re-arm the coach.
+Your first sortie runs a field coach that walks you through the loop in a live
+sector, one prompt at a time. **Briefing** on the title screen (`B`) is the
+manual.
 
-**You are invisible until the grid finds you.** Every patrol runs a
-sensor: inside its vision cone, with line of sight, it *fills a detection
-meter* — faster the closer and louder you are. At the first threshold it
-breaks off to **investigate**; fill the meter and it **alerts**, radios
-its packmates, and the sector **ALARM** goes up: converge waves warp in
-on your last known position until you break line of sight, run cold, and
-the hunt stands down. The HUD tells you where you stand at all times —
-**UNDETECTED / PATROLS SUSPICIOUS / ALARM**.
+**Stealth.** Each patrol has a vision cone and a hearing ring, both drawn on
+the ground. Inside them, with line of sight, its detection meter fills: halfway
+it investigates, full and it alerts its pack and the sector alarm goes up.
+Break line of sight and stay quiet and the alarm times out. An arc around the
+crosshair shows when something is watching you, and from which direction.
 
-**Getting spotted is a setback, not a sentence.** A hunter chases the grid's
-*last known contact*, not you — break its line of sight and it drives to
-where you were. Its reach still answers to your signature, so coasting cold
-shortens what it can hold you at. A hull that has had nothing for a few
-seconds gives up its lock and goes back to searching, the converge waves stop
-the moment the grid has nobody to converge on, and once the last hunter has
-let go the alarm times out. The HUD counts that window down for you:
-**BREAKING CONTACT — 6**. Stay dark and you are a rumor again.
+**Signature.** How far enemy sensors reach depends on how loud you are:
+speed, a hot cannon and boost all add to it. Slow down and the cones visibly
+shrink.
 
-Your **SIGNATURE** bar is how loud you read on those sensors: speed is
-noise, the hot cannon is a beacon, boost is a flare. Slow and cold, a
-patrol has to nearly drive into you; redlining at full boost, the whole
-grid sees you coming. Venting isn't just a reload — it's how you **go
-dark**. Sound matters too: the cannon's report, grenade and mine blasts,
-even slamming a slab at speed all pull patrols toward the source — but
-noise only makes them *look*. Only eyes-on makes them shoot.
+**Killing.** A shell that hits a hull that hasn't seen you does triple damage
+(an *ambush*). A kill that never alerted pays 1.5× score (a *silent kill*). A
+boost-ram is the quietest kill. A hull that survives a hit alerts immediately.
 
-**You can see what they can see.** Every patrol paints its **sensor
-cone** — a wedge on the radar, and a lit boundary drawn on the arena floor
-(amber once the hull turns suspicious). The cone's *edge* is the part that
-matters and the part you can see: a line on the ground saying "past here it
-cannot find you". Both are drawn at the sim's own live reach against *your
-current signature*, so throttling down visibly walks that line inward and
-redlining stretches it across the map — the signature bar is something you
-steer through on the ground, not just a number. Alerted hulls carry no cone;
-they aren't scanning, they **know**.
+**The cannon** has no ammo, only heat. Past the redline it fires faster and
+harder; at the top it locks up. Tap `R` to vent; tap again inside the band for
+a perfect vent (instant clear plus supercharged shells). Venting also drops
+your signature.
 
-Two shapes, not one. The wedge is what a patrol is *looking* at; the ring at
-its feet is what it can *hear*, and inside that ring facing stops mattering —
-it notices you whichever way it happens to be pointed. Both are drawn, both
-are the sim's own numbers, and both shrink when you throttle down.
+**Objectives.** Drive through an uplink ring once to start its hack; it
+finishes on its own, but its pulses draw patrols. When the last uplink falls,
+the sector goes on full alert and an extraction gate opens. Hold the gate for
+four seconds to leave. Reaching it without ever tripping the alarm pays a
+ghost-extraction bonus.
 
-And you always know when you are being looked at. The moment any sensor has
-live eyes on you, an **exposure arc** lights up around the crosshair, sitting
-on the *bearing of the hull doing the looking* — one mark for am I seen, how
-far along is it, and from where. A first glimpse is a telegraph, not a
-verdict: crossing into SUSPICIOUS chirps a **sonar ping** from the hull that
-noticed, the arc strobes **EYES ON**, and the meter still needs sustained
-contact to confirm. That beat is your window to break the cone, delete the
-witness, or go cold.
+**Between and during sectors.** Kills, captures and salvage earn tech; each
+tech level offers a three-choice upgrade draft that floats over live play and
+auto-picks if you ignore it. After a clear you choose the next sector through a
+warp gate; mutated gates pay a tech bonus. Every fifth sector is a Warlord boss
+fight; the third Warlord (sector 15) ends the campaign, and the run can
+continue past it.
 
-**Kill them before they know.** A hull that never alerted pays **half
-again the score** as a **SILENT KILL** — and a boost-ram execution is
-quiet enough that only close packmates notice the wreck. The cannon is
-an assassin's weapon too: a shell landing on a hull that never saw you
-coming is an **AMBUSH** and hits at **triple damage**, so one cold shell
-deletes a drone or a sniper from across the map — the report still
-carries, so patrols come looking at where you *were*. A hull that
-*survives* a hit is instantly hostile and sounds the alarm, so commit:
-one clean ram, a mine under a patrol route, an isolated straggler
-deleted at range with a shell hot enough to kill.
+**Difficulty.** Settings → Difficulty: Recruit (default), Standard or
+Veteran. Daily Ops always runs Standard.
 
-Secure **all uplink zones** to open the way out. Zones are **spiked on
-contact**: clip the ring once — a drive-by is enough — and the hack runs
-itself from there while you're already gone. Progress never drains, you
-never have to come back, and sitting in the ring only makes it land
-sooner. What you pay is noise: a running spike **pulses**, dragging every
-patrol in earshot toward it. Spike three zones in one pass and you've
-lit three fires behind you at once; the sector gets loud while you're
-still moving.
+### Controls
 
-When the last uplink falls, there's no mop-up — the grid knows, every
-hull in the sector wakes up, and an **EXTRACTION GATE** opens across the
-arena. The gate has to be **held**: the warp needs four seconds with your
-tank (your whole squad, in co-op) inside the ring, a charge bar counts them
-up under the radar, and stepping out bleeds it. A sector that is wide
-awake gets those seconds to make its case — the getaway is a last stand,
-not a touch-and-go. Get there without ever tripping the alarm beforehand
-and the sector pays a **GHOST EXTRACTION** bonus (which starts to decay
-after two minutes of sector time: the patient sneak is still the best money
-in the game, it just stops being time-free). Your hull is gone when shields
-hit zero.
-
-**The grid has a clock.** A minute into a sector it starts **sweeping**: a
-fresh blind patrol warps in near a live uplink every 45 seconds. Not a
-converge wave — they arrive scanning, not hunting — just a sector that keeps
-getting thicker the longer you take.
-
-Getting overwhelmed? **SETTINGS → DIFFICULTY** has three campaign presets:
-**RECRUIT** (the default) slows enemy sensors, shortens the alarm and
-softens incoming fire while you learn the systems, **STANDARD** is the game
-as designed, and **VETERAN** sharpens the sensors and stretches the hunt. Stay unhit
-for a few seconds and your hull **self-repairs** — fully on RECRUIT, to
-about two-thirds on STANDARD, never on VETERAN, where a depot is the only
-way back. Daily Ops always runs STANDARD so the shared leaderboard seed
-stays a level playing field.
-
-### The heat cannon — ride the redline, nail the vent
-
-There is no ammo. The cannon builds **heat** per shell — and past the
-redline ticks it fires *faster and harder*, so skilled play lives near the
-top of the bar. Redline past the max and the gun locks up for seconds you
-don't have. Tap `R` to **vent** manually: a marker sweeps the bar, and a
-second tap inside the highlighted band is a **perfect vent** — instant
-clear plus a burst of supercharged shells. Coolant depots and pickups vent
-for you; the COOLANT LOOP and VENT TUNING upgrades tune the whole system.
-And because heat is *signature*, the vent is double-edged gold: clear the
-bar and you drop off enemy sensors.
-
-Heat is also the assassin's dial. Ambush shells ride the same hot-tier
-damage as everything else, so the redline decides how big a hull one
-shell can delete: cold poaches a drone, a hot gun a hunter, a redlined
-one a warden or an elite, and a supercharged perfect-vent shell drops a
-phantom — but the heat that buys the one-shot is signature, and every
-sensor cone on the map stretches toward you while you carry it.
-
-### Momentum is everything
-
-Every hull in the garage is quick — the slowest chassis outruns what the
-fastest one used to manage — and the arena is a **tight, densely built
-box** rather than a field you commute across. Boost drains slower and
-comes back faster, so the honest answer to "should I boost?" is nearly
-always yes. Patrols move at a real clip too, alerted or not: disengaging
-is a decision now, not a formality.
-
-The hull points where you steer; your **velocity** has its own ideas.
-Boosting drops the tread grip so the tank **drifts** — swing the gun
-through a slide while your momentum carries the line — and pulling reverse
-*while steering* at speed is a **handbrake slide** (a straight back-pull
-just brakes hard, then backs up). Above ~70% speed the hull sheds a
-third of any hit (**speed is armor**), boost-rams scale with impact speed,
-and an enemy shell that *nearly* clips you is a **graze**: it refunds
-boost, pays a tick of tech and keeps your combo window alive. Experts
-thread fire on purpose. The trade is the heart of the game now: speed is
-armor in a fight, but speed is *noise* on the prowl — you're always
-choosing which tank to be.
-
-### Style pays, greed decides
-
-The combo multiplier runs on **variety**: repeat the same kill method and
-the chain cools; mix cannon, ram, grenade, mine and shockwave kills and it
-climbs to ×5 — and the multiplier boosts your **tech income**, so stylish
-play literally builds faster. Kill score doesn't bank directly: it rides
-an at-risk **POT** that cashes out when you capture a zone (or down a boss
-milestone). Take a hit and 30% of the pot spills. One more fight at ×5, or
-cash out now? That question never goes away.
-
-### Warp gates & bounties — plan the run
-
-After each clear you choose the next sector through a **warp gate**:
-STANDARD, or a mutated route that pays a **tech signing bonus** — SWARM
-PROTOCOL (relentless thin-hull waves), BARREN GRID (no depots), ELITE
-SURGE, VOLATILE HULLS (every kill detonates), or the all-elite GAUNTLET.
-Every sector also posts an optional **bounty** (3 silent kills, 3 ram
-kills, graze 8 shots, reach ×4...) that pays the whole squad in tech.
-Daily Ops seeds the gate offers too, so everyone plays the same map.
-
-### Tech drafts — build your tank mid-run
-
-Kills, captures and salvage pay **TECH**. Each tech level deals a
-**3-choice upgrade draft**: twin cannons, ricochet rounds, piercing cores,
-cluster grenades, shock discharges, ram plating, ghost plating (slower
-enemy sensors), shield siphons and more — nineteen stackable upgrades that
-compound into a build: full assassin, full brawler, or the drift-happy
-something in between. **The fight never stops for one.** The card floats
-over live gameplay — solo included — and a gold bar counts down: pick with
-`1 2 3`, a tap or a click if you want to steer the build, or ignore it
-entirely and the tank **auto-installs one of the three** and gets back to
-work. Levelling up is a bonus, never a toll. By sector 5 no two runs
-fight alike.
-
-**Movement is a weapon.** Slam into a hostile at boost speed and it
-shatters — a boost-ram costs a scratch of shields (nothing with RAM
-PLATING), it defuses a rusher bearing down on you, and it's the quietest
-kill in the game. It is not the *only* answer, though: a bare ram is capped
-below the big hulls. It deletes a drone, a hunter, a sniper or a warden; a
-shellback, a phantom or an elite needs RAM PLATING stacks or a follow-up
-shell, the shield cost scales with what you hit, and ramming a
-**shellback's plate head-on bounces you off it** stunned and twenty shields
-lighter. RAM PLATING is what turns the plate into just another target — and
-it is earned (see medals).
-
-**Traps are the stealth game's other weapon.** A grenade or a mine landing
-on a hull that never saw it coming hits **double**, both scale up with the
-sector, and a survivor of a blast goes to investigate *the blast* rather
-than radioing your exact position from behind the slab you lobbed over.
-
-Sector terrain comes in four flavors so no two runs blur together: the
-classic **scatter** of slabs, long broken **wall corridors** that channel
-firefights down lanes, a central **bastion** with a gate on each side, and
-**cover rings** thrown around the zone sites so every objective is a small
-breach-and-clear. Daily Ops layouts stay identical for everyone — the
-generators all run off the day's seed.
-
-Every zone you secure makes the grid warier: survivors speed up, and
-crossing a threshold warps **fresh patrols** in near the remaining zones —
-they arrive blind, but the sector keeps getting thicker to sneak through.
-When only a couple of zones remain they light up with **beacon pillars**
-(and pin to the radar rim), so the last objective is a hunt, never a
-search. The radar reads the war back to you: **dim blips are blind
-patrols, half-lit ones are investigating, full-bright ones know** — and
-the same telltale glows on the ground under every hull, amber for
-suspicious, strobing red for alerted.
-
-Kills within a few seconds of each other chain into a **combo multiplier**
-(up to ×5) that also boosts zone captures — but taking a single hit breaks
-the chain. Ghost a patrol chain for silent-kill money, or go loud and
-chain the converge wave for big numbers; play sloppy and the score dries
-up either way.
-
-Every **5th sector** has no zones at all. Instead, a **WARLORD** holds the
-arena: a huge hovercruiser that crushes the very slabs you'd hide behind,
-telegraphs a ramming charge, and shields its core behind four destroyable
-turrets. Strip the turrets, then hammer the exposed core — while outrunning
-(boost!) or blocking (cover!) the shockwave rings it slams out.
-
-**The third WARLORD is the end of the campaign.** Clear **sector 15** and
-the run pays a 5,000-point finale, the PHANTOM medal, and a campaign clear
-on your service record — then the gates keep dealing and the run goes on
-into the deep, endless in all but name. Enemy speed and fire rate stop
-climbing past a cap on the way down (a deep sector must never become one you
-cannot disengage from); what keeps climbing is hull HP, so the deep is
-"harder to delete", not "impossible to leave".
-
-From **sector 3** on, some hostiles warp in as **ELITE** variants — bigger,
-faster, harder-hitting hulls that strobe white-hot and wear a ring on the
-radar. They're worth half again the score.
-
-Alongside grenades you carry **proximity mines** (`V`): dropped off the tail,
-they arm after a beat and detonate on anything hostile that rolls over them —
-the perfect parting gift when you boost out of a furball, and they work on
-the WARLORD too.
-
-### The debrief — every run tells you something
-
-A score does not summarise a stealth run, so the sector-clear and game-over
-screens carry a **debrief**: kills, silent kills, zones, best chain, and the
-share of the run you spent genuinely **UNDETECTED**. Death names itself —
-*DESTROYED BY A HUNTER WITH THE GRID HUNTING* — and one line underneath names
-the single thing most worth changing next time, picked from whichever gap is
-widest: the run you spent hunted, the kills you took loudly, the zones you
-drove past. It says nothing when you are playing well.
-
-While you fight, the HUD races your own past self: pass your record and the
-score turns gold with a **RECORD PACE** tag (dailies chase today's best,
-campaign runs chase the all-time high). Fall just short and the game-over
-screen tells you exactly how far — *"ONLY 340 FROM YOUR RECORD"*.
-
-### Presentation — how it feels to be hit
-
-The arena is lit, not just drawn. A directional **shadow map** puts every
-hull, slab and shard onto the floor; a specular highlight rakes across the
-facets as tanks turn; a cold fresnel rim reads their silhouettes against the
-void. The floor keeps score of the fight — every detonation burns a **scorch
-crater** into it and every hull that drives lays **tread prints** that fade
-out over the next half-minute.
-
-The **chase camera is the default**, and your choice sticks. The sector talks
-to you on the ground — cone boundaries, the amber and red awareness rings under
-each hull, scorch craters, tread prints, beacon pillars — and the cockpit eye
-sits two units above that floor looking *along* it, which is the one angle that
-can't read any of it. Press `C` for the 1990 shot whenever you want it: every
-cone's boundary also stands up as a low curtain of light, so the read survives
-the switch.
-
-The camera is a rig, not a mount. Impacts shove it and a spring pulls it
-back, so the cannon's recoil kicks the view down the barrel and a boost-ram
-throws it forward through the wreck. Trauma shakes all six axes on smooth
-noise — the lens twists, it doesn't just rattle — and the FOV breathes open
-with speed and slams shut for the death cam. A landed kill buys a few frames
-of **hit-stop**, and the first beat of your own death plays in slow motion.
-(Solo only: a co-op host that slowed its own clock would slow everyone's.)
-
-Every hull type fires with its **own voice** — a hunter's three-round
-burst, a sniper's whipcrack, a phantom's sub-thump, a shellback's heavy
-cough — so a player heads-down on the floor cones can still read the threat
-by ear. The overheat lockout has its own klaxon instead of borrowing the
-low-shield warning, the menus have a family of UI sounds rather than one
-blip, and the score punctuates the beats it used to miss: a **stinger** on a
-silent kill, a glimpse, the alarm, a broken chain, a ghost extraction and a
-promotion, each quantized to the next eighth so it lands on the grid, plus a
-**lead line** that only comes in over the top of the mix once the grid is
-hunting. A voice limiter folds a chain-pop's dozen identical explosions into
-a few, so stacked detonations stay a mix and not a stall.
-
-The mix is a desk, not a pile of oscillators. Every shot, wreck and blast is
-**placed in the arena** — panned off your hull's facing, rolled off with
-distance, its highs eaten by the air, and sent to a procedurally generated
-**reverb** that gets wetter the further away it happened. Detonations duck
-the soundtrack under themselves, a limiter keeps stacked explosions from
-clipping, and the engine is four layers — sub, a detuned resonant body,
-tread clatter riding speed, and a turbine whine that only shows up on boost.
-
-The fight leaves more than craters now. Every destroyed hull leaves a
-**wreck** — dark, tilted, smouldering, sinking into the floor at the end of
-its life — and beaten hulls (yours under 30%, theirs under 35%) **trail
-smoke**: alpha-blended puffs that rise and thin, a second particle type next
-to the additive glow that could only ever say "hot". Cannons throw a
-**muzzle flash** sized by the gun's heat, explosion light **flickers** like
-combustion rather than a lamp, and the floor is **panelled** — a hashed tone
-per slab and faint seams, so tread prints and shadows have something to sit
-on. Sparks that fly through the lens fade instead of filling the frame.
-
-The HUD tells you where a hit came from: a red **wedge on the crosshair
-ring**, in the same hull-relative frame as the exposure arc, so a shell from
-behind reads as behind. Under 30% shields the edges of the frame **pulse on a
-heartbeat** that the mix carries too, and a spilled pot is flung off the POT
-label in red rather than silently subtracted. Screens fade in and out, every
-deploy and gate lands with a white flash and a **sector card**, the warp out
-is a beat — the lens pulls in and the arena bleaches — before the panel, and
-the death cam rises into a slow orbit around the wreck. The title screen has
-patrols in it, cones lit, ambling their routes behind the disk label.
-
-None of it costs an asset file: the shadow map, the impulse response, the
-scorch decals, the smoke and the grade are all generated at runtime.
-
-### Daily Ops
-
-**DAILY OPS** on the title screen deals one seeded arena per UTC day — the
-same layout for every player in the world, fought in a standard-issue
-VANGUARD. Your best result for the day is kept, and the game-over screen has
-a **COPY RESULT** button that puts a shareable score card on your clipboard.
-No accounts, no server: the date itself is the seed.
-
-Finishing a daily keeps your **streak** alive: consecutive days stack up on
-the title screen and the share card, and the DAILY OPS button reminds you
-when today's run would keep the chain going.
-
-### Rank, medals, career & checkpoints
-
-Every run — campaign, daily, even a doomed one — pays **XP** into a
-12-step career ladder, RECRUIT through PHANTOM LEGEND. The game-over screen
-shows the XP bar filling and exactly how much is left to the next
-promotion.
-
-**Rank spends.** From your second promotion on, a campaign sortie deploys with
-**TECH already banked** — a **FIELD PROMOTION**, called out on the loadout
-screen, which cashes out as a draft in the opening seconds and grows with the
-ladder. Your build starts sooner and your twentieth run is not your first run
-again. Daily Ops deliberately ignores it: that leaderboard stays a level
-field, exactly like the difficulty preset.
-
-Fifteen **medals** mark one-time feats: a ghost extraction, five silent
-kills in one mission, a ×5 combo, a sector cleared without taking a hit,
-a 3-day daily streak, the campaign itself, and more. They pop mid-run with
-a toast and a jingle, and hang on the medal wall in the service record.
-
-**Medals unlock tech.** Three upgrades are earned rather than dealt: GHOST
-PLATING joins the draft once you have a GHOST extraction, SHOCK DISCHARGE
-once you have chained a ×5, RAM PLATING once you have downed a WARLORD. The
-service record lists them under unlocks, and the draft grows with the wall.
-
-The **SERVICE RECORD** screen tracks the rest of your career: missions,
-kills, zones secured, warlords downed, best combo, best sector, campaigns
-completed and a best sector **per chassis** — all in your browser. It can
-also **export** the whole career as a code you paste into another browser
-(**IMPORT CAREER CODE**), and **reset** it. Two things are earned:
-
-- **MARAUDER chassis** — a fourth loadout (fast, armored, a small cooling
-  plant, heavy on mines) unlocked by destroying your first WARLORD.
-- **Checkpoint starts** — the loadout screen lets you start deeper: a rung
-  every third sector, always strictly below your deepest, so it is somewhere
-  you have proven you can reach and there is still a sector between you and
-  your record. A deep start carries no upgrades and no banked score, so it
-  costs about as much as it saves.
-
-### Settings
-
-The **SETTINGS** screen has the campaign **DIFFICULTY** preset (RECRUIT /
-STANDARD / VETERAN), the **FIELD COACH** toggle, SFX and music volume,
-screen-shake intensity,
-the **CHASE CAMERA** toggle, the **GLOW FX** post-processing pipeline (bloom, dynamic explosion lighting,
-ACES tonemapping, aberration, grain and FXAA — turn it off on weak GPUs),
-**DYNAMIC SHADOWS** (the sun's depth pass; off is a straight fill-rate
-refund), **RENDER QUALITY** (HIGH multisamples the scene and runs a 1024²
-shadow map, LOW halves the map and leans on FXAA), the CRT
-scanline overlay, aim assist, and a **colorblind hull palette**
-(deuteranopia-safe enemy colors; the radar also gives every enemy type its
-own blip shape regardless).
-
-Below the presets sit the comfort and hardware rows: **REDUCED MOTION**
-(defaults to the OS preference; zeroes the radial blur, aberration and grain,
-stops the blink animations and caps shake), **RENDER SCALE** (the 3D scene at
-50–100% of device resolution, the cheapest fill-rate knob there is),
-**FIELD OF VIEW**, **HUD SCALE**, **RUMBLE / HAPTICS** and **STICK
-DEADZONE**. **CONTROLS — REBIND KEYS** opens a screen where every in-battle
-action takes a new key (select the row, press the key; the title legend
-follows), and **RESET SETTINGS** puts everything back. SETTINGS is also
-reachable from the pause menu mid-run.
-
-All menus work with keyboard (arrows + Enter, Esc to go back), mouse, touch
-and **gamepad** alike — pick whatever is closest to hand. Every menu button
-is a real button to assistive tech, and alert-tier HUD lines are mirrored to
-a screen-reader live region.
-
-| Control | Action |
+| Key | Action |
 | --- | --- |
-| `W S` / `↑ ↓` | Drive forward / reverse |
+| `W S` / `↑ ↓` | Drive / reverse |
 | `A D` / `← →` | Steer |
-| `Space` / click | Fire cannon (builds heat — watch the redline) |
-| `R` | Vent heat — tap again in the band for a **perfect vent** |
-| `X` / right-click | Lob a grenade (arcs over obstacles, splash damage) |
-| `V` / middle-click | Drop a proximity mine behind you |
-| `Shift` | Turbo boost (drains the gauge; low grip — the tank drifts) |
-| `S` + steer at speed | Handbrake slide (keep momentum, swing the gun) |
-| `C` | Toggle chase / first-person camera |
+| `Space` / click | Fire |
+| `R` | Vent heat |
+| `X` / right-click | Grenade |
+| `V` / middle-click | Drop a mine |
+| `Shift` | Boost (low grip — the tank drifts) |
+| `S` + steer at speed | Handbrake slide |
+| `C` | Chase / first-person camera |
 | `P` / `Esc` | Pause (single-player) |
-| `M` | Toggle sound |
-| `B` | Mission briefing (the manual) |
-| `D` | Start today's Daily Ops |
-| `H` | Host an online co-op / versus game |
-| `J` | Join a game by room code |
+| `M` | Sound on/off |
 
-### Gamepad
-
-Plug in any standard controller and it just works, menus included:
-left stick drives and steers, `A`/`RT` fires, `B`/`RB` lobs a grenade,
-`X` vents, `LB` drops a mine, `LT` boosts, `Y` toggles the camera,
-`Start` pauses, and the d-pad or stick navigates every menu. In play `A` is
-only ever the cannon — the mid-run TECH card is steered with the d-pad and
-installed with **d-pad right**, so a shell fired the moment a draft appears
-can no longer spend the pick. The stick's deadzone is radial (no diagonal
-notch) and adjustable, the pad rumbles on recoil, hits and pickups where the
-browser supports it, and if two pads are plugged in the one being used wins.
-
-### Touch controls
-
-On phones and tablets the game switches to a full touch scheme:
-
-- **Floating joystick** — touch anywhere on the left half and a stick spawns
-  under your thumb. Push where you want to go: forward arcs drive and steer,
-  sideways pivots in place, and the whole back half reverses — pull
-  back-and-to-a-side and the tank backs toward your thumb, so reverse steers
-  just like forward. The base stays anchored where you touched down;
-  overshooting the rim just clamps at full deflection.
-- **Hold to fire** — anywhere on the right half, or the big FIRE button.
-  A touch-friendly hint of aim assist snaps shots onto targets that are
-  almost lined up (it applies to all players equally, so co-op stays fair).
-- **On-screen buttons** — NADE (grenade, shows your count), BOOST (shows the
-  gauge around its rim), CAM and pause in the top corner.
-- Launching a run goes fullscreen in landscape where the browser allows it.
-
-## Online co-op & versus
-
-Up to **four players** can play together over the internet — and it
-still works on plain static hosting like GitHub Pages, because there is no
-game server to run.
-
-- One player picks **HOST CO-OP / VERSUS** (or presses `H`) and is given a
-  5-character **room code** — click the code to copy an **invite link**.
-- Everyone else picks **JOIN GAME** (or presses `J`) and types that code, or
-  simply opens the invite link (`index.html?join=CODE`) to jump straight into
-  the lobby.
-- In the lobby the host picks the mode — **CO-OP CAMPAIGN** or
-  **VERSUS — FIRST TO 10** — then hits **LAUNCH**.
-
-**Co-op:** teammates spawn side by side. Fallen tanks respawn after a few
-seconds as long as a teammate is still fighting; if everyone is destroyed at
-once, the run ends. Each sector restores the whole squad.
-
-**Versus:** the squad turns on itself in a single deathmatch arena — corner
-spawns, contested powerups and depots, mines that only trip on your rivals,
-and a live scoreboard under the radar. Everyone always respawns; the first
-tank to **10 kills** takes the arena, and the host can call an instant
-rematch.
-
-**How it works.** It's **host-authoritative peer-to-peer over WebRTC**
-([PeerJS](https://peerjs.com/)). The host's browser runs the authoritative
-simulation and streams 30 Hz snapshots to the others, who send their input
-back up. Joiners **interpolate between snapshots** — remote tanks, shots and
-the WARLORD are rendered ~100 ms in the past and blended between the two
-snapshots that bracket the render time, so everything glides at full display
-framerate instead of stepping at the snapshot rate; your own tank rides the
-freshest snapshot, dead-reckoned forward to hide the quantization.
-Snapshots are stamped on the **host's clock**, and the client's render delay
-grows with the jitter it actually measures, so a lumpy connection stutters
-less instead of mapping every late packet straight into a hitch. Input goes
-up at 30 Hz or on change, sequenced, rather than once per render frame. A
-join that cannot get through (symmetric NAT, no TURN) is reported after ten
-seconds instead of sitting on CONNECTING forever; a deployment that has a
-TURN server can hand it to the game by setting `window.PA_ICE_SERVERS`
-before `js/net.js` loads.
-Signaling uses PeerJS's free public broker, so the game stays a pile of static
-files — perfect for GitHub Pages. Best for 2–4 players on reasonable
-connections; the host has zero latency, and joiners feel a little network lag
-on their own tank. (Want dedicated rooms, matchmaking, host migration or
-reconnects? Swap the `js/net.js` transport for a hosted realtime backend such
-as Firebase, Supabase, PartyKit or Ably — the rest of the game is unchanged.)
-
-### Vehicle configuration
-
-Before deploying, allocate your tank's power — a classic trade-off:
-
-- **SCOUT** — fast and agile, thin shields
-- **VANGUARD** — balanced, the best cooling plant
-- **JUGGERNAUT** — slow, heavily shielded, extra mines
-- **MARAUDER** — fast *and* armored but quick to overheat, packs the most mines —
-  unlocked by destroying a WARLORD
+Keys can be rebound in Settings → Controls. Gamepads work everywhere: left
+stick drives, `A`/`RT` fire, `B`/`RB` grenade, `X` vent, `LB` mine, `LT`
+boost, `Y` camera. On touch screens the left half is a floating joystick and
+the right half fires.
 
 ### Enemies
 
-Every hostile starts out **blind**: patrols amble their routes at half
-speed until something fills their sensor — then they investigate, then
-they hunt. Alerted, each type fights its own way, and all of them steer
-around cover and scatter from a grenade in the air instead of sitting
-under it.
+One new type is introduced per sector:
 
-**One new hull type per sector, all the way up.** Sector 1 is drones and
-nothing else; every sector after it introduces exactly one thing you have not
-had to answer yet, and the WARLORD sectors step around the sequence. Drones
-stay the readable baseline the rest are measured against until the deep end,
-where they thin out and the specials become the sector:
+- **Drone** (red) — the baseline patroller.
+- **Hunter** (amber, sector 2+) — flanks, and only fires during its lunge.
+- **Rusher** (pink, sector 3+) — kamikaze; one shell or a ram defuses it.
+- **Shellback** (gunmetal, sector 4+) — frontal plate deflects shells.
+- **Sniper** (violet, sector 6+) — long range, relocates after each shot.
+- **Warden** (gold, sector 7+) — shields nearby packmates from cannon fire.
+- **Phantom** (ice, sector 8+) — cloaked; visible just before it fires.
+- **Warlord** (every 5th sector) — boss with four turrets guarding its core.
 
-- **Drone** (red) — patroller, guards the zones; shot-up drones break off
-  and fall back on the nearest packmate, so wounded stragglers regroup into
-  clusters instead of trickling in
-- **Rusher** (hot pink, sector 3+) — kamikaze hull that strobes like a lit
-  fuse and beelines straight at you; it detonates on contact, dies to a
-  single shell, chain-pops into anything beside it — and a boost-ram
-  defuses it entirely
-- **Shellback** (gunmetal, sector 4+) — slow siege hull whose frontal
-  plate deflects shells; flank the arc, lob over it, or ram straight
-  through it
-- **Warden** (gold, sector 7+) — projects a cannon-proof umbrella over
-  every packmate near it and shepherds the pack; grenades, mines, rams and
-  shockwaves ignore the dome — or kill the warden and shoot what's left
-- **Hunter** (amber, sector 2+) — weaves between wide flanking arcs and
-  straight lunges; it can only line up a shot during the lunge, so the
-  rhythm is readable — and punishable
-- **Sniper** (violet, sector 6+) — holds range, hits hard from far away,
-  and **relocates after every shot**: return fire arrives where the sniper
-  was, not where it is
-- **Phantom** (ice, sector 8+) — cloaked stalker; shimmers into view a moment
-  before it fires, and vanishes from radar while cloaked
-- **Warlord** (crimson, every 5th sector) — boss hovercruiser; four turrets
-  shield its core, it crushes cover, rams, and emits shockwave rings
+Elite variants appear from sector 3.
 
-### Pickups & depots
+### Other modes and progress
 
-Destroyed enemies sometimes drop supplies; a few crates are scattered around
-each sector: **coolant**, **shield repair**, **grenades**, **mines**,
-**overdrive** (speed boost) and **rapid fire**. Every sector also has a
-glowing **coolant depot** and **shield depot** — park on the pad to vent
-and repair. Sector-clear bonus scales with remaining shields, kills and
-the pot you carried over the line. High score,
-daily bests, settings and your service record are all kept in your browser.
+- **Daily Ops** — one seeded arena per UTC day, same for everyone, with a
+  shareable result and a streak.
+- **Career** — XP, ranks, medals and per-chassis bests, stored in the browser
+  and exportable as a code. Some medals unlock upgrades; the first Warlord kill
+  unlocks the Marauder chassis. Higher ranks start runs with some tech.
 
-Watch your speed near the arena's slabs: slam into one fast enough and your
-tank rebounds off it — and if you just lean on one, the hull **slides along
-the face** rather than parking against it. Nothing you can hold on the
-controls brings the tank to a dead stop against geometry; in a sector where
-patrols are converging on your last known position, standing still is not a
-state the game will put you in without asking.
+## Online co-op & versus
 
-## Tests & CI
+Up to four players, peer-to-peer over WebRTC with no game server. The host
+presses `H` and shares the room code or invite link; others press `J` or open
+the link. The host picks **co-op campaign** or **versus** (first to 10 kills).
+
+The host runs the simulation and streams 30 Hz snapshots; clients send input
+and interpolate between snapshots. Signaling uses PeerJS's public broker. A
+deployment with a TURN server can pass it in via `window.PA_ICE_SERVERS`
+before `js/net.js` loads.
+
+## Tests
 
 ```sh
-npm test          # 20 headless suites on plain Node — no install needed
-npm run e2e       # Playwright end-to-end (needs `npm install`, then
-                  # `npx playwright install chromium`)
+npm test          # headless suites on plain Node
+npm run e2e       # Playwright end-to-end
 ```
 
-GitHub Actions runs the headless suites on every push and the browser
-end-to-end pass across Chromium, Firefox and WebKit (`.github/workflows/ci.yml`).
-See `test/README.md` for what each suite covers.
+CI runs both (`.github/workflows/ci.yml`). `test/README.md` lists what each
+suite covers.
 
 ## Code layout
 
 ```
-index.html      shell + menu screens
-style.css       retro CRT styling
-sw.js           offline cache (installable PWA; single-player works offline)
-js/settings.js  persistent settings + career progress, XP/ranks, medals,
-                daily streak (localStorage)
-js/audio.js     synthesized SFX with positional panning/distance/reverb
-                sends, a four-layer engine, a master limiter, music ducking,
-                and the procedural synthwave soundtrack (Web Audio lookahead
-                sequencer, no sound files)
+index.html      shell and menu screens
+style.css       styling
+sw.js           offline cache
+js/settings.js  settings and career progress (localStorage)
+js/audio.js     synthesized SFX and music (Web Audio)
 js/input.js     keyboard / mouse / touch / gamepad
 js/geometry.js  procedural low-poly meshes
-js/renderer.js  WebGL renderer + mat4 helpers: flat-shaded forward pass with
-                specular + fresnel rim, a packed-RGBA directional shadow map
-                with PCF, dynamic point lights, additive and multiply
-                (decal) draws, and the bloom / ACES / FXAA / aberration /
-                grain / vignette post chain
-js/hud.js       radar (with live enemy sensor cones), shield/heat/vent bars,
-                the exposure arc, pot & bounty, scoreboard (Canvas 2D)
-js/tutorial.js  the field coach: an ordered walk through the loop driven by
-                what the player actually does, plus situational callouts
-js/game.js      arena generation (four terrain layouts), players, per-type
-                enemy AI with stealth detection states, noise + signature
-                model, sector alarm, projectiles, pickups, seeded daily
-                arenas, versus rules, TECH drafts, uplink zones, extraction
-js/net.js       WebRTC co-op/versus networking (host-authoritative, PeerJS,
-                client-side snapshot interpolation)
-js/main.js      screen flow, the camera rig (spring impacts, trauma shake,
-                dynamic FOV, hit-stop), the film grade, scene + shadow-caster
-                drawing, main loop
-js/vendor/      bundled third-party code (PeerJS, MIT licensed)
+js/renderer.js  WebGL renderer: flat-shaded pass, shadow map, point lights,
+                bloom / tonemap / FXAA / vignette
+js/hud.js       radar, bars, exposure arc, messages (Canvas 2D)
+js/tutorial.js  the field coach
+js/game.js      simulation: arena generation, enemy AI and detection,
+                projectiles, uplinks, drafts, extraction, versus
+js/net.js       co-op / versus networking
+js/main.js      screen flow, camera, grade, scene drawing, main loop
+js/vendor/      PeerJS (MIT)
 ```
 
-All code, art and sound are original. The gameplay is inspired by the
-arena-tank classics of the era; no original assets or names are used.
+All code, art and sound are original. The game is inspired by the arena-tank
+games of the era; no original assets or names are used.

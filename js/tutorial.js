@@ -2,7 +2,7 @@
  *
  * PHANTOM ARENA stacks a dozen systems on each other: signature, sensor
  * cones, the two-stage detect meter, ambush damage, the heat/vent rhythm,
- * spiked uplinks, the at-risk pot, combo variety, tech drafts, extraction.
+ * spiked uplinks, combo variety, tech drafts, extraction.
  * None of it is discoverable by mashing SPACE, and a README nobody opens is
  * not onboarding. This walks a new pilot through the loop *inside a live
  * sector* — no separate mode, no gated cage, nothing paused. It watches what
@@ -20,7 +20,7 @@
  */
 
 /* The ordered walk is the MISSION: roll out, go cold, take a hull, spike the
- * grid, get out. Side systems (heat, the pot, the alarm) are not steps —
+ * grid, get out. Side systems (heat, the alarm) are not steps —
  * they are situational callouts below, because they become relevant on their
  * own schedule and an ordered step would either block the mission or get
  * skipped before the player ever met the system.
@@ -110,13 +110,6 @@ const COACH_TIPS = [
     color: '#ff4a3c',
     tier: 'info',
   },
-  {
-    id: 'pot',
-    when: (g, p) => (g.pot || 0) > 250,
-    text: 'THAT POT IS UNBANKED — A HIT SPILLS IT. SECURE A ZONE TO CASH OUT',
-    color: '#e8c75a',
-    tier: 'info',
-  },
 ];
 
 class Coach {
@@ -136,8 +129,8 @@ class Coach {
   resetLevel() {
     this._lx = null; this._lz = null;
     // tipsFired deliberately survives the sector: "each fires at most once
-    // per run" is the promise above, and resetting here replayed THAT POT IS
-    // UNBANKED and the alarm lesson on every level
+    // per run" is the promise above, and resetting here replayed the
+    // overheat and alarm lessons on every level
     this._tipCd = 0;
   }
 

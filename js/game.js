@@ -111,17 +111,16 @@ const REACQUIRE_MIN = 0.45; // ...times raw sight: the floor nobody sneaks past
 
 /* Campaign difficulty presets (SETTINGS → DIFFICULTY). dmg scales what
  * enemies do to the squad, pressure stretches/shrinks the spawn-pressure
- * timer, potSpill is the pot fraction KEPT after a hit, waves trims the
- * alarm/alert reinforcement counts (never below 1). regen is the
+ * timer, waves trims the alarm/alert reinforcement counts (never below 1). regen is the
  * out-of-combat shield trickle (per second, after REGEN_DELAY unhit) and
  * regenTo the fraction of max it can restore — chip damage stops being a
  * death spiral, while depots and pickups still own the full top-up.
  * detect scales how fast enemy sensors fill; alarm is how many seconds the
  * grid keeps hunting after it loses contact with you. */
 const DIFFICULTY = [
-  { dmg: 0.5,  pressure: 1.8,  potSpill: 0.9,  waves: -1, regen: 8, regenTo: 1,    detect: 0.6,  alarm: 9  },  // RECRUIT — learn the systems
-  { dmg: 1,    pressure: 1,    potSpill: 0.7,  waves: 0,  regen: 5, regenTo: 0.65, detect: 1,    alarm: 14 },  // STANDARD — as designed
-  { dmg: 1.2,  pressure: 0.85, potSpill: 0.6,  waves: 0,  regen: 0, regenTo: 0,    detect: 1.35, alarm: 20 },  // VETERAN — the arena bites back
+  { dmg: 0.5,  pressure: 1.8,  waves: -1, regen: 8, regenTo: 1,    detect: 0.6,  alarm: 9  },  // RECRUIT — learn the systems
+  { dmg: 1,    pressure: 1,    waves: 0,  regen: 5, regenTo: 0.65, detect: 1,    alarm: 14 },  // STANDARD — as designed
+  { dmg: 1.2,  pressure: 0.85, waves: 0,  regen: 0, regenTo: 0,    detect: 1.35, alarm: 20 },  // VETERAN — the arena bites back
 ];
 const REGEN_DELAY = 4;   // seconds without taking a hit before the trickle starts
 
@@ -133,17 +132,6 @@ const MUTATORS = [
   { id: 'elite',    name: 'ELITE SURGE',    desc: 'hardened hulls everywhere',           tech: 50 },
   { id: 'volatile', name: 'VOLATILE HULLS', desc: 'every kill detonates',                tech: 40 },
   { id: 'gauntlet', name: 'ELITE GAUNTLET', desc: 'all elites, no mercy',                tech: 95 },
-];
-
-/* Per-sector optional bounties: auto-tracked, pay tech to the whole squad. */
-const BOUNTIES = [
-  { id: 'ram',    name: '3 RAM KILLS',      n: 3 },
-  { id: 'nade',   name: '3 GRENADE KILLS',  n: 3 },
-  { id: 'mine',   name: '2 MINE KILLS',     n: 2 },
-  { id: 'graze',  name: 'GRAZE 8 SHOTS',    n: 8 },
-  { id: 'mult',   name: 'REACH COMBO ×4',   n: 1 },
-  { id: 'silent', name: '3 SILENT KILLS',   n: 3 },
-  { id: 'ghostspike', name: 'SPIKE 2 ZONES UNDETECTED', n: 2 },
 ];
 
 // Boss turret mounts in hull-local space (model faces -Z). Shared with the
@@ -215,11 +203,12 @@ const UPGRADES = [
   { id: 'ghost',      name: 'GHOST PLATING',    desc: 'enemy sensors fill 20% slower',         max: 2, medal: 'ghost' },
 ];
 
-// Spectre-style solid slabs: saturated flat-shaded colors that pop
-// against the void, dimming into the fog with distance.
+// Cover is scenery, not signal: three close, cool slate tones, so the only
+// saturated, warm things in the arena are hostile hulls and their shells. A
+// six-hue confetti palette used to make a red slab and a red tank look the
+// same at range.
 const OBSTACLE_PALETTE = [
-  [0.72, 0.20, 0.20], [0.20, 0.42, 0.78], [0.20, 0.62, 0.32],
-  [0.62, 0.62, 0.62], [0.72, 0.54, 0.18], [0.46, 0.28, 0.72],
+  [0.30, 0.35, 0.40], [0.24, 0.30, 0.35], [0.36, 0.40, 0.44],
 ];
 
 // Hull colors used for the shard debris a destroyed tank breaks into.
@@ -382,13 +371,10 @@ class Game {
     this.comboWin = COMBO_WINDOW; // window length (stretched by COMBO REGULATOR)
     this.mult = 1;         // score multiplier from the chain
     this.lastKillVia = null; // style engine: repeat kills are worth less
-    this.pot = 0;          // unbanked kill score — banks on zone capture,
-                           // spills 30% every time the squad takes a hit
     this.levelTime = 0;    // seconds into the current sector (spawn pressure)
     this.pressureT = 7;    // countdown to the next pressure wave
     this.mutator = null;   // active sector mutator id (chosen at the gate)
     this.gates = null;     // gate options offered on the level-clear screen
-    this.bounty = null;    // this sector's optional bounty { id, name, n, prog, paid }
     this.alert = 0;        // 0..1 — fraction of flags secured this sector
     this.alertTier = 0;    // reinforcement waves already triggered
     this.noises = [];      // one-frame noise events: { x, z, r, mag }
@@ -535,7 +521,6 @@ class Game {
     this.killCounts = {};
     this.winnerId = null;
     this.score = 0;
-    this.pot = 0;
     this.mutator = null;
     this.gates = null;
     this.runStats = freshRunStats();
@@ -663,15 +648,6 @@ class Game {
       p.depotAcc = 0; p.onDepot = false;
     });
 
-    // per-sector bounty: an optional objective, auto-tracked, paid in tech
-    this.bounty = null;
-    if (!this.versus && !this.bossLevel) {
-      // the loud bounties (graze, combo) wait until the stealth loop has been
-      // learned — sector 1 and 2 should never be asking for a firefight
-      const pool = BOUNTIES.filter((b) => !((b.id === 'graze' || b.id === 'mult') && L <= 2));
-      const b = pool[(RNG() * pool.length) | 0];
-      this.bounty = { id: b.id, name: b.name, n: b.n, prog: 0, paid: false };
-    }
     this.lastKillVia = null;
 
     if (this.versus) {
@@ -733,8 +709,6 @@ class Game {
       const m = MUTATORS.find((x) => x.id === this.mutator);
       if (m) this.hud.message(m.name + ' — ' + m.desc.toUpperCase(), '#ffd24a', 3, 'chatter');
     }
-    // no bounty toast: _objective already prints it under the radar, live,
-    // with its progress, for the whole sector. Saying it twice is noise.
   }
 
   /* Where tanks deploy: the home corridor in the campaign, spread corners in
@@ -1257,7 +1231,6 @@ class Game {
         for (const h of holders) spike = Math.max(spike, h.up ? (h.up.uplink || 0) : 0);
         f.spikeUp = spike;
         f.owners = holders.map((h) => h.id);
-        if (this.alarmT <= 0) this._bountyTick('ghostspike');
         this._burst(f.x, 1.6, f.z, 10, [0.4, 0.9, 1], 7);
         this._sfx('select', f.x, f.z);
         if (holders.some((h) => h.id === this.localId)) {
@@ -1285,7 +1258,6 @@ class Game {
         this.runStats.flags++;
         const pts = 100 * this.level * this.mult;
         this.score += pts;
-        this._bankPot();   // the capture is the cash-out
         this._burst(f.x, 2.5, f.z, 18, [0.3, 1, 0.5], 8);
         this._sfx('flag', f.x, f.z);
         // the spike pays whoever planted it, wherever they are by now
@@ -1629,19 +1601,12 @@ class Game {
       this._sfx('combo');
       this.hud.message('COMBO ×' + mult, '#ffd24a', 1.4, 'chatter');
     }
-    if (mult >= 4) this._bountyTick('mult');
     if (mult >= 5 && ownerId === this.localId) this._medal('chain5');
     this.mult = mult;
     this.runStats.kills++;
     this.runStats.bestMult = Math.max(this.runStats.bestMult, mult);
     const pts = baseScore * mult;
-    // kill score rides in the POT until you bank it at a zone — greed is a
-    // live decision, not a stat
-    if (this.versus) this.score += pts;
-    else {
-      this.pot += pts;
-      if (ownerId === this.localId) this.runStats.potPeak = Math.max(this.runStats.potPeak || 0, this.pot);
-    }
+    this.score += pts;
     // stylish play also builds faster: tech income scales with the chain
     this._awardTech(this._playerById(ownerId), Math.round((baseScore / 10) * (1 + (mult - 1) * 0.5)));
     if (ownerId === this.localId) {
@@ -1659,29 +1624,6 @@ class Game {
     this.comboT = 0;
     this.mult = 1;
     this.lastKillVia = null;
-  }
-
-  /* Bank the unbanked pot into the score — called on zone captures, boss
-   * milestones and sector clear. */
-  _bankPot() {
-    if (this.versus || this.pot <= 0) return;
-    this.score += this.pot;
-    this.hud.scorePop('BANKED +' + this.pot);
-    this._sfx('flag');
-    this.pot = 0;
-  }
-
-  /* Advance this sector's bounty; pays the whole squad in tech on completion. */
-  _bountyTick(id, n) {
-    const b = this.bounty;
-    if (!b || b.paid || b.id !== id) return;
-    b.prog = Math.min(b.n, b.prog + (n || 1));
-    if (b.prog >= b.n) {
-      b.paid = true;
-      for (const p of this.players) this._awardTech(p, 40);
-      this._sfx('unlock');
-      this.hud.message('BOUNTY COMPLETE — +40 TECH', '#ffd24a', 2.2);
-    }
   }
 
   _respawn(p) {
@@ -1997,7 +1939,7 @@ class Game {
         }
         const bx = p.x + fwdX(shotAngle) * 3.2;
         const bz = p.z + fwdZ(shotAngle) * 3.2;
-        this._burst(bx, 1.6, bz, superShot ? 8 : 4, superShot ? [0.5, 1, 0.9] : [1, 0.9, 0.5], 5);
+        this._burst(bx, 1.6, bz, superShot ? 5 : 2, superShot ? [0.5, 1, 0.9] : [1, 0.9, 0.5], 4, false);
         this._muzzle(bx, 1.6, bz, Math.min(1, p.heat / (p.maxHeat || 100)), superShot ? [0.6, 1, 0.95] : [1, 0.85, 0.5]);
         this._sfx('fire', p.x, p.z);
         this._noise(p.x, p.z, NOISE_SHOT, 0.55);   // the report carries
@@ -2776,7 +2718,6 @@ class Game {
               if (razor) pl.heat = Math.max(0, (pl.heat || 0) - 6 * razor);
               if (this.comboT > 0) this.comboT = Math.min(this.comboWin, this.comboT + 0.4 + 0.4 * razor);
               this._burst(pr.x, 1.4, pr.z, 3, [0.5, 1.0, 0.9], 4);
-              this._bountyTick('graze');
             }
           }
         }
@@ -2996,7 +2937,6 @@ class Game {
     this._noise(e.x, e.z, via === 'ram' ? NOISE_RAM : NOISE_WRECK, 0.6);
     if (silent) {
       this.runStats.silentKills++;
-      this._bountyTick('silent');
       if (ownerId === this.localId) {
         // a cannon ambush announces itself — and spells out the ×3 rule the
         // first time one lands, so the mechanic teaches at the moment of use
@@ -3011,7 +2951,6 @@ class Game {
         if (this.runStats.silentKills >= 5) this._medal('assassin');
       }
     }
-    if (via === 'ram' || via === 'nade' || via === 'mine') this._bountyTick(via);
     if (!this.versus && ownerId === this.localId) {
       const rs = this.runStats;
       rs.localKills++;
@@ -3073,13 +3012,6 @@ class Game {
     p.shields -= dmg;
     p.sinceHit = 0;
     this._breakCombo();   // any hit on the squad snaps the kill chain
-    if (!this.versus && this.pot > 0) {
-      const kept = Math.round(this.pot * this._diff().potSpill);
-      // the spill is shown, not just subtracted — losing 30% of the pot in
-      // silence was the game's most expensive invisible event
-      if (isLocal && this.pot - kept > 0 && this.hud.spill) this.hud.spill(this.pot - kept);
-      this.pot = kept;   // ...and spills part of the pot
-    }
     if (isLocal) this.levelUntouched = false;
     if (isLocal) {
       this.hud.damage(Math.min(0.8, dmg / 30));
@@ -3396,7 +3328,6 @@ class Game {
       tu.hp = 0;
       this.killsThisLevel++;
       this._awardKill(400, ownerId, 'turret');
-      this._bankPot();   // boss milestones are cash-outs too
       this._burst(wx, 3.4, wz, 30, [1, 0.55, 0.15], 13);
       this._spawnShards(wx, wz, [1.0, 0.5, 0.2]);
       this._sfx('explosion', wx, wz);
@@ -3432,7 +3363,6 @@ class Game {
     this.rings = [];
     this.killsThisLevel++;
     this._awardKill(b.score, ownerId, 'boss');
-    this._bankPot();
     for (let i = 0; i < 3; i++) {
       this._burst(b.x + rand(-5, 5), rand(1, 4), b.z + rand(-5, 5), 40, [1, 0.5, 0.1], 16);
     }
@@ -3497,11 +3427,14 @@ class Game {
     }
   }
 
-  _burst(x, y, z, n, color, power) {
+  _burst(x, y, z, n, color, power, light) {
     this.frameBursts.push({ x, y, z, n, c: color, p: power });
-    // a matching light flash so explosions momentarily light up the arena
-    this.flashes.push({ x, y: y + 1.2, z, c: color, p: power, life: 0.28, max: 0.28 });
-    if (this.flashes.length > 32) this.flashes.splice(0, this.flashes.length - 32);
+    // a matching light flash so explosions momentarily light up the arena —
+    // skipped for the player's own muzzle, where it just lit up the hull
+    if (light !== false) {
+      this.flashes.push({ x, y: y + 1.2, z, c: color, p: power, life: 0.28, max: 0.28 });
+      if (this.flashes.length > 32) this.flashes.splice(0, this.flashes.length - 32);
+    }
     for (let i = 0; i < n; i++) {
       const a = rand(0, Math.PI * 2);
       const v = rand(power * 0.25, power);
@@ -3517,15 +3450,17 @@ class Game {
     if (this.particles.length > 1500) this.particles.splice(0, this.particles.length - 1500);
   }
 
-  /* Muzzle flash: one fat additive sprite that lives a few frames at the
-   * barrel, sized by how hot the gun is. Purely local (a burst already goes
-   * over the wire for the same shot), so it is never queued. */
+  /* Muzzle flash: a small, quick pop at the barrel, a touch bigger when the
+   * gun runs hot. It used to be a sprite two hull-widths across that bloomed
+   * over the whole centre of the frame and hid where the shell went. Purely
+   * local (a burst already goes over the wire for the same shot), so it is
+   * never queued. */
   _muzzle(x, y, z, heat01, color) {
     this.particles.push({
       x, y, z, vx: 0, vy: 0, vz: 0, kind: 'flash',
-      life: 0.07, maxLife: 0.07,
-      size: 11 + heat01 * 9,
-      r: color[0] * 1.6, g: color[1] * 1.6, b: color[2] * 1.6,
+      life: 0.05, maxLife: 0.05,
+      size: 3.5 + heat01 * 2.5,
+      r: color[0] * 1.1, g: color[1] * 1.1, b: color[2] * 1.1,
     });
   }
 
@@ -3711,8 +3646,7 @@ class Game {
     for (const p of this.players) sh += Math.max(0, p.shields);
     this.levelBonus = this.level * 250 +
       Math.round(sh) * 3 +
-      this.killsThisLevel * 50 +
-      this.pot;                    // whatever's still riding banks with the clear
+      this.killsThisLevel * 50;
     // GHOST EXTRACTION: the alarm never went off before the gate opened —
     // the purest way to play the sector, paid accordingly
     if (this.ghostRun && !this.bossLevel) {
@@ -3731,7 +3665,6 @@ class Game {
       this.levelBonus += 5000;
     }
     this.score += this.levelBonus;
-    this.pot = 0;
     if (this.levelUntouched) this._medal('untouchable');
     if (this.campaignWon && this.level === CAMPAIGN_END) this._medal('campaign');
     // a cleared sector IS the walk: whatever the pilot skipped, they got
