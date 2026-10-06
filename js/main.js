@@ -86,9 +86,6 @@
       bossTurret: renderer.createMesh(Geometry.bossTurret()),
       bossCore: renderer.createMesh(Geometry.bossCore()),
       ring: renderer.createMesh(Geometry.ring(), renderer.gl.LINES),
-      gaze: renderer.createMesh(Geometry.gazeCone()),
-      gazeEdge: renderer.createMesh(Geometry.gazeEdge()),
-      gazeCurtain: renderer.createMesh(Geometry.gazeCurtain()),
       // ominous backdrop, camera-anchored so it sits at infinity
       sky: renderer.createMesh(Geometry.skyDome(660)),
       mountains: renderer.createMesh(Geometry.mountains(600)),
@@ -135,8 +132,8 @@
   }
 
   // ---- live settings ---------------------------------------------------------
-  // Third person by default, and remembered: the game's information — cone
-  // boundaries, awareness rings, tread prints, beacons — lives on the floor,
+  // Third person by default, and remembered: the game's information —
+  // awareness rings, tread prints, beacons — lives on the floor,
   // and the cockpit eye sits 2.3 units above it looking along it. `C` still
   // flips to first person for anyone who wants the 1990 shot.
   let chaseCam = Settings.get('chase');
@@ -1336,9 +1333,7 @@
   Net.cb.onPick = (peerId, id) => { game.applyUpgrade(peerId, id); };
 
   // ---- title demo scene -----------------------------------------------------
-  // The attract shot has patrols in it: blind hulls ambling their routes with
-  // their sensor cones lit, so the title screen is already teaching the game
-  // it is about to sell you.
+  // The attract shot has patrols ambling their routes, just as in play.
   const demoGame = new Game(new HUD(document.createElement('canvas')));
   demoGame.player = { x: 0, z: 0, alive: false, sig: 0.3 };
   demoGame._genObstacles(30);
@@ -1348,20 +1343,11 @@
   demoGame.level = 1;
   let demoT = 0;
 
-  /* Draw the attract-mode patrols: hulls plus the same live cone the arena
-   * draws in play, against a quiet imaginary signature. */
+  /* Draw the attract-mode patrol hulls without ground sensor overlays. */
   function drawDemoPatrols(src) {
-    const now = performance.now();
     for (const e of src.enemies) {
       const sc = e.type === 'rusher' ? 0.82 : e.type === 'shellback' ? 1.22 : 1;
       renderer.draw(tankMeshFor(e.type), m4.trs(e.x, 0, e.z, e.angle, sc, sc, sc, MTX));
-      const reach = senseRange(e.type, 0.3);
-      const gp = 0.062 + 0.014 * Math.sin(now / 420 + e.x);
-      renderer.draw(M.gaze, m4.trs(e.x, 0.22, e.z, e.angle, reach, 1, reach, MTX),
-        { tint: [0.34 * gp, 0.88 * gp, 0.76 * gp], unlit: true, additive: true });
-      const ep = 0.46 + 0.08 * Math.sin(now / 420 + e.x);
-      renderer.draw(M.gazeEdge, m4.trs(e.x, 0.26, e.z, e.angle, reach, 1, reach, MTX),
-        { tint: [0.3 * ep, 0.95 * ep, 0.8 * ep], unlit: true, additive: true });
     }
   }
 
@@ -1854,48 +1840,6 @@
         (e.type === 'rusher' ? 0.82 : e.type === 'shellback' ? 1.22 : 1);
       renderer.draw(tankMeshFor(e.type), m4.trs(e.x, 0, e.z, e.angle, sc, sc, sc, MTX), { tint });
       const aware = e.alerted ? 2 : ((e.sense || 0) >= 0.4 ? 1 : 0);
-      // the hull's sensor beam, laid on the ground it is actually watching:
-      // direction is the hull's facing, reach is the sim's live senseRange
-      // against YOUR current signature — run colder and every beam in the
-      // arena visibly pulls back. Alerted hulls aren't scanning (they
-      // know), so a beam always means "this one can still be threaded".
-      if (aware < 2 && e.cloak < 0.6 && !game.versus) {
-        const reach = senseRange(e.type, game.player ? game.player.sig : 1);
-        // The fill says "watched ground"; the edge says WHERE THAT STOPS, and
-        // the edge is the one the player steers against. Both ride the same
-        // senseRange, so throttling down visibly walks the line inward.
-        // The fill is a wash — it says "watched ground" without blowing out
-        // an additive floor under bloom. The EDGE carries the legibility: a
-        // bright line you can see from across the arena and steer along.
-        const gp = aware === 1
-          ? 0.09 + 0.02 * Math.sin(now / 160)
-          : 0.062 + 0.014 * Math.sin(now / 420);   // slow breath: a live scan, not floor tint
-        const gt = aware === 1
-          ? [1.0 * gp, 0.66 * gp, 0.16 * gp]
-          : [0.34 * gp, 0.88 * gp, 0.76 * gp];
-        renderer.draw(M.gaze, m4.trs(e.x, 0.22, e.z, e.angle, reach, 1, reach, MTX),
-          { tint: gt, unlit: true, additive: true });
-        const ep = aware === 1
-          ? 0.72 + 0.16 * Math.sin(now / 160)
-          : 0.46 + 0.08 * Math.sin(now / 420);
-        const et = aware === 1
-          ? [1.0 * ep, 0.6 * ep, 0.14 * ep]
-          : [0.3 * ep, 0.95 * ep, 0.8 * ep];
-        renderer.draw(M.gazeEdge, m4.trs(e.x, 0.26, e.z, e.angle, reach, 1, reach, MTX),
-          { tint: et, unlit: true, additive: true });
-        // ...and the same boundary standing up, so the cockpit view can see it
-        const ct = [et[0] * 0.55, et[1] * 0.55, et[2] * 0.55];
-        renderer.draw(M.gazeCurtain, m4.trs(e.x, 0.1, e.z, e.angle, reach, reach, reach, MTX),
-          { tint: ct, unlit: true, additive: true });
-        // the hearing bubble: inside this the cone stops mattering, because
-        // the hull notices you whichever way it happens to be facing. Drawn
-        // because the sim detects on it — an undrawn rule you get caught by
-        // is the difference between a stealth game and a guessing game.
-        const near = senseNear(game.player ? game.player.sig : 1);
-        const np = ep * 0.62;
-        renderer.draw(M.ring, m4.trs(e.x, 0.2, e.z, 0, near, 1, near, MTX),
-          { tint: [et[0] / ep * np, et[1] / ep * np, et[2] / ep * np], unlit: true, additive: true });
-      }
       // awareness telltale on the ground: amber = investigating, strobing
       // red = it knows — readable at a glance across the whole arena
       if (aware && e.cloak < 0.6) {

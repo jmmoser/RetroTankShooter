@@ -20,6 +20,7 @@ context — `helpers.js` loads the needed `js/` files into a vm per process).
 | `t-game-combat.js` | splash/chain-kill array safety, line-of-sight (segment-vs-AABB), piercing shells, combat soak |
 | `t-game-modes.js` | boss sectors, versus rules (tie-break, self-damage), warp gates, daily determinism, extraction, mutators, upgrade stacking, warden hold AI, run-stat shape parity, `ENEMY_TYPES` knobs (shellback plate arc, warden aura) driving real behavior |
 | `t-geometry.js` | outward face winding (octahedron/box/pyramid), grid edge coverage, arena-wall perimeter/no-overlap, wireframe edge sanity |
+| `t-ground-sensors.js` | no ground vision/hearing overlays or cone mesh allocation in gameplay or the title demo; manual wording |
 | `t-input.js` | key bindings (defaults, rebinding, persistence), axis composition, the radial gamepad deadzone, active-pad selection, A-not-Enter in play and the pad-only draft edge — against a stubbed DOM/gamepad |
 | `t-m4.js` | matrix composition and the out-parameter scratch-matrix contract |
 | `t-net.js` | lobby full-rejection (host and client sides), mid-game roster pruning, snapshot serialize→apply round-trip, snapshot interpolation |
