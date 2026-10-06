@@ -30,15 +30,15 @@ Your first sortie runs a field coach that walks you through the loop in a live
 sector, one prompt at a time. **Briefing** on the title screen (`B`) is the
 manual.
 
-**Stealth.** Each patrol has a vision cone and a hearing ring, both drawn on
-the ground. Inside them, with line of sight, its detection meter fills: halfway
-it investigates, full and it alerts its pack and the sector alarm goes up.
+**Stealth.** Each patrol sees ahead and hears nearby tanks. Its sensor ranges
+appear on the radar. Inside them, with line of sight, its detection meter
+fills: halfway it investigates, full and it alerts its pack and the sector
+alarm goes up.
 Break line of sight and stay quiet and the alarm times out. An arc around the
 crosshair shows when something is watching you, and from which direction.
 
 **Signature.** How far enemy sensors reach depends on how loud you are:
-speed, a hot cannon and boost all add to it. Slow down and the cones visibly
-shrink.
+speed, a hot cannon and boost all add to it. Slow down to reduce their reach.
 
 **Killing.** A shell that hits a hull that hasn't seen you does triple damage
 (an *ambush*). A kill that never alerted pays 1.5× score (a *silent kill*). A

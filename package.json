@@ -1,6 +1,6 @@
 {
   "name": "phantom-arena",
-  "version": "38.0.0",
+  "version": "39.0.0",
   "private": true,
   "description": "PHANTOM ARENA — retro tank stealth roguelite. No build step; these scripts only run the tests.",
   "scripts": {

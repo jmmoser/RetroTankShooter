@@ -99,7 +99,7 @@ const COACH_TIPS = [
   {
     id: 'sus',
     when: (g) => g.suspicion && !g.everAlarmed,
-    text: 'SOMETHING NOTICED YOU — A GLIMPSE IS NOT A LOCK. BREAK THE CONE NOW',
+    text: 'SOMETHING NOTICED YOU — A GLIMPSE IS NOT A LOCK. BREAK LINE OF SIGHT NOW',
     color: '#ffd24a',
     tier: 'alert',
   },
